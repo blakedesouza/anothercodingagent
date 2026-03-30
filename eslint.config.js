@@ -1,0 +1,27 @@
+import tseslint from '@typescript-eslint/eslint-plugin';
+import tsparser from '@typescript-eslint/parser';
+
+export default [
+    {
+        files: ['src/**/*.ts', 'test/**/*.ts'],
+        languageOptions: {
+            parser: tsparser,
+            parserOptions: {
+                ecmaVersion: 2022,
+                sourceType: 'module',
+            },
+        },
+        plugins: {
+            '@typescript-eslint': tseslint,
+        },
+        rules: {
+            '@typescript-eslint/no-explicit-any': 'error',
+            '@typescript-eslint/ban-ts-comment': ['error', {
+                'ts-ignore': 'allow-with-description',
+                'ts-expect-error': 'allow-with-description',
+                'ts-nocheck': true,
+                'ts-check': false,
+            }],
+        },
+    },
+];
