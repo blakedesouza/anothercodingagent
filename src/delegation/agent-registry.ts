@@ -60,15 +60,12 @@ const WITNESS_TOOLS: readonly string[] = [
 /**
  * Built-in triage profile tools.
  * Aggregation / watchdog role: dedupes and ranks multiple witness findings, verifies individual
- * claims against the real codebase, calibrates severity by reading the actual code. Same 11-tool
- * set as witness — triage is a peer-level reviewer that happens to consume witness output instead
- * of reviewing code directly. Added 2026-04-06 alongside the witness/consult tool-access uplift.
+ * claims only when needed, and avoids re-reviewing from scratch. The default grant is narrower
+ * than witness: no shell commands, LSP, semantic search, or token estimation.
  */
 const TRIAGE_TOOLS: readonly string[] = [
-    'read_file', 'find_paths', 'search_text', 'search_semantic',
-    'stat_path', 'estimate_tokens', 'lsp_query',
+    'read_file', 'find_paths', 'search_text', 'stat_path',
     'fetch_url', 'web_search', 'lookup_docs',
-    'exec_command',
 ] as const;
 
 /**
@@ -133,7 +130,7 @@ function buildBuiltInProfiles(toolRegistry: ToolRegistry): AgentProfile[] {
         },
         {
             name: 'triage',
-            systemPrompt: 'You are a triage aggregator for a multi-witness code review. Input: multiple witness reports on the same codebase. Output: a single deduplicated, severity-ranked JSON report. Use your tools to verify individual claims before accepting them: read the actual source, run grep/tests/linters, and fetch live docs for any API/library claim that would otherwise be rejected. Your job is NOT to re-review the code from scratch — it is to dedupe, calibrate severity, flag dissent, and ground each surviving finding in real evidence. Do not modify files.',
+            systemPrompt: 'You are a triage aggregator for a multi-witness code review. Input: multiple witness reports on the same codebase. Output: a single deduplicated, severity-ranked JSON report. Prefer aggregating from the witness bundle directly; use tools only for high-severity, disputed, vague, or API/library claims that materially need verification. Your job is NOT to re-review the code from scratch — it is to dedupe, calibrate severity, and flag dissent. Do not modify files.',
             defaultTools: TRIAGE_TOOLS,
             canDelegate: false,
         },

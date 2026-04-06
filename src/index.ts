@@ -964,6 +964,19 @@ program
             allowHttp: config.network.allowHttp,
         };
 
+        // Invoke mode is intentionally lighter than the interactive CLI, but it
+        // still needs the read-only witness/triage tools advertised by the
+        // delegation contract. Keep these dependencies minimal and lazy.
+        const healthMap = new CapabilityHealthMap();
+        const lspManager = new LspManager({ workspaceRoot: cwd, healthMap });
+        const browserManager = new BrowserManager({ healthMap, networkPolicy });
+        const tavilyKey = secretsResult.secrets.tavily;
+        const searchProvider = tavilyKey ? new TavilySearchProvider(tavilyKey) : undefined;
+        toolRegistry.register(lspQuerySpec, createLspQueryImpl({ lspManager }));
+        toolRegistry.register(webSearchSpec, createWebSearchImpl({ searchProvider, networkPolicy }));
+        toolRegistry.register(fetchUrlSpec, createFetchUrlImpl({ networkPolicy, browserManager }));
+        toolRegistry.register(lookupDocsSpec, createLookupDocsImpl({ searchProvider, networkPolicy, browserManager }));
+
         // --- Model override from request context ---
         const contextModel = typeof request.context?.model === 'string'
             ? request.context.model.trim() : '';
@@ -994,7 +1007,11 @@ program
             // Non-fatal: filesystem/git errors shouldn't crash invoke
             projectSnapshot = undefined;
         }
-        const toolNames = toolRegistry.list().map(t => t.spec.name);
+        const requestedAllowedTools = request.constraints?.allowed_tools;
+        const allowedToolSet = requestedAllowedTools ? new Set(requestedAllowedTools) : null;
+        const toolNames = toolRegistry.list()
+            .map(t => t.spec.name)
+            .filter(name => allowedToolSet === null || allowedToolSet.has(name));
         const systemMessages = buildInvokeSystemMessages({
             cwd,
             toolNames,
@@ -1027,6 +1044,8 @@ program
             resolvedConfig: config,
             sessionGrants: new SessionGrantStore(),
             allowedTools: request.constraints?.allowed_tools ?? null,
+            maxSteps: request.constraints?.max_steps,
+            maxTotalTokens: request.constraints?.max_total_tokens,
             extraTrustedRoots: config.sandbox?.extraTrustedRoots,
             systemMessages,
         };

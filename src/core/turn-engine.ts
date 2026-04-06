@@ -132,6 +132,10 @@ export interface TurnEngineConfig {
     sessionGrants?: SessionGrantStore;
     /** Restrict which tools the agent can use. null = all tools allowed. */
     allowedTools?: string[] | null;
+    /** Optional hard cap on LLM steps for delegated/executor turns. */
+    maxSteps?: number;
+    /** Optional hard cap on cumulative input + output tokens for the turn. */
+    maxTotalTokens?: number;
     /** Custom system messages for invoke/delegation mode (replaces default "You are a helpful coding assistant."). */
     systemMessages?: RequestMessage[];
 }
@@ -149,6 +153,15 @@ export interface TurnResult {
 // --- Max tool calls per message ---
 
 const MAX_TOOL_CALLS_PER_MESSAGE = 10;
+
+function positiveIntegerLimit(value: number | undefined): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
+    return Math.floor(value);
+}
+
+function resolveStepLimit(config: TurnEngineConfig): number {
+    return positiveIntegerLimit(config.maxSteps) ?? (config.interactive ? 25 : Infinity);
+}
 
 // --- Tools that trigger risk assessment for approval flow ---
 
@@ -207,8 +220,9 @@ export class TurnEngine extends EventEmitter {
         let activeProvider: string = config.provider;
         let fallbackIndex = 0;
 
-        const stepLimit = config.interactive ? 25 : Infinity;
+        const stepLimit = resolveStepLimit(config);
         const consecutiveToolLimit = config.interactive ? 10 : Infinity;
+        const tokenLimit = positiveIntegerLimit(config.maxTotalTokens);
 
         const turnId = generateId('turn') as TurnId;
         const turnNumber = 1; // Caller should provide, but for now we derive from existing state
@@ -251,6 +265,7 @@ export class TurnEngine extends EventEmitter {
         // --- Step loop ---
         let stepNumber = 0;
         let outcome: TurnOutcome | undefined;
+        let totalTurnTokens = 0;
 
         while (!outcome) {
             stepNumber++;
@@ -374,6 +389,7 @@ export class TurnEngine extends EventEmitter {
             const resolvedId = resolveModel(activeModel);
             const caps = resolvedId ? getModelCapabilities(resolvedId) : undefined;
             const costUsd = calculateCost(tokenUsage.inputTokens, tokenUsage.outputTokens, caps?.costPerMillion);
+            totalTurnTokens += tokenUsage.inputTokens + tokenUsage.outputTokens;
 
             if (this.metricsAccumulator) {
                 this.metricsAccumulator.recordLlmResponse(
@@ -392,6 +408,16 @@ export class TurnEngine extends EventEmitter {
                     this.writer.writeStep(step);
                     break;
                 }
+            }
+
+            if (tokenLimit !== undefined && totalTurnTokens > tokenLimit) {
+                outcome = 'budget_exceeded';
+                const step = this.recordStep(
+                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider,
+                );
+                steps.push(step);
+                this.writer.writeStep(step);
+                break;
             }
 
             // Text-only → yield with assistant_final

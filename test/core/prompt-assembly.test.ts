@@ -682,12 +682,14 @@ describe('buildInvokeSystemMessages', () => {
         // The exact stall text from the M10.2 Kimi session — used as a negative
         // example so the model recognizes the anti-pattern verbatim.
         expect(content).toContain('Let me make the modifications');
+        expect(content).not.toContain('exec_command');
+        expect(content).not.toContain('edit_file');
     });
 
-    it('declares ask_user and confirm_action as unavailable', () => {
+    it('only declares unavailable tools when they are visible', () => {
         const msgs = buildInvokeSystemMessages({
             cwd: '/tmp',
-            toolNames: ['read_file'],
+            toolNames: ['read_file', 'ask_user', 'confirm_action'],
         });
 
         const content = msgs[0].content as string;
@@ -696,10 +698,24 @@ describe('buildInvokeSystemMessages', () => {
         expect(content).toContain('confirm_action');
     });
 
+    it('does not name tools excluded from the visible tool set', () => {
+        const msgs = buildInvokeSystemMessages({
+            cwd: '/tmp',
+            toolNames: ['read_file', 'fetch_url', 'web_search'],
+        });
+
+        const content = msgs[0].content as string;
+        expect(content).toContain('Available tools (3): read_file, fetch_url, web_search');
+        expect(content).not.toContain('exec_command');
+        expect(content).not.toContain('edit_file');
+        expect(content).not.toContain('ask_user');
+        expect(content).not.toContain('confirm_action');
+    });
+
     it('includes safety block forbidding unauthorized destructive ops', () => {
         const msgs = buildInvokeSystemMessages({
             cwd: '/tmp',
-            toolNames: ['read_file'],
+            toolNames: ['read_file', 'edit_file'],
         });
 
         const content = msgs[0].content as string;
@@ -784,7 +800,7 @@ describe('buildInvokeSystemMessages', () => {
         // closing anchor is last so it is the model's final read.
         const msgs = buildInvokeSystemMessages({
             cwd: '/tmp',
-            toolNames: ['read_file'],
+            toolNames: ['read_file', 'ask_user'],
             projectSnapshot: {
                 root: '/tmp',
                 stack: ['Node'],

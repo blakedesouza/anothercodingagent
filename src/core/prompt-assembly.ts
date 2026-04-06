@@ -361,8 +361,47 @@ function sanitizePath(path: string): string {
     return path.replace(/[\x00-\x1f\x7f]/g, ' ').trim();
 }
 
+function joinToolNames(names: string[]): string {
+    return names.length > 0 ? names.join(', ') : 'none';
+}
+
 export function buildInvokeSystemMessages(options: InvokePromptOptions): RequestMessage[] {
     const lines: string[] = [];
+    const toolSet = new Set(options.toolNames);
+    const contextTools = [
+        'read_file',
+        'find_paths',
+        'search_text',
+        'stat_path',
+        'fetch_url',
+        'web_search',
+        'lookup_docs',
+        'search_semantic',
+        'lsp_query',
+    ].filter(name => toolSet.has(name));
+    const changeTools = [
+        'edit_file',
+        'write_file',
+        'make_directory',
+        'move_path',
+        'delete_path',
+    ].filter(name => toolSet.has(name));
+    const verificationTools = [
+        'exec_command',
+        'open_session',
+        'session_io',
+        'close_session',
+    ].filter(name => toolSet.has(name));
+    const unavailableTools = [
+        {
+            name: 'ask_user',
+            description: 'there is no human to respond. Make the decision yourself using the context you have.',
+        },
+        {
+            name: 'confirm_action',
+            description: 'there is no human to confirm. If the task description authorizes the action, proceed without confirmation.',
+        },
+    ].filter(tool => toolSet.has(tool.name));
 
     // === Identity ===
     // Source: Cline's identity section is 3 lines of grounding per variant.
@@ -409,9 +448,29 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     lines.push('<tool_preambles>');
     lines.push('For any multi-step task, structure your behavior as:');
     lines.push('1. Restate the goal in 1-2 sentences.');
-    lines.push('2. Call tools to gather the context you need (read_file, search_text, find_paths). Call them in PARALLEL when independent.');
-    lines.push('3. Immediately after context is gathered, call the tools that make changes (edit_file, write_file, exec_command). Do NOT describe your plan in prose — execute it via tool calls.');
-    lines.push('4. After changes are made, run verification tools (exec_command for tests/linters).');
+    if (contextTools.length > 0) {
+        lines.push(`2. Gather context using only available context tools: ${joinToolNames(contextTools)}. Call independent reads/searches in PARALLEL when possible.`);
+    } else {
+        lines.push('2. If no context tools are available, use only the provided prompt/context and state that limitation in your final summary.');
+    }
+    if (toolSet.has('fetch_url')) {
+        lines.push('For web URLs, use fetch_url. read_file is only for local filesystem paths, not HTTP(S) URLs.');
+    } else if (toolSet.has('web_search')) {
+        lines.push('For web research, use web_search. If exact URL retrieval is required and no URL-fetch tool is listed, state that limitation instead of inventing another tool.');
+    }
+    if (changeTools.length > 0) {
+        lines.push(`3. Immediately after context is gathered, use only available change tools when the task requires edits: ${joinToolNames(changeTools)}. Do NOT describe your plan in prose — execute it via tool calls.`);
+    } else {
+        lines.push('3. If no change tools are available, do not attempt edits. Complete the read-only task and state the limitation in your final summary.');
+    }
+    if (verificationTools.length > 0) {
+        lines.push(`4. After changes or investigation, verify with available verification tools when relevant: ${joinToolNames(verificationTools)}.`);
+    } else {
+        lines.push('4. If no verification tools are available, verify by inspecting available evidence and state the limitation in your final summary.');
+    }
+    if (toolSet.has('exec_command')) {
+        lines.push('When using exec_command, omit timeout unless a specific limit is required. If overriding it, provide milliseconds, not seconds.');
+    }
     lines.push('5. ONLY after all tool calls are complete and verification has passed, produce your final text summary. That text summary is what ends the turn.');
     lines.push('');
     lines.push('ANTI-PATTERN — this exact text will end the conversation and cause task failure:');
@@ -434,17 +493,19 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     lines.push('</default_to_action>');
     lines.push('');
 
-    // === Unavailable tools ===
-    // ACA-specific. ask_user and confirm_action exist in the registry but
-    // cannot succeed in invoke mode (no human to prompt). Qwen tried to call
-    // ask_user with the entire task envelope as its question during the M10.2
-    // attempt #1. Explicit declaration prevents that.
-    lines.push('<unavailable_tools>');
-    lines.push('These tools exist in the registry but will FAIL if called in this mode. Do NOT attempt them:');
-    lines.push('- ask_user: there is no human to respond. Make the decision yourself using the context you have.');
-    lines.push('- confirm_action: there is no human to confirm. If the task description authorizes the action, proceed without confirmation.');
-    lines.push('</unavailable_tools>');
-    lines.push('');
+    if (unavailableTools.length > 0) {
+        // ACA-specific. ask_user and confirm_action exist in the registry but
+        // cannot succeed in invoke mode (no human to prompt). Only mention them
+        // if they are actually in the visible tool set; otherwise the prompt
+        // should not advertise tools the model cannot call.
+        lines.push('<unavailable_tools>');
+        lines.push('These visible tools will FAIL in this mode. Do NOT attempt them:');
+        for (const tool of unavailableTools) {
+            lines.push(`- ${tool.name}: ${tool.description}`);
+        }
+        lines.push('</unavailable_tools>');
+        lines.push('');
+    }
 
     // === Safety ===
     // ACA-specific. Prevents the "qwen tried to delete the project root" class
@@ -453,7 +514,9 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     lines.push('<safety>');
     lines.push('- Only MODIFY files the task explicitly requires you to change. You may freely READ other files for context.');
     lines.push('- Do NOT delete files or directories unless the task explicitly asks for deletion.');
-    lines.push('- Do NOT call edit_file with an empty edits array or with a path that is a directory. edit_file operates on individual files with at least one edit.');
+    if (toolSet.has('edit_file')) {
+        lines.push('- Do NOT call edit_file with an empty edits array or with a path that is a directory. edit_file operates on individual files with at least one edit.');
+    }
     lines.push('- If a file path you need does not exist, do NOT attempt to create parent directories blindly — read the parent directory first to verify the structure.');
     lines.push('</safety>');
     lines.push('');
@@ -505,27 +568,49 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     // rules. The INCORRECT branch shows the exact stall text observed in the
     // M10.2 Kimi session, making the rule impossible to misinterpret.
     lines.push('<example>');
-    lines.push('Example task: "Add a helper function to src/utils.ts and update the test file"');
+    lines.push('Example task: "Use the available tools to gather evidence, complete the task, and summarize the result"');
     lines.push('');
     lines.push('CORRECT behavior:');
     lines.push('');
     lines.push('Turn 1 — gather context (parallel):');
-    lines.push('  → read_file("src/utils.ts")');
-    lines.push('  → read_file("test/utils.test.ts")');
+    if (toolSet.has('read_file')) {
+        lines.push('  → read_file("src/utils.ts")');
+    }
+    if (toolSet.has('search_text')) {
+        lines.push('  → search_text("target symbol or phrase")');
+    }
+    if (toolSet.has('fetch_url')) {
+        lines.push('  → fetch_url("https://example.com/docs")');
+    }
+    if (!toolSet.has('read_file') && !toolSet.has('search_text') && !toolSet.has('fetch_url')) {
+        lines.push('  → [use the context already provided; no context tool is available]');
+    }
+    if (changeTools.length > 0 || verificationTools.length > 0) {
+        lines.push('');
+        lines.push('Turn 2 — act and verify with available tools:');
+        if (toolSet.has('edit_file')) {
+            lines.push('  → edit_file("src/utils.ts", [{oldText: "...", newText: "..."}])');
+        } else if (toolSet.has('write_file')) {
+            lines.push('  → write_file("path/to/file", "new file contents")');
+        }
+        if (toolSet.has('exec_command')) {
+            lines.push('  → exec_command("verification command")');
+        }
+    }
     lines.push('');
-    lines.push('Turn 2 — make changes and verify (parallel where possible):');
-    lines.push('  → edit_file("src/utils.ts", [{oldText: "...", newText: "..."}])');
-    lines.push('  → edit_file("test/utils.test.ts", [{oldText: "...", newText: "..."}])');
-    lines.push('  → exec_command("npx vitest run test/utils.test.ts")');
-    lines.push('');
-    lines.push('Turn 3 — final summary (ends the turn):');
-    lines.push('  "Added helper function foo() to src/utils.ts (lines 45-52) and test in test/utils.test.ts. Tests pass: 12 total, 1 new."');
+    lines.push('Final turn — final summary (ends the turn):');
+    lines.push('  "Completed the requested work using the available tools. Evidence checked: [...]. Verification: [...]"');
     lines.push('');
     lines.push('INCORRECT behavior that would cause task failure:');
     lines.push('');
     lines.push('Turn 1:');
-    lines.push('  → read_file("src/utils.ts")');
-    lines.push('  → read_file("test/utils.test.ts")');
+    if (toolSet.has('read_file')) {
+        lines.push('  → read_file("src/utils.ts")');
+    } else if (toolSet.has('fetch_url')) {
+        lines.push('  → fetch_url("https://example.com/docs")');
+    } else {
+        lines.push('  → [no tool call available]');
+    }
     lines.push('');
     lines.push('Turn 2:');
     lines.push('  "Now I have all the context I need. Let me make the modifications: 1. Add the helper to utils.ts 2. Update the test..."');

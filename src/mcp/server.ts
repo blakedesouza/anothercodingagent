@@ -26,6 +26,10 @@ import { DEFAULT_API_TIMEOUT_MS } from '../config/schema.js';
  */
 const DEFAULT_DEADLINE_MS = DEFAULT_API_TIMEOUT_MS;
 
+/** Default bounded delegation budget. Callers can narrow/expand per aca_run call. */
+const DEFAULT_MAX_STEPS = 20;
+const DEFAULT_MAX_TOTAL_TOKENS = 200_000;
+
 /** Maximum subprocess output size: 10 MB. Prevents OOM from runaway output. */
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 
@@ -49,18 +53,26 @@ export async function runAcaInvoke(
     options: {
         allowedTools?: string[];
         deadlineMs?: number;
+        maxSteps?: number;
+        maxTotalTokens?: number;
     },
     spawnFn = defaultSpawn,
 ): Promise<AcaInvokeResult> {
     const deadline = options.deadlineMs ?? DEFAULT_DEADLINE_MS;
 
+    const constraints: Record<string, unknown> = {
+        max_steps: options.maxSteps ?? DEFAULT_MAX_STEPS,
+        max_total_tokens: options.maxTotalTokens ?? DEFAULT_MAX_TOTAL_TOKENS,
+    };
+    if (options.allowedTools !== undefined) {
+        constraints.allowed_tools = options.allowedTools;
+    }
+
     const request = {
         contract_version: CONTRACT_VERSION,
         schema_version: SCHEMA_VERSION,
         task,
-        constraints: options.allowedTools !== undefined
-            ? { allowed_tools: options.allowedTools }
-            : undefined,
+        constraints,
         deadline,
     };
 
@@ -251,11 +263,15 @@ export function createMcpServer(
                 task: z.string().describe('The coding task for ACA to execute'),
                 allowed_tools: z.array(z.string()).optional()
                     .describe('Restrict which tools the ACA agent can use (e.g. ["read_file", "search_text"])'),
+                max_steps: z.number().int().positive().optional()
+                    .describe(`Maximum ACA agent loop steps (default: ${DEFAULT_MAX_STEPS})`),
+                max_total_tokens: z.number().int().positive().optional()
+                    .describe(`Maximum cumulative input+output tokens (default: ${DEFAULT_MAX_TOTAL_TOKENS})`),
                 timeout_ms: z.number().optional()
                     .describe('Timeout in milliseconds (default: 900000 = 15 minutes)'),
             },
         },
-        async ({ task, allowed_tools, timeout_ms }) => {
+        async ({ task, allowed_tools, max_steps, max_total_tokens, timeout_ms }) => {
             // Concurrency guard: reject if at capacity
             if (activeInvocations >= MAX_CONCURRENT_AGENTS) {
                 return {
@@ -273,6 +289,8 @@ export function createMcpServer(
                     {
                         allowedTools: allowed_tools,
                         deadlineMs,
+                        maxSteps: max_steps,
+                        maxTotalTokens: max_total_tokens,
                     },
                     spawnFn,
                 );

@@ -148,7 +148,7 @@ describe('Executor Mode', () => {
                 task: 'Fix the bug in auth.ts',
                 input: { file: 'auth.ts' },
                 context: { project: 'myapp' },
-                constraints: { max_steps: 10 },
+                constraints: { max_steps: 10, max_total_tokens: 200_000 },
                 authority: [{ tool: 'exec_command', decision: 'approve' }],
                 deadline: 30000,
             });
@@ -161,6 +161,7 @@ describe('Executor Mode', () => {
                 expect(req.input).toEqual({ file: 'auth.ts' });
                 expect(req.context).toEqual({ project: 'myapp' });
                 expect(req.constraints?.max_steps).toBe(10);
+                expect(req.constraints?.max_total_tokens).toBe(200_000);
                 expect(req.authority).toHaveLength(1);
                 expect(req.authority![0].tool).toBe('exec_command');
                 expect(req.authority![0].decision).toBe('approve');
@@ -292,6 +293,7 @@ describe('Executor Mode', () => {
                 task: 'hello',
                 constraints: {
                     max_steps: 5,
+                    max_total_tokens: 50_000,
                     allowed_tools: ['read_file', 'write_file'],
                     denied_tools: ['exec_command'],
                 },
@@ -300,6 +302,7 @@ describe('Executor Mode', () => {
             expect('request' in result).toBe(true);
             if ('request' in result) {
                 expect(result.request.constraints?.max_steps).toBe(5);
+                expect(result.request.constraints?.max_total_tokens).toBe(50_000);
                 expect(result.request.constraints?.allowed_tools).toEqual(['read_file', 'write_file']);
                 expect(result.request.constraints?.denied_tools).toEqual(['exec_command']);
             }

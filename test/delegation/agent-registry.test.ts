@@ -308,7 +308,7 @@ describe('AgentRegistry', () => {
             expect(profile!.systemPrompt).toContain('Do not modify files');
         });
 
-        it('triage profile has same 11 tools as witness profile', () => {
+        it('triage profile has narrow aggregation tools', () => {
             const toolReg = buildTestToolRegistry();
             const { registry } = AgentRegistry.resolve(toolReg);
 
@@ -316,25 +316,22 @@ describe('AgentRegistry', () => {
             expect(triage).toBeDefined();
             expect(triage!.canDelegate).toBe(false);
             const tools = [...triage!.defaultTools];
-            expect(tools).toHaveLength(11);
+            expect(tools).toHaveLength(7);
             expect(tools).toContain('read_file');
             expect(tools).toContain('find_paths');
             expect(tools).toContain('search_text');
-            expect(tools).toContain('search_semantic');
             expect(tools).toContain('stat_path');
-            expect(tools).toContain('estimate_tokens');
-            expect(tools).toContain('lsp_query');
             expect(tools).toContain('fetch_url');
             expect(tools).toContain('web_search');
             expect(tools).toContain('lookup_docs');
-            expect(tools).toContain('exec_command');
+            expect(tools).not.toContain('search_semantic');
+            expect(tools).not.toContain('estimate_tokens');
+            expect(tools).not.toContain('lsp_query');
+            expect(tools).not.toContain('exec_command');
             expect(tools).not.toContain('write_file');
             expect(tools).not.toContain('edit_file');
             expect(tools).not.toContain('delete_path');
             expect(tools).not.toContain('spawn_agent');
-
-            const witness = registry.getProfile('witness');
-            expect([...triage!.defaultTools].sort()).toEqual([...witness!.defaultTools].sort());
         });
 
         it('triage profile system prompt frames the aggregation role', () => {

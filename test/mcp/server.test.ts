@@ -142,6 +142,8 @@ describe('runAcaInvoke', () => {
         const parsed = JSON.parse(json);
         expect(parsed.task).toBe('read file');
         expect(parsed.contract_version).toBe(CONTRACT_VERSION);
+        expect(parsed.constraints.max_steps).toBe(20);
+        expect(parsed.constraints.max_total_tokens).toBe(200000);
         expect(parsed.deadline).toBe(10000);
         expect(deadline).toBe(10000);
     });
@@ -156,6 +158,17 @@ describe('runAcaInvoke', () => {
         expect(parsed.constraints.allowed_tools).toEqual(['read_file', 'search_text']);
     });
 
+    it('includes explicit max_steps and max_total_tokens in constraints', async () => {
+        const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
+            .mockResolvedValue(makeSuccessResult('done'));
+
+        await runAcaInvoke('task', { maxSteps: 7, maxTotalTokens: 50000 }, spawnFn);
+
+        const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
+        expect(parsed.constraints.max_steps).toBe(7);
+        expect(parsed.constraints.max_total_tokens).toBe(50000);
+    });
+
     it('uses default deadline when not specified', async () => {
         const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
             .mockResolvedValue(makeSuccessResult('done'));
@@ -166,14 +179,17 @@ describe('runAcaInvoke', () => {
         expect(deadline).toBe(DEFAULT_API_TIMEOUT_MS); // pinned to the project-wide LLM timeout
     });
 
-    it('omits constraints when no allowed_tools', async () => {
+    it('keeps default budget constraints when no allowed_tools is provided', async () => {
         const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
             .mockResolvedValue(makeSuccessResult('done'));
 
         await runAcaInvoke('task', {}, spawnFn);
 
         const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
-        expect(parsed.constraints).toBeUndefined();
+        expect(parsed.constraints).toEqual({
+            max_steps: 20,
+            max_total_tokens: 200000,
+        });
     });
 });
 
@@ -199,6 +215,8 @@ describe('MCP Server (in-memory transport)', () => {
         expect(acaRun!.description).toContain('ACA');
         expect(acaRun!.inputSchema.properties).toHaveProperty('task');
         expect(acaRun!.inputSchema.properties).toHaveProperty('allowed_tools');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('max_steps');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('max_total_tokens');
         expect(acaRun!.inputSchema.properties).toHaveProperty('timeout_ms');
         expect(acaRun!.inputSchema.properties).not.toHaveProperty('model');
         expect(acaRun!.inputSchema.required).toContain('task');
@@ -296,6 +314,26 @@ describe('MCP Server (in-memory transport)', () => {
         await client.close();
     });
 
+    it('aca_run propagates explicit budget caps', async () => {
+        spawnFn.mockResolvedValue(makeSuccessResult('done'));
+        const client = await connectClient(spawnFn);
+
+        await client.callTool({
+            name: 'aca_run',
+            arguments: {
+                task: 'bounded task',
+                max_steps: 7,
+                max_total_tokens: 50000,
+            },
+        });
+
+        const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
+        expect(parsed.constraints.max_steps).toBe(7);
+        expect(parsed.constraints.max_total_tokens).toBe(50000);
+
+        await client.close();
+    });
+
     it('aca_run handles spawn failure gracefully', async () => {
         spawnFn.mockRejectedValue(new Error('ENOENT: aca binary not found'));
         const client = await connectClient(spawnFn);
@@ -360,13 +398,14 @@ describe('Authority mapping (M9.2)', () => {
         const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
         expect(parsed.constraints).toBeDefined();
         expect(parsed.constraints.allowed_tools).toEqual(['read_file', 'search_text']);
-        // No extra constraints injected
+        expect(parsed.constraints.max_steps).toBe(20);
+        expect(parsed.constraints.max_total_tokens).toBe(200000);
         expect(parsed.constraints.denied_tools).toBeUndefined();
 
         await client.close();
     });
 
-    it('omitting allowed_tools → no constraints in request', async () => {
+    it('omitting allowed_tools → default budget constraints only', async () => {
         spawnFn.mockResolvedValue(makeSuccessResult('done'));
         const client = await connectClient(spawnFn);
 
@@ -376,7 +415,10 @@ describe('Authority mapping (M9.2)', () => {
         });
 
         const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
-        expect(parsed.constraints).toBeUndefined();
+        expect(parsed.constraints).toEqual({
+            max_steps: 20,
+            max_total_tokens: 200000,
+        });
 
         await client.close();
     });
@@ -397,6 +439,8 @@ describe('Authority mapping (M9.2)', () => {
         // Empty array means "no tools allowed" — stricter than omitting
         expect(parsed.constraints).toBeDefined();
         expect(parsed.constraints.allowed_tools).toEqual([]);
+        expect(parsed.constraints.max_steps).toBe(20);
+        expect(parsed.constraints.max_total_tokens).toBe(200000);
 
         await client.close();
     });
@@ -835,6 +879,8 @@ describe('Environment propagation (M10.1b)', () => {
         expect(parsed.contract_version).toBe(CONTRACT_VERSION);
         expect(parsed.schema_version).toBe(SCHEMA_VERSION);
         expect(parsed.task).toBe('read file.txt');
+        expect(parsed.constraints.max_steps).toBe(20);
+        expect(parsed.constraints.max_total_tokens).toBe(200000);
         expect(parsed.deadline).toBe(60000);
         expect(deadline).toBe(60000);
     });

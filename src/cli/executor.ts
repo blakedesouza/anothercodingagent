@@ -45,6 +45,7 @@ export interface InvokeRequest {
 
 export interface InvokeConstraints {
     max_steps?: number;
+    max_total_tokens?: number;
     allowed_tools?: string[];
     denied_tools?: string[];
 }
@@ -168,6 +169,7 @@ export function buildDescriptor(toolNames: string[]): CapabilityDescriptor {
                     type: 'object',
                     properties: {
                         max_steps: { type: 'number' },
+                        max_total_tokens: { type: 'number' },
                         allowed_tools: { type: 'array', items: { type: 'string' } },
                         denied_tools: { type: 'array', items: { type: 'string' } },
                     },
@@ -218,7 +220,7 @@ export function buildDescriptor(toolNames: string[]): CapabilityDescriptor {
             required: ['contract_version', 'schema_version', 'status'],
         },
         constraints: {
-            max_steps_per_turn: null, // no step limit in invoke mode; MCP deadline is the safety net
+            max_steps_per_turn: null, // no default step limit; invoke callers may set constraints.max_steps
             supports_streaming: false,
             ephemeral_sessions: true,
             supported_tools: toolNames,
@@ -358,6 +360,7 @@ function parseConstraints(raw: unknown): InvokeConstraints | undefined {
     const obj = raw as Record<string, unknown>;
     return {
         max_steps: typeof obj.max_steps === 'number' ? obj.max_steps : undefined,
+        max_total_tokens: typeof obj.max_total_tokens === 'number' ? obj.max_total_tokens : undefined,
         allowed_tools: Array.isArray(obj.allowed_tools) ? obj.allowed_tools.filter((t): t is string => typeof t === 'string') : undefined,
         denied_tools: Array.isArray(obj.denied_tools) ? obj.denied_tools.filter((t): t is string => typeof t === 'string') : undefined,
     };

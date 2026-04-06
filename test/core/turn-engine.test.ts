@@ -304,6 +304,43 @@ describe('TurnEngine', () => {
         expect(result.steps.length).toBe(36); // 35 tool steps + 1 text step
     });
 
+    it('configured maxSteps caps non-interactive tool loops', async () => {
+        const responses: StreamEvent[][] = [];
+        for (let i = 0; i < 10; i++) {
+            responses.push(toolCallResponse([{ name: 'echo', args: { text: `step${i}` } }]));
+        }
+        const provider = createMockProvider(responses);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true, maxSteps: 3 }),
+            'Loop with configured cap',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('max_steps');
+        expect(result.steps).toHaveLength(3);
+        expect(result.items.filter(isToolResult)).toHaveLength(2);
+    });
+
+    it('configured maxTotalTokens caps cumulative turn token usage', async () => {
+        const provider = createMockProvider([
+            textResponse('This response is over the delegated token budget', 11, 5),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true, maxTotalTokens: 15 }),
+            'Use too many tokens',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('budget_exceeded');
+        expect(result.steps).toHaveLength(1);
+    });
+
     // Test 5: Consecutive tool limit (10 in interactive)
     it('consecutive tool limit → yields with max_consecutive_tools at step 10', async () => {
         const responses: StreamEvent[][] = [];
