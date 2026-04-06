@@ -115,8 +115,8 @@ No range negotiation in v1. If versions are incompatible, the structured error t
 
 When the agent is invoked by an external system:
 
-- `aca describe --json` returns the capability descriptor including both `contract_version` and `schema_version`
-- `aca invoke --json` reads structured input from stdin and returns structured output on stdout
+- `aca describe` returns the capability descriptor including both `contract_version` and `schema_version`
+- `aca invoke` reads structured input from stdin and returns structured output on stdout
 - Version incompatibility returns structured JSON on stdout with a non-zero exit code
 
 The version fields live in the JSON envelope, not in transport headers or CLI flags. This keeps the versioning transport-agnostic — the same payloads work over CLI, HTTP, or IPC.
@@ -1269,8 +1269,8 @@ The entry point and invocation modes. This block wires the user-facing CLI to th
   | Command | Purpose | Notes |
   |---|---|---|
   | `aca [task]` | Main entry — interactive (no args) or one-shot (with task) | Default command |
-  | `aca describe` | Output capability descriptor (delegation contract) | Always `--json` |
-  | `aca invoke` | Execute structured task from stdin (delegation contract) | Always `--json` |
+  | `aca describe` | Output capability descriptor (delegation contract) | Always JSON on stdout |
+  | `aca invoke` | Execute structured task from stdin (delegation contract) | Always JSON on stdin and stdout |
   | `aca init` | Initialize `~/.aca/` directory structure and secrets | Setup command |
   | `aca configure` | Interactive configuration wizard | Setup command |
   | `aca trust [path]` | Mark a workspace as trusted (Block 9) | Modifies `~/.aca/config.json` |
@@ -1288,12 +1288,12 @@ The entry point and invocation modes. This block wires the user-facing CLI to th
   | `aca describe` or `aca invoke` subcommand | Executor |
   | `!process.stdin.isTTY && --json` flag present | Executor |
   | Positional `[task]` argument present | One-shot |
-  | `!process.stdin.isTTY && !--json` (piped text, no JSON flag) | One-shot (piped text becomes the task) |
+  | `!process.stdin.isTTY && command !== 'invoke'` (piped text, not the executor subcommand) | One-shot (piped text becomes the task) |
   | None of the above | Interactive |
 
   **Edge case resolutions:**
-  - `echo "fix the bug" | aca` — one-shot. The piped text is read as the task input. Executor requires `--json`
-  - `echo '{"task":"..."}' | aca invoke --json` — executor. The subcommand is unambiguous
+  - `echo "fix the bug" | aca` — one-shot. The piped text is read as the task input.
+  - `echo '{"task":"..."}' | aca invoke` — executor. The subcommand is unambiguous; stdin is parsed as the InvokeRequest JSON envelope.
   - `aca --resume "continue fixing"` — resume session + one-shot (positional arg present)
   - `aca --resume` (with TTY) — resume session + interactive
   - `aca --resume` (without TTY) — error: no task input and no TTY for interaction
@@ -1355,9 +1355,9 @@ The entry point and invocation modes. This block wires the user-facing CLI to th
 
   The agent operates as a callee in the delegation contract. Executor mode is entered via subcommand, not via flag inference. The two executor subcommands map directly to the universal capability contract operations defined in the Pluggable Delegation block.
 
-  *`aca describe --json`:* A fast path that outputs the capability descriptor as a single JSON object on stdout and exits. This command skips workspace detection, config loading, session creation, and all other startup phases — the descriptor is a static declaration that depends only on the agent's version and built-in capabilities. The output includes `contract_version`, `schema_version`, capability name, description, input/output schemas, and constraints.
+  *`aca describe`:* A fast path that outputs the capability descriptor as a single JSON object on stdout and exits. This command skips workspace detection, config loading, session creation, and all other startup phases — the descriptor is a static declaration that depends only on the agent's version and built-in capabilities. The output includes `contract_version`, `schema_version`, capability name, description, input/output schemas, and constraints.
 
-  *`aca invoke --json`:* Reads a complete JSON request from stdin, executes the task, and writes a structured JSON result to stdout. The stdin envelope matches the universal capability contract's invoke request shape exactly — `contract_version`, `schema_version`, `task`, `input`, `context`, `constraints`, `authority`, `deadline`. Version compatibility is checked before execution; mismatches return a structured `unsupported_version` error on stdout with a non-zero exit code (per the delegation contract's error shape).
+  *`aca invoke`:* Reads a complete JSON request from stdin, executes the task, and writes a structured JSON result to stdout. The stdin envelope matches the universal capability contract's invoke request shape exactly — `contract_version`, `schema_version`, `task`, `input`, `context`, `constraints`, `authority`, `deadline`. Version compatibility is checked before execution; mismatches return a structured `unsupported_version` error on stdout with a non-zero exit code (per the delegation contract's error shape).
 
   *I/O contract:* All output is structured JSON on stdout. Errors are JSON on stdout with a non-zero exit code — never raw text on stderr. Human-readable stderr output is fully suppressed in executor mode (no progress indicators, no status lines, no streaming text). The caller parses stdout; stderr is reserved for catastrophic failures only (e.g., out-of-memory, segfault). This keeps the protocol clean for machine consumption.
 

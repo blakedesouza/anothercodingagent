@@ -1,0 +1,9 @@
+- High — `06-milestone6-indexing.md:36`: the storage schema is still underspecified and no longer matches Block 20. `chunks`/`symbols` use `lines`, and symbols use `parent_id`, but the source spec requires `start_line`/`end_line` and `parent_symbol_id`. That breaks clean mapping to M6.5’s `startLine`/`endLine` result shape and makes symbol hierarchy queries ambiguous.
+
+- High — `06-milestone6-indexing.md:51-55`: the indexing scope now diverges materially from Block 20. The whitelist drops supported extensions like `.tsx`, `.jsx`, `.hpp`, `.cs`, `.php`, `.scala`, `.yml`, while broadening `.json` and `.yaml` beyond the source’s “package manifests only” / “config files only” rules and adding new types not in Block 20 (`.html`, `.css`, `.sql`, `.sh`). This would both miss supported source files and index extra noise.
+
+- High — `06-milestone6-indexing.md:52-53,65-66`: the new guardrail limits (`1 MB`, `10,000 files`) still conflict with Block 20’s defined config defaults (`100KB`, `5000`). The tests now lock in a different contract than the source block, with real perf/storage implications.
+
+- Medium — `06-milestone6-indexing.md:55-56,63-75`: required skip/chunking behavior is still incomplete. Block 20 says `coverage/`, binary files, and generated files are always skipped, and markdown should chunk at heading boundaries. None of that is specified or tested here, even though `.md` is explicitly indexed.
+
+- Medium — `06-milestone6-indexing.md:45`: deletion coverage is incomplete. The file-removal test only deletes chunks; it does not require deleting the file row and symbol rows for that path, which leaves the index internally inconsistent after removals.

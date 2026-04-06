@@ -35,6 +35,20 @@ export interface MockErrorResponse {
     errorBody: { error: { message: string; type: string; code: string } };
 }
 
+export interface MockHangResponse {
+    type: 'hang';
+}
+
+export interface MockRawStreamResponse {
+    type: 'raw_stream';
+    statusCode?: number;
+    headers?: Record<string, string>;
+    rawBody: string;
+    destroyAfterBytes?: number;
+    /** Send rawBody then keep connection open (no res.end()) to simulate mid-stream silence */
+    hangAfterSend?: boolean;
+}
+
 export interface MockStreamingConfig {
     chunkDelayMs?: number;
     inputTokens?: number;
@@ -42,7 +56,7 @@ export interface MockStreamingConfig {
     finishReason?: string;
 }
 
-export type MockResponse = MockTextResponse | MockToolCallResponse | MockErrorResponse;
+export type MockResponse = MockTextResponse | MockToolCallResponse | MockErrorResponse | MockHangResponse | MockRawStreamResponse;
 
 export class MockNanoGPTServer {
     private server: Server | null = null;
@@ -136,16 +150,43 @@ export class MockNanoGPTServer {
 
             const { response, config } = queued;
 
+            if (response.type === 'hang') {
+                // Don't respond — let it hang until the client times out
+                return;
+            }
+
+            if (response.type === 'raw_stream') {
+                res.writeHead(response.statusCode ?? 200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                    ...response.headers,
+                });
+                if (response.destroyAfterBytes !== undefined) {
+                    const partial = response.rawBody.slice(0, response.destroyAfterBytes);
+                    res.write(partial);
+                    res.destroy();
+                } else if (response.hangAfterSend) {
+                    // Send data then keep connection open (simulate mid-stream silence)
+                    res.write(response.rawBody);
+                } else {
+                    res.end(response.rawBody);
+                }
+                return;
+            }
+
             if (response.type === 'error') {
                 res.writeHead(response.statusCode, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify(response.errorBody));
                 return;
             }
 
+            // After hang/raw_stream/error checks, only text and tool_call remain
+            const streamable = response as MockTextResponse | MockToolCallResponse;
             if (body.stream === false) {
-                this.sendNonStreamingResponse(res, response, config);
+                this.sendNonStreamingResponse(res, streamable, config);
             } else {
-                this.sendStreamingResponse(res, response, config);
+                this.sendStreamingResponse(res, streamable, config);
             }
         });
     }

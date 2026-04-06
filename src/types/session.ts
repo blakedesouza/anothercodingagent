@@ -25,6 +25,7 @@ export interface ContextStats {
 export interface StepRecord {
     id: StepId;
     turnId: TurnId;
+    stepNumber: number;
     model: string;
     provider: string;
     inputItemSeqs: number[];
@@ -70,6 +71,7 @@ export interface Session {
     status: SessionStatus;
     model: string;
     provider: string;
+    configSnapshot: Record<string, unknown>;
     turns: TurnRecord[];
     currentTurnNumber: number;
     nextItemSeq: number;

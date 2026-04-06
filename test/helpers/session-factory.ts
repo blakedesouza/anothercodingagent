@@ -98,6 +98,7 @@ export function createToolResultItem(
             data,
             truncated: false,
             bytesReturned: Buffer.byteLength(data, 'utf-8'),
+            bytesOmitted: 0,
             retryable: false,
             timedOut: false,
             mutationState: 'none',
@@ -106,15 +107,22 @@ export function createToolResultItem(
     };
 }
 
+let stepCounter = 0;
+
+export function resetStepCounter(): void {
+    stepCounter = 0;
+}
+
 export function createStep(
     turnId: TurnId,
     inputSeqs: number[],
     outputSeqs: number[],
-    options?: { model?: string; provider?: string; finishReason?: string },
+    options?: { model?: string; provider?: string; finishReason?: string; stepNumber?: number },
 ): StepRecord {
     return {
         id: generateId('step') as StepId,
         turnId,
+        stepNumber: options?.stepNumber ?? ++stepCounter,
         model: options?.model ?? 'mock-model',
         provider: options?.provider ?? 'nanogpt',
         inputItemSeqs: inputSeqs,
@@ -187,6 +195,7 @@ export function createSession(options: SessionFactoryOptions = {}): {
     items: ConversationItem[];
 } {
     resetSeqCounter();
+    resetStepCounter();
 
     const sessionId = generateId('session') as SessionId;
     const turnCount = options.turnCount ?? 0;
@@ -205,6 +214,7 @@ export function createSession(options: SessionFactoryOptions = {}): {
         status: options.status ?? 'active',
         model: options.model ?? 'mock-model',
         provider: options.provider ?? 'nanogpt',
+        configSnapshot: { model: options.model ?? 'mock-model', provider: options.provider ?? 'nanogpt' },
         turns,
         currentTurnNumber: turnCount,
         nextItemSeq: seqCounter + 1,

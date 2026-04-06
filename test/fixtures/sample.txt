@@ -1,0 +1,4 @@
+Hello, this is a sample text file for integration testing.
+It contains multiple lines of content.
+Line 3: the agent should be able to read and summarize this.
+Line 4: end of file.

@@ -5,9 +5,19 @@ export type {
     ItemId,
     ToolCallId,
     WorkspaceId,
+    EventId,
+    AgentId,
     AnyId,
+    IdType,
 } from './ids.js';
-export { generateId } from './ids.js';
+export { generateId, ID_PREFIXES } from './ids.js';
+
+export type { AgentIdentity, AgentProfile } from './agent.js';
+
+export type { AcaError } from './errors.js';
+export { TypedError } from './errors.js';
+
+export { SequenceGenerator } from './sequence.js';
 
 export type {
     TextPart,
@@ -20,6 +30,7 @@ export type {
     ToolResultItem,
     SummaryItem,
     ConversationItem,
+    DelegationRecord,
 } from './conversation.js';
 
 export type {
@@ -48,6 +59,8 @@ export type {
     ToolSupport,
     ToolReliability,
     ModelCapabilities,
+    Result,
+    ConfigError,
     ProviderConfig,
     EmbeddingResult,
     ProviderDriver,

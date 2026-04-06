@@ -1,0 +1,5 @@
+- Medium, `08-cross-cutting.md:19` vs `08-cross-cutting.md:26`: the ordering is still internally inconsistent. Line 19 says the mock provider/test infra must exist before implementation begins because M1 and M4 depend on it, but line 26 still defers part of that mock-provider work until “before M5 tests.” If Anthropic/OpenAI-shaped fixtures are needed to validate canonical response normalization before M5, this fix is incomplete.
+
+- Medium, `08-cross-cutting.md:23`: “All tests run on every commit” is not a valid CI requirement as written. CI can reliably enforce on push/PR, not on every local commit. If you mean local pre-commit hooks, that belongs outside the CI section; otherwise the enforcement target is ambiguous.
+
+- Low, `08-cross-cutting.md:24`: `@typescript-eslint/no-explicit-any` does not fully cover the stated requirement of “no any escape hatches.” It blocks explicit `any`, but not other common bypasses like `@ts-ignore` / `@ts-nocheck`. If the intent is strict anti-escape-hatch policy, the control list is still incomplete.

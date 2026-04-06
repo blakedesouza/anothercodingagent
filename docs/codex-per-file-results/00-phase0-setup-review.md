@@ -1,0 +1,5 @@
+- Medium — Section `0.2` (`Create src/index.ts` with `commander`): the checklist now requires `commander`, but `0.2` never installs it. From a clean repo, this phase cannot complete as written.
+
+- Medium — Section `0.2` acceptance tests (`tsx src/index.ts --help` / `--version`): `tsx` is only listed as project tooling, but the test commands assume a globally available binary. Use `npm exec tsx ...` or an npm script, otherwise the verification steps are not reliably runnable.
+
+- Medium — Section `0.3` (`Test session factory produces valid sessions loadable by SessionManager`): this is still forward-dependent on a later `SessionManager` implementation, so Phase 0 is not fully testable on its own. Either add a Phase 0 validator/loader or move that acceptance check to the step that introduces `SessionManager`.

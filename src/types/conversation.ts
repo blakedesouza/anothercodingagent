@@ -1,4 +1,5 @@
-import type { ItemId, ToolCallId } from './ids.js';
+import type { ItemId, ToolCallId, SessionId, EventId } from './ids.js';
+import type { AcaError } from './errors.js';
 
 // --- Parts model ---
 
@@ -18,7 +19,7 @@ export type AssistantPart = TextPart | ToolCallPart;
 
 // --- Tool output envelope (Block 15) ---
 
-export type MutationState = 'none' | 'filesystem' | 'process' | 'network';
+export type MutationState = 'none' | 'filesystem' | 'process' | 'network' | 'indeterminate';
 
 export interface BlobRef {
     sha256: string;
@@ -30,12 +31,16 @@ export interface BlobRef {
 export interface ToolOutput {
     status: 'success' | 'error';
     data: string;
-    error?: string;
+    error?: AcaError;
     truncated: boolean;
     bytesReturned: number;
+    bytesOmitted: number;
     retryable: boolean;
     timedOut: boolean;
     mutationState: MutationState;
+    blobRef?: BlobRef;
+    /** Set by user-interaction tools to signal the turn engine to yield. */
+    yieldOutcome?: 'awaiting_user' | 'approval_required';
 }
 
 // --- Conversation items ---
@@ -56,7 +61,7 @@ export interface ToolResultItem {
     toolCallId: ToolCallId;
     toolName: string;
     output: ToolOutput;
-    blobRef?: BlobRef;
+    delegation?: DelegationRecord;
     timestamp: string;
 }
 
@@ -71,3 +76,12 @@ export interface SummaryItem {
 }
 
 export type ConversationItem = MessageItem | ToolResultItem | SummaryItem;
+
+// --- Delegation record (6th core type, embedded in ToolResultItem for delegation tools) ---
+
+export interface DelegationRecord {
+    childSessionId: SessionId;
+    childAgentId: string;
+    finalStatus: 'completed' | 'failed' | 'cancelled';
+    parentEventId: EventId;
+}

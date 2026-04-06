@@ -13,6 +13,13 @@ yarn-error.log*
 .idea/
 .DS_Store
 
-plan.md
-docs/
-CLAUDE.md
+# Local agent/editor runtime config
+.aca/
+.claude/
+.codex
+.mcp.json
+
+# Scratch investigation notes/artifacts
+bug-report-*/
+codex-ideas/
+codex-troubleshooting/

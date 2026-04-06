@@ -8,6 +8,15 @@ export interface TextDeltaEvent {
 export interface ToolCallDeltaEvent {
     type: 'tool_call_delta';
     index: number;
+    /**
+     * Provider-supplied tool-call id, when available. OpenAI-compatible
+     * providers send this on the first chunk of each tool call; subsequent
+     * chunks for the same call typically omit it. Used by the turn-engine
+     * accumulator to detect parallel tool calls that share an `index` but
+     * have distinct ids — a non-conformant pattern observed on some NanoGPT
+     * gemma backends, which emit several parallel calls all at index 0.
+     */
+    id?: string;
     name?: string;
     arguments?: string;
 }
@@ -85,6 +94,16 @@ export interface ModelCapabilities {
     toolReliability: ToolReliability;
     costPerMillion: { input: number; output: number; cachedInput?: number };
     specialFeatures: string[];
+    bytesPerToken: number;
+}
+
+// --- Result type ---
+
+export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+export interface ConfigError {
+    code: string;
+    message: string;
 }
 
 // --- Provider driver interface ---
@@ -107,5 +126,5 @@ export interface ProviderDriver {
     capabilities(model: string): ModelCapabilities;
     stream(request: ModelRequest): AsyncIterable<StreamEvent>;
     embed?(texts: string[], model: string): Promise<EmbeddingResult>;
-    validate(config: ProviderConfig): { ok: boolean; error?: string };
+    validate(config: ProviderConfig): Result<void, ConfigError>;
 }

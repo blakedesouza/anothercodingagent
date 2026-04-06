@@ -1,0 +1,13 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`DiffRenderer — unified diff > renders a single line change with colors (snapshot) 1`] = `
+"[2m===================================================================[22m
+[2m--- a/src/config.ts	[22m
+[2m+++ b/src/config.ts	[22m
+[36m@@ -1,3 +1,3 @@[39m
+[2m const x = 1;[22m
+[31m-const y = 2;[39m
+[32m+const y = 99;[39m
+[2m const z = 3;[22m
+"
+`;
