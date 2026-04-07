@@ -104,6 +104,14 @@ describe('read_file tool', () => {
             expect(data.content).toBe('just one line');
             expect(data.lineCount).toBe(1);
         });
+
+        it('resolves relative paths against workspaceRoot instead of process cwd', async () => {
+            const result = await runner.execute('read_file', { path: 'hello.txt' }, baseContext);
+            expect(result.status).toBe('success');
+
+            const data = parseData(result);
+            expect(data.content).toBe('Hello, world!\nSecond line\nThird line');
+        });
     });
 
     describe('line range', () => {

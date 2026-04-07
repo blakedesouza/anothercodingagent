@@ -1,7 +1,7 @@
 import { rename, lstat } from 'node:fs/promises';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
-import { checkZone } from './workspace-sandbox.js';
+import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 export const movePathSpec: ToolSpec = {
     name: 'move_path',
@@ -46,10 +46,12 @@ export const movePathImpl: ToolImplementation = async (
     if (srcDenied) return srcDenied;
     const dstDenied = await checkZone(destination, context);
     if (dstDenied) return dstDenied;
+    const sourcePath = resolveToolPath(source, context);
+    const destinationPath = resolveToolPath(destination, context);
 
     // Verify source exists
     try {
-        await lstat(source);
+        await lstat(sourcePath);
     } catch (err: unknown) {
         const nodeErr = err as NodeJS.ErrnoException;
         if (nodeErr.code === 'ENOENT') {
@@ -61,14 +63,14 @@ export const movePathImpl: ToolImplementation = async (
     // Check whether destination already exists (for conflict flag)
     let conflict = false;
     try {
-        await lstat(destination);
+        await lstat(destinationPath);
         conflict = true;
     } catch {
         // destination doesn't exist — no conflict
     }
 
     try {
-        await rename(source, destination);
+        await rename(sourcePath, destinationPath);
     } catch (err: unknown) {
         const nodeErr = err as NodeJS.ErrnoException;
         if (nodeErr.code === 'EACCES' || nodeErr.code === 'EPERM') {

@@ -2,7 +2,7 @@ import { readdir, stat, readFile } from 'node:fs/promises';
 import { join, relative, basename } from 'node:path';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
-import { checkZone } from './workspace-sandbox.js';
+import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -140,10 +140,11 @@ export const findPathsImpl: ToolImplementation = async (
     // Zone check — root must be within allowed sandbox zones
     const denied = await checkZone(root, context);
     if (denied) return denied;
+    const searchRoot = resolveToolPath(root, context);
 
     // Verify root is a directory
     try {
-        const rootStat = await stat(root);
+        const rootStat = await stat(searchRoot);
         if (!rootStat.isDirectory()) {
             return errorOutput('tool.not_directory', `Root is not a directory: ${root}`);
         }
@@ -158,7 +159,7 @@ export const findPathsImpl: ToolImplementation = async (
     // Load .gitignore patterns from the root
     let gitignorePatterns: RegExp[] = [];
     try {
-        const gitignoreContent = await readFile(join(root, '.gitignore'), 'utf8');
+        const gitignoreContent = await readFile(join(searchRoot, '.gitignore'), 'utf8');
         gitignorePatterns = parseGitignorePatterns(gitignoreContent);
     } catch {
         // No .gitignore — fine
@@ -187,7 +188,7 @@ export const findPathsImpl: ToolImplementation = async (
             }
 
             const fullPath = join(dir, entry.name);
-            const relPath = relative(root, fullPath);
+            const relPath = relative(searchRoot, fullPath);
 
             // Apply .gitignore exclusions
             if (isIgnoredByGitignore(relPath, gitignorePatterns)) continue;
@@ -222,7 +223,7 @@ export const findPathsImpl: ToolImplementation = async (
         }
     }
 
-    await walk(root);
+    await walk(searchRoot);
 
     const data = JSON.stringify({ matches, truncated });
     return {

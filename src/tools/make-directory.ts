@@ -1,7 +1,7 @@
 import { mkdir, stat } from 'node:fs/promises';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
-import { checkZone } from './workspace-sandbox.js';
+import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 export const makeDirectorySpec: ToolSpec = {
     name: 'make_directory',
@@ -42,11 +42,12 @@ export const makeDirectoryImpl: ToolImplementation = async (
     // Zone check — must be within allowed sandbox zones
     const denied = await checkZone(dirPath, context);
     if (denied) return denied;
+    const targetPath = resolveToolPath(dirPath, context);
 
     // Check if path already exists
     let alreadyExisted = false;
     try {
-        const s = await stat(dirPath);
+        const s = await stat(targetPath);
         if (!s.isDirectory()) {
             return errorOutput('tool.not_directory', `Path exists but is not a directory: ${dirPath}`);
         }
@@ -60,7 +61,7 @@ export const makeDirectoryImpl: ToolImplementation = async (
 
     if (!alreadyExisted) {
         try {
-            await mkdir(dirPath, { recursive: true });
+            await mkdir(targetPath, { recursive: true });
         } catch (err: unknown) {
             const nodeErr = err as NodeJS.ErrnoException;
             if (nodeErr.code === 'EACCES' || nodeErr.code === 'EPERM') {

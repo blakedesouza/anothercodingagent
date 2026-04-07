@@ -2,7 +2,7 @@ import { lstat, unlink, readdir, rm, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
-import { checkZone } from './workspace-sandbox.js';
+import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 export const deletePathSpec: ToolSpec = {
     name: 'delete_path',
@@ -71,10 +71,11 @@ export const deletePathImpl: ToolImplementation = async (
     // Zone check — must be within allowed sandbox zones
     const denied = await checkZone(targetPath, context);
     if (denied) return denied;
+    const resolvedPath = resolveToolPath(targetPath, context);
 
     let pathStat;
     try {
-        pathStat = await lstat(targetPath);
+        pathStat = await lstat(resolvedPath);
     } catch (err: unknown) {
         const nodeErr = err as NodeJS.ErrnoException;
         if (nodeErr.code === 'ENOENT') {
@@ -90,7 +91,7 @@ export const deletePathImpl: ToolImplementation = async (
         if (!recursive) {
             let entries: string[];
             try {
-                entries = await readdir(targetPath);
+                entries = await readdir(resolvedPath);
             } catch (err: unknown) {
                 const nodeErr = err as NodeJS.ErrnoException;
                 return errorOutput('tool.io_error', `Cannot read directory: ${targetPath} (${nodeErr.code ?? 'unknown'})`);
@@ -102,7 +103,7 @@ export const deletePathImpl: ToolImplementation = async (
                 );
             }
             try {
-                await rmdir(targetPath);
+                await rmdir(resolvedPath);
             } catch (err: unknown) {
                 const nodeErr = err as NodeJS.ErrnoException;
                 if (nodeErr.code === 'EACCES' || nodeErr.code === 'EPERM') {
@@ -116,8 +117,8 @@ export const deletePathImpl: ToolImplementation = async (
         // Recursive delete: count before removing
         let deleted: number;
         try {
-            deleted = await countItems(targetPath);
-            await rm(targetPath, { recursive: true, force: false });
+            deleted = await countItems(resolvedPath);
+            await rm(resolvedPath, { recursive: true, force: false });
         } catch (err: unknown) {
             const nodeErr = err as NodeJS.ErrnoException;
             if (nodeErr.code === 'EACCES' || nodeErr.code === 'EPERM') {
@@ -130,7 +131,7 @@ export const deletePathImpl: ToolImplementation = async (
 
     // File or symlink
     try {
-        await unlink(targetPath);
+        await unlink(resolvedPath);
     } catch (err: unknown) {
         const nodeErr = err as NodeJS.ErrnoException;
         if (nodeErr.code === 'EACCES' || nodeErr.code === 'EPERM') {

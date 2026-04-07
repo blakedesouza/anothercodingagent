@@ -142,6 +142,20 @@ describe('search_text tool', () => {
             expect(matches[0].context_before).toEqual([]);
             expect(matches[0].context_after).toEqual([]);
         });
+
+        it('resolves a relative root against workspaceRoot instead of process cwd', async () => {
+            const result = await runner.execute(
+                'search_text',
+                { root: '.', pattern: 'export function helper' },
+                baseContext,
+            );
+            expect(result.status).toBe('success');
+
+            const data = parseData(result);
+            const matches = data.matches as SearchMatch[];
+            expect(matches).toHaveLength(1);
+            expect(matches[0].file.endsWith('helper.ts')).toBe(true);
+        });
     });
 
     describe('exact match mode', () => {

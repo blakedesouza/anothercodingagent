@@ -2,7 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname } from 'node:path';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
-import { checkZone } from './workspace-sandbox.js';
+import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 // --- Constants ---
 
@@ -110,6 +110,7 @@ export const readFileImpl: ToolImplementation = async (
     // Zone check — must be within allowed sandbox zones
     const denied = await checkZone(filePath, context);
     if (denied) return denied;
+    const targetPath = resolveToolPath(filePath, context);
 
     // Validate line range
     if (lineStart !== undefined && lineEnd !== undefined && lineEnd < lineStart) {
@@ -119,7 +120,7 @@ export const readFileImpl: ToolImplementation = async (
     // Check if file exists and get stats
     let fileStats;
     try {
-        fileStats = await stat(filePath);
+        fileStats = await stat(targetPath);
     } catch (err: unknown) {
         const nodeErr = err as NodeJS.ErrnoException;
         if (nodeErr.code === 'ENOENT') {
@@ -167,7 +168,7 @@ export const readFileImpl: ToolImplementation = async (
     // Read the raw buffer for null-byte detection
     let rawBuf: Buffer;
     try {
-        rawBuf = await readFile(filePath);
+        rawBuf = await readFile(targetPath);
     } catch (err: unknown) {
         const nodeErr = err as NodeJS.ErrnoException;
         if (nodeErr.code === 'ENOENT') {

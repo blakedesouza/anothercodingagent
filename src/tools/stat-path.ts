@@ -1,7 +1,7 @@
 import { lstat } from 'node:fs/promises';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
-import { checkZone } from './workspace-sandbox.js';
+import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 export const statPathSpec: ToolSpec = {
     name: 'stat_path',
@@ -42,10 +42,11 @@ export const statPathImpl: ToolImplementation = async (
     // Zone check — must be within allowed sandbox zones
     const denied = await checkZone(targetPath, context);
     if (denied) return denied;
+    const resolvedPath = resolveToolPath(targetPath, context);
 
     let s;
     try {
-        s = await lstat(targetPath);
+        s = await lstat(resolvedPath);
     } catch (err: unknown) {
         const nodeErr = err as NodeJS.ErrnoException;
         if (nodeErr.code === 'ENOENT') {

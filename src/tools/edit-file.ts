@@ -2,7 +2,7 @@ import { readFile, writeFile, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
-import { checkZone } from './workspace-sandbox.js';
+import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 interface EditOp {
     search: string;
@@ -70,16 +70,17 @@ export const editFileImpl: ToolImplementation = async (
     // Zone check — must be within allowed sandbox zones
     const denied = await checkZone(filePath, context);
     if (denied) return denied;
+    const targetPath = resolveToolPath(filePath, context);
 
     let content: string;
     let fileMode = 0o644; // default; overwritten by actual file mode below
     try {
-        const fileStats = await stat(filePath);
+        const fileStats = await stat(targetPath);
         if (!fileStats.isFile()) {
             return errorOutput('tool.not_file', `Path is not a regular file: ${filePath}`);
         }
         fileMode = fileStats.mode;
-        const buf = await readFile(filePath);
+        const buf = await readFile(targetPath);
         content = buf.toString('utf8');
 
         if (expectedHash !== undefined) {
@@ -121,7 +122,7 @@ export const editFileImpl: ToolImplementation = async (
     const buf = Buffer.from(current, 'utf8');
     try {
         // Pass mode to preserve permissions on newly-created files; existing files keep their mode via O_TRUNC
-        await writeFile(filePath, buf, { mode: fileMode & 0o777 });
+        await writeFile(targetPath, buf, { mode: fileMode & 0o777 });
     } catch (err: unknown) {
         const nodeErr = err as NodeJS.ErrnoException;
         if (nodeErr.code === 'EACCES' || nodeErr.code === 'EPERM') {

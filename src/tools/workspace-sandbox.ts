@@ -12,8 +12,8 @@
  */
 
 import { realpath } from 'node:fs/promises';
-import { resolve, dirname, basename, isAbsolute, join } from 'node:path';
-import { homedir } from 'node:os';
+import { resolve, dirname, basename, isAbsolute, join, relative } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolContext } from './tool-registry.js';
 
@@ -42,9 +42,7 @@ export async function checkZone(
         return permissionDenied(targetPath, '[contains null byte]');
     }
 
-    const absolutePath = isAbsolute(targetPath)
-        ? targetPath
-        : resolve(context.workspaceRoot, targetPath);
+    const absolutePath = resolveToolPath(targetPath, context);
 
     const resolved = await resolvePathSafely(absolutePath);
     const zones = computeZones(context);
@@ -58,6 +56,13 @@ export async function checkZone(
 }
 
 // --- Internal helpers (exported for testing) ---
+
+/** Resolve a tool-supplied path using the tool context's workspace root. */
+export function resolveToolPath(targetPath: string, context: Pick<ToolContext, 'workspaceRoot'>): string {
+    return isAbsolute(targetPath)
+        ? targetPath
+        : resolve(context.workspaceRoot, targetPath);
+}
 
 /**
  * Resolve a path to its canonical form, handling non-existent paths.
@@ -101,8 +106,8 @@ export async function resolvePathSafely(inputPath: string): Promise<string> {
 
 /** Check if resolvedPath is within (or equal to) resolvedZone. */
 export function isWithin(resolvedPath: string, resolvedZone: string): boolean {
-    if (resolvedPath === resolvedZone) return true;
-    return resolvedPath.startsWith(resolvedZone + '/');
+    const rel = relative(resolvedZone, resolvedPath);
+    return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
 }
 
 /** Validate sessionId contains only safe characters (alphanumeric, underscore, hyphen). */
@@ -111,13 +116,13 @@ const SESSION_ID_RE = /^[a-zA-Z0-9_-]+$/;
 /** Compute allowed zone paths from context. */
 export function computeZones(context: ToolContext): string[] {
     const home = homedir();
-    const zones = [context.workspaceRoot];
+    const zones = [resolve(context.workspaceRoot)];
 
     // Defense-in-depth: validate sessionId format before using in path construction.
     // sessionId is system-generated (ses_ + ULID) but we guard against injection.
     if (SESSION_ID_RE.test(context.sessionId)) {
         zones.push(join(home, '.aca', 'sessions', context.sessionId));
-        zones.push(`/tmp/aca-${context.sessionId}`);
+        zones.push(join(tmpdir(), `aca-${context.sessionId}`));
     }
 
     if (context.extraTrustedRoots) {

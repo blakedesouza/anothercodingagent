@@ -1,7 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
-import { checkZone } from './workspace-sandbox.js';
+import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 import { estimateTextTokens, computeSafeInputBudget } from '../core/token-estimator.js';
 import { getModelCapabilities } from '../providers/model-registry.js';
 
@@ -91,9 +91,10 @@ export const estimateTokensImpl: ToolImplementation = async (
                 fileResults.push({ path: filePath, tokens: 0, error: 'outside sandbox' });
                 continue;
             }
+            const targetPath = resolveToolPath(filePath, context);
 
             try {
-                const fileStats = await stat(filePath);
+                const fileStats = await stat(targetPath);
                 if (!fileStats.isFile()) {
                     fileResults.push({ path: filePath, tokens: 0, error: 'not a regular file' });
                     continue;
@@ -103,7 +104,7 @@ export const estimateTokensImpl: ToolImplementation = async (
                     continue;
                 }
 
-                const content = await readFile(filePath, 'utf8');
+                const content = await readFile(targetPath, 'utf8');
                 const tokens = estimateTextTokens(content, bytesPerToken);
                 totalTokens += tokens;
                 fileResults.push({ path: filePath, tokens });

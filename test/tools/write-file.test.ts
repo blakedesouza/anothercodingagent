@@ -59,6 +59,16 @@ describe('write_file tool', () => {
             const expectedHash = createHash('sha256').update(Buffer.from(content, 'utf8')).digest('hex');
             expect(data.hash).toBe(expectedHash);
         });
+
+        it('resolves relative paths against workspaceRoot instead of process cwd', async () => {
+            const content = 'relative file';
+
+            const result = await runner.execute('write_file', { path: 'relative-new-file.txt', content }, baseContext);
+            expect(result.status).toBe('success');
+
+            const actual = await readFile(join(tmpDir, 'relative-new-file.txt'), 'utf8');
+            expect(actual).toBe(content);
+        });
     });
 
     describe('overwrite existing', () => {

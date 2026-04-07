@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
-import { checkZone } from './workspace-sandbox.js';
+import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 export const writeFileSpec: ToolSpec = {
     name: 'write_file',
@@ -48,9 +48,10 @@ export const writeFileImpl: ToolImplementation = async (
     // Zone check — must be within allowed sandbox zones
     const denied = await checkZone(filePath, context);
     if (denied) return denied;
+    const targetPath = resolveToolPath(filePath, context);
 
     // Create parent directories first (needed regardless of mode)
-    const parent = dirname(filePath);
+    const parent = dirname(targetPath);
     if (parent && parent !== '.') {
         try {
             await mkdir(parent, { recursive: true });
@@ -67,7 +68,7 @@ export const writeFileImpl: ToolImplementation = async (
     const flag = mode === 'create' ? 'wx' : 'w';
     const buf = Buffer.from(content, 'utf8');
     try {
-        await fsWriteFile(filePath, buf, { flag });
+        await fsWriteFile(targetPath, buf, { flag });
     } catch (err: unknown) {
         const nodeErr = err as NodeJS.ErrnoException;
         if (nodeErr.code === 'EEXIST') {

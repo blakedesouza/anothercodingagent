@@ -2,7 +2,7 @@ import { readdir, stat, readFile } from 'node:fs/promises';
 import { join, relative, basename } from 'node:path';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
-import { checkZone } from './workspace-sandbox.js';
+import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -123,6 +123,7 @@ export const searchTextImpl: ToolImplementation = async (
     // Zone check — root must be within allowed sandbox zones
     const denied = await checkZone(root, context);
     if (denied) return denied;
+    const searchRoot = resolveToolPath(root, context);
 
     // Build search regex
     let searchRegex: RegExp;
@@ -134,7 +135,7 @@ export const searchTextImpl: ToolImplementation = async (
 
     // Verify root is a directory
     try {
-        const rootStat = await stat(root);
+        const rootStat = await stat(searchRoot);
         if (!rootStat.isDirectory()) {
             return errorOutput('tool.not_directory', `Root is not a directory: ${root}`);
         }
@@ -169,7 +170,7 @@ export const searchTextImpl: ToolImplementation = async (
             }
 
             const fullPath = join(dir, entry.name);
-            const relPath = relative(root, fullPath);
+            const relPath = relative(searchRoot, fullPath);
 
             // Don't recurse into symlinks — avoids cycles on platforms where
             // entry.isDirectory() returns true for directory symlinks (e.g. Windows junctions)
@@ -217,7 +218,7 @@ export const searchTextImpl: ToolImplementation = async (
         }
     }
 
-    await walk(root);
+    await walk(searchRoot);
 
     const data = JSON.stringify({ matches, truncated });
     return {

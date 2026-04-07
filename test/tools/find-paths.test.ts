@@ -102,6 +102,19 @@ describe('find_paths tool', () => {
             expect(matches[0].size).toBeGreaterThan(0);
             expect(matches[0].mtime).toBeGreaterThan(0);
         });
+
+        it('resolves a relative root against workspaceRoot instead of process cwd', async () => {
+            const result = await runner.execute(
+                'find_paths',
+                { root: '.', pattern: 'alpha.ts' },
+                baseContext,
+            );
+            expect(result.status).toBe('success');
+
+            const data = parseData(result);
+            const matches = data.matches as PathMatch[];
+            expect(matches.map(m => m.path.split('/').pop())).toEqual(['alpha.ts']);
+        });
     });
 
     describe('limit enforcement', () => {
