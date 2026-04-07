@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+    buildContextRequestPrompt,
+    buildFinalizationPrompt,
     fulfillContextRequests,
     containsPseudoToolCall,
     parseContextRequests,
@@ -51,6 +53,21 @@ describe('consult context requests', () => {
     it('detects pseudo-tool markup in no-tools consult responses', () => {
         expect(containsPseudoToolCall('<call type="tool" name="list_files">')).toBe(true);
         expect(containsPseudoToolCall('<function_calls><invoke name="read_file">')).toBe(true);
+        expect(containsPseudoToolCall('<minimax:tool_call><invoke name="read_file">')).toBe(true);
+        expect(containsPseudoToolCall('<parameter name="path">src/index.ts</parameter>')).toBe(true);
         expect(containsPseudoToolCall('## Q1\nNo tool markup here.')).toBe(false);
+    });
+
+    it('warns no-tools witnesses about native tool-call markup', () => {
+        const contextPrompt = buildContextRequestPrompt('Review the code.');
+        const finalPrompt = buildFinalizationPrompt('Review the code.', '{"needs_context":[]}', []);
+
+        for (const prompt of [contextPrompt, finalPrompt]) {
+            expect(prompt).toContain('Tools are disabled in this pass');
+            expect(prompt).toContain('<invoke>');
+            expect(prompt).toContain('<parameter>');
+            expect(prompt).toContain('<minimax:tool_call>');
+            expect(prompt).toContain('needs_context');
+        }
     });
 });

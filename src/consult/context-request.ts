@@ -58,8 +58,9 @@ export function truncateUtf8(text: string, maxBytes: number): string {
 }
 
 export function containsPseudoToolCall(text: string): boolean {
-    return /<\s*(tool_call|function_calls?|call)\b/i.test(text)
+    return /<\s*(?:[\w-]+:)?(tool_call|function_calls?|call)\b/i.test(text)
         || /<\s*invoke\b/i.test(text)
+        || /<\s*parameter\b/i.test(text)
         || /"needs_tool"\s*:/i.test(text);
 }
 
@@ -91,7 +92,9 @@ Limits:
 - Each snippet should be at most ${limits.maxLines} lines.
 - Request only repo-relative paths.
 - Do not request broad directories or whole-repo searches.
-- Do not emit tool-call markup. ACA will read accepted snippets deterministically.
+- Tools are disabled in this pass. Do not emit tool-call markup or tool-call intent.
+- Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, and namespaced forms such as <minimax:tool_call>.
+- If you need more context, use only the needs_context JSON object above. ACA will read accepted snippets deterministically.
 `;
 }
 
@@ -205,6 +208,7 @@ ${renderContextSnippets(snippets)}
 
 ## Finalization
 
-Return your final findings now. Do not request more context. Do not emit tool-call markup.
+Return your final findings now. Do not request more context. Tools are disabled in this pass.
+Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, and namespaced forms such as <minimax:tool_call>.
 `;
 }
