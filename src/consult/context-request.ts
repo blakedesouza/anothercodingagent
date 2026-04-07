@@ -57,11 +57,18 @@ export function truncateUtf8(text: string, maxBytes: number): string {
     return result;
 }
 
+function stripMarkdownCode(text: string): string {
+    return text
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/`[^`\n]*`/g, '');
+}
+
 export function containsPseudoToolCall(text: string): boolean {
-    return /<\s*(?:[\w-]+:)?(tool_call|function_calls?|call)\b/i.test(text)
-        || /<\s*invoke\b/i.test(text)
-        || /<\s*parameter\b/i.test(text)
-        || /"needs_tool"\s*:/i.test(text);
+    const inspectableText = stripMarkdownCode(text);
+    return /<\s*(?:[\w-]+:)?(tool_call|function_calls?|call)\b/i.test(inspectableText)
+        || /<\s*invoke\b/i.test(inspectableText)
+        || /<\s*parameter\b/i.test(inspectableText)
+        || /"needs_tool"\s*:/i.test(inspectableText);
 }
 
 export function buildContextRequestPrompt(prompt: string, limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS): string {

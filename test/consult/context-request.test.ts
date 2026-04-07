@@ -58,6 +58,17 @@ describe('consult context requests', () => {
         expect(containsPseudoToolCall('## Q1\nNo tool markup here.')).toBe(false);
     });
 
+    it('allows cited pseudo-tool markup inside Markdown code', () => {
+        expect(containsPseudoToolCall('The invalid example is `<minimax:tool_call><invoke name="read_file">`.')).toBe(false);
+        expect(containsPseudoToolCall([
+            'The guard detects this fixture:',
+            '```xml',
+            '<minimax:tool_call><invoke name="read_file"></invoke></minimax:tool_call>',
+            '```',
+            'No actual tool call was attempted.',
+        ].join('\n'))).toBe(false);
+    });
+
     it('warns no-tools witnesses about native tool-call markup', () => {
         const contextPrompt = buildContextRequestPrompt('Review the code.');
         const finalPrompt = buildFinalizationPrompt('Review the code.', '{"needs_context":[]}', []);
