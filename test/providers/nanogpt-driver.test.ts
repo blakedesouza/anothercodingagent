@@ -489,8 +489,8 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
     // --- stream(): tools in request ---
 
     describe('stream() — tools in request body', () => {
-        it('sends tools in OpenAI function format', async () => {
-            server.addTextResponse('I will read the file.');
+        it('emulates ACA tools and disables native NanoGPT tool calling', async () => {
+            server.addTextResponse('{"tool_calls":[{"name":"read_file","arguments":{"path":"/tmp/test.txt"}}]}');
 
             const request = makeRequest({
                 tools: [{
@@ -506,16 +506,22 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
                 }],
             });
 
-            await collectEvents(driver.stream(request));
+            const events = await collectEvents(driver.stream(request));
 
             const body = server.receivedRequests[0].body as Record<string, unknown>;
-            const tools = body.tools as Array<Record<string, unknown>>;
-            expect(tools).toHaveLength(1);
-            expect(body.tool_choice).toBe('auto');
-            expect(tools[0].type).toBe('function');
-            const fn = tools[0].function as Record<string, unknown>;
-            expect(fn.name).toBe('read_file');
-            expect(fn.description).toBe('Read a file from disk');
+            expect(body.tools).toBeUndefined();
+            expect(body.tool_choice).toBe('none');
+            const messages = body.messages as Array<Record<string, unknown>>;
+            expect(messages[0].role).toBe('system');
+            expect(messages[0].content).toContain('Available tools:');
+            expect(messages[0].content).toContain('read_file');
+
+            const toolDeltas = events.filter(e => e.type === 'tool_call_delta');
+            expect(toolDeltas).toHaveLength(1);
+            if (toolDeltas[0]?.type === 'tool_call_delta') {
+                expect(toolDeltas[0].name).toBe('read_file');
+                expect(JSON.parse(toolDeltas[0].arguments ?? '{}')).toEqual({ path: '/tmp/test.txt' });
+            }
         });
     });
 });

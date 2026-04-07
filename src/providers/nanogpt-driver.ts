@@ -117,19 +117,10 @@ export class NanoGptDriver implements ProviderDriver {
             return;
         }
 
-        // Tool emulation: when the model doesn't support native tool calling,
-        // inject tool schemas into the system prompt and post-process the response.
-        let caps: ModelCapabilities | undefined;
-        try {
-            caps = this.capabilities(request.model);
-        } catch {
-            caps = undefined;
-        }
-
-        const needsEmulation =
-            caps?.supportsTools === 'emulated' &&
-            !!request.tools &&
-            request.tools.length > 0;
+        // NanoGPT is a routing/meta-provider. Keep ACA's tool protocol under our
+        // control by emulating tools in-prompt and forcing native tool_choice=none
+        // in the upstream OpenAI-compatible request.
+        const needsEmulation = !!request.tools && request.tools.length > 0;
 
         const effectiveRequest = needsEmulation ? injectToolsIntoRequest(request) : request;
 
@@ -324,19 +315,7 @@ export class NanoGptDriver implements ProviderDriver {
             body.thinking = request.thinking;
         }
 
-        if (request.tools && request.tools.length > 0) {
-            body.tools = request.tools.map(t => ({
-                type: 'function',
-                function: {
-                    name: t.name,
-                    description: t.description,
-                    parameters: t.parameters,
-                },
-            }));
-            body.tool_choice = 'auto';
-        } else {
-            body.tool_choice = 'none';
-        }
+        body.tool_choice = 'none';
 
         return body;
     }
