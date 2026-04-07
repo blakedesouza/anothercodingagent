@@ -7,6 +7,7 @@ import {
     appendSharedContextPack,
     buildContextRequestPrompt,
     buildFinalizationPrompt,
+    buildFinalizationRetryPrompt,
     buildSharedContextRequestPrompt,
     fulfillContextRequests,
     containsPseudoToolCall,
@@ -82,6 +83,22 @@ describe('consult context requests', () => {
             expect(prompt).toContain('<minimax:tool_call>');
             expect(prompt).toContain('needs_context');
         }
+    });
+
+    it('builds generic no-tools finalization retry prompts', () => {
+        const prompt = buildFinalizationRetryPrompt(
+            'Review the code.',
+            '{"needs_context":[]}',
+            [],
+            '<tool_call>{"name":"read_file"}</tool_call>',
+        );
+
+        expect(prompt).toContain('Invalid Previous Finalization');
+        expect(prompt).toContain('Tools are disabled in this pass');
+        expect(prompt).toContain('Produce the final findings now');
+        expect(prompt).toContain('Do not request more context');
+        expect(prompt).toContain('Do not emit XML, function-call, tool-call, invoke, or parameter markup');
+        expect(prompt).toContain('<tool_call>{"name":"read_file"}</tool_call>');
     });
 
     it('builds shared context scout prompts that request ranges rather than summaries', () => {

@@ -7,6 +7,7 @@ import {
     appendSharedContextPack,
     buildContextRequestPrompt,
     buildFinalizationPrompt,
+    buildFinalizationRetryPrompt,
     buildSharedContextRequestPrompt,
     containsPseudoToolCall,
     fulfillContextRequests,
@@ -47,7 +48,7 @@ interface WitnessResult {
     response_path: string | null;
     raw_request_path: string | null;
     usage: InvokeUsage | null;
-    safety: InvokeSafety | { context_request?: InvokeSafety; final?: InvokeSafety } | null;
+    safety: InvokeSafety | { context_request?: InvokeSafety; final?: InvokeSafety; final_retry?: InvokeSafety } | null;
     context_requests: ReturnType<typeof parseContextRequests>;
     context_snippets: Omit<ContextSnippet, 'text'>[];
 }
@@ -121,6 +122,11 @@ function mergeUsage(...usages: Array<InvokeUsage | null | undefined>): InvokeUsa
 function errorMessage(response: InvokeResponse, stderr: string): string {
     if (response.errors?.length) return response.errors.map(error => `${error.code}: ${error.message}`).join('; ');
     return stderr.trim() || 'unknown invoke error';
+}
+
+function shouldRetryNoToolsFinalization(response: InvokeResponse): boolean {
+    if (response.status === 'success') return containsPseudoToolCall(response.result ?? '');
+    return response.errors?.some(error => error.code === 'turn.max_steps' && error.retryable) ?? false;
 }
 
 function currentAcaCommand(): { command: string; args: string[] } {
@@ -261,20 +267,37 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     });
     const finalPrompt = buildFinalizationPrompt(prompt, first.response.result ?? '', snippets);
     const final = await invoke(witness.model, finalPrompt, projectDir, { maxSteps: 1, maxTotalTokens: 30_000, outPath: responsePath });
-    const finalPseudoToolCall = containsPseudoToolCall(final.response.result ?? '');
+    const retryFinalization = shouldRetryNoToolsFinalization(final.response);
+    const finalRetry = retryFinalization
+        ? await invoke(
+            witness.model,
+            buildFinalizationRetryPrompt(
+                prompt,
+                first.response.result ?? '',
+                snippets,
+                final.response.result ?? errorMessage(final.response, final.stderr),
+            ),
+            projectDir,
+            { maxSteps: 1, maxTotalTokens: 30_000, outPath: responsePath },
+        )
+        : null;
+    const finalResponse = finalRetry?.response ?? final.response;
+    const finalStderr = finalRetry?.stderr ?? final.stderr;
+    const finalRetryPseudoToolCall = containsPseudoToolCall(finalResponse.result ?? '');
     return {
         name: witness.name,
         model: witness.model,
-        status: final.response.status === 'success' && !finalPseudoToolCall ? 'ok' : 'error',
-        error: final.response.status === 'success'
-            ? (finalPseudoToolCall ? 'pseudo-tool call emitted in no-tools finalization pass' : null)
-            : errorMessage(final.response, final.stderr),
-        response_path: final.response.status === 'success' && !finalPseudoToolCall ? responsePath : null,
+        status: finalResponse.status === 'success' && !finalRetryPseudoToolCall ? 'ok' : 'error',
+        error: finalResponse.status === 'success'
+            ? (finalRetryPseudoToolCall ? 'pseudo-tool call emitted in no-tools finalization pass after retry' : null)
+            : errorMessage(finalResponse, finalStderr),
+        response_path: finalResponse.status === 'success' && !finalRetryPseudoToolCall ? responsePath : null,
         raw_request_path: requestPath,
-        usage: mergeUsage(first.response.usage, final.response.usage),
+        usage: mergeUsage(first.response.usage, final.response.usage, finalRetry?.response.usage),
         safety: {
             context_request: first.response.safety,
             final: final.response.safety,
+            ...(finalRetry ? { final_retry: finalRetry.response.safety } : {}),
         },
         context_requests: requests,
         context_snippets: snippets.map(({ text: _text, ...snippet }) => snippet),

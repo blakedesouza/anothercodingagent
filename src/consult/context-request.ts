@@ -253,6 +253,22 @@ Do not emit tool-call markup or tool-call intent. Invalid examples include <tool
 `;
 }
 
+export function buildFinalizationRetryPrompt(originalPrompt: string, requestText: string, snippets: ContextSnippet[], invalidResponse: string): string {
+    return `${buildFinalizationPrompt(originalPrompt, requestText, snippets)}
+
+## Invalid Previous Finalization
+
+Your previous finalization attempted to call tools or emitted tool-call markup. Tools are disabled in this pass, so that response is invalid.
+
+\`\`\`text
+${invalidResponse.slice(0, 4_000)}
+\`\`\`
+
+Produce the final findings now using only the original prompt, the shared evidence pack, and the fulfilled context snippets above.
+Do not request more context. Do not emit XML, function-call, tool-call, invoke, or parameter markup.
+`;
+}
+
 export function appendSharedContextPack(prompt: string, scoutModel: string, snippets: ContextSnippet[]): string {
     if (snippets.length === 0) return prompt;
     return `${prompt.trimEnd()}
