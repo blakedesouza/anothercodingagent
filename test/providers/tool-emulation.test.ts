@@ -61,6 +61,7 @@ describe('buildToolSchemaPrompt', () => {
         expect(prompt).toContain('tool_calls');
         expect(prompt).toContain('name');
         expect(prompt).toContain('arguments');
+        expect(prompt).toContain('Do not wrap the JSON in Markdown fences');
     });
 });
 
@@ -160,6 +161,18 @@ describe('parseEmulatedToolCalls', () => {
         expect(result!.calls[0].name).toBe('read_file');
         expect(result!.preamble).toBe('Let me call a tool:');
     });
+
+    it('parses fenced tool-call JSON without treating the fence as preamble', () => {
+        const text = [
+            '```json',
+            '{"tool_calls":[{"name":"read_file","arguments":{"path":"/x"}}]}',
+            '```',
+        ].join('\n');
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls[0].name).toBe('read_file');
+        expect(result!.preamble).toBe('');
+    });
 });
 
 describe('wrapStreamWithToolEmulation', () => {
@@ -239,6 +252,23 @@ describe('wrapStreamWithToolEmulation', () => {
         expect((textDeltas[0] as { text: string }).text).toBe('Let me check that file:');
         expect(toolDeltas).toHaveLength(1);
         expect(toolDeltas[0]).toMatchObject({ name: 'read_file' });
+    });
+
+    it('does not emit markdown fence text before fenced tool-call JSON', async () => {
+        const toolCallJson = [
+            '```json',
+            '{"tool_calls":[{"name":"read_file","arguments":{"path":"/tmp/test"}}]}',
+            '```',
+        ].join('\n');
+
+        async function* inner(): AsyncIterable<StreamEvent> {
+            yield { type: 'text_delta', text: toolCallJson };
+            yield { type: 'done', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 5 } };
+        }
+
+        const events = await collectStream(wrapStreamWithToolEmulation(inner()));
+        expect(events.filter(e => e.type === 'text_delta')).toHaveLength(0);
+        expect(events.filter(e => e.type === 'tool_call_delta')).toHaveLength(1);
     });
 
     it('buffers chunked text and parses tool calls from combined text', async () => {

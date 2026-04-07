@@ -66,9 +66,29 @@ function stripMarkdownCode(text: string): string {
 export function containsPseudoToolCall(text: string): boolean {
     const inspectableText = stripMarkdownCode(text);
     return /<\s*(?:[\w-]+:)?(tool_call|function_calls?|call)\b/i.test(inspectableText)
+        || /\[\s*\/?\s*(?:[\w-]+:)?(tool_call|function_calls?|call)\s*\]/i.test(inspectableText)
         || /<\s*invoke\b/i.test(inspectableText)
         || /<\s*parameter\b/i.test(inspectableText)
+        || /<\s*arg_(key|value)\b/i.test(inspectableText)
+        || /"tool_calls"\s*:/i.test(inspectableText)
         || /"needs_tool"\s*:/i.test(inspectableText);
+}
+
+export function containsContextRequestLikeJson(text: string): boolean {
+    let payload: unknown;
+    try {
+        payload = JSON.parse(extractJsonPayload(text));
+    } catch {
+        return false;
+    }
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return false;
+    const record = payload as Record<string, unknown>;
+    if (Array.isArray(record.needs_context)) return true;
+    if (Array.isArray(record.files)) return true;
+    const data = typeof record.data === 'object' && record.data !== null && !Array.isArray(record.data)
+        ? record.data as Record<string, unknown>
+        : undefined;
+    return Array.isArray(data?.files);
 }
 
 export function buildContextRequestPrompt(prompt: string, limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS): string {
@@ -100,8 +120,24 @@ Limits:
 - Request only repo-relative paths.
 - Do not request broad directories or whole-repo searches.
 - Tools are disabled in this pass. Do not emit tool-call markup or tool-call intent.
-- Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, and namespaced forms such as <minimax:tool_call>.
+- Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
 - If you need more context, use only the needs_context JSON object above. ACA will read accepted snippets deterministically.
+`;
+}
+
+export function buildContextRequestRetryPrompt(prompt: string, invalidResponse: string, limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS): string {
+    return `${buildContextRequestPrompt(prompt, limits)}
+
+## Invalid Previous Context Request
+
+Your previous response attempted to call tools, emitted tool-call markup, or failed to complete this one-step context-request pass. Tools are disabled here.
+
+\`\`\`text
+${truncateUtf8(invalidResponse, 4_000)}
+\`\`\`
+
+Try again now. If you need more context, return only the needs_context JSON object from the protocol above. If the evidence is enough, return final findings in Markdown.
+Do not emit XML, function-call, tool-call, invoke, parameter, arg_key, arg_value, [TOOL_CALL], or "tool_calls" markup.
 `;
 }
 
@@ -134,7 +170,7 @@ Limits:
 - Prefer narrow ranges that satisfy all witnesses before their review.
 - Do not request broad directories or whole-repo searches.
 - Do not summarize findings or quote code yourself.
-- Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, and namespaced forms such as <minimax:tool_call>.
+- Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
 `;
 }
 
@@ -147,6 +183,14 @@ export function parseContextRequests(content: string, limits: ContextRequestLimi
     }
     if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return [];
     const rawRequests = (payload as { needs_context?: unknown }).needs_context;
+    const alternateFileRequests = parseAlternateFileRequests(payload, limits);
+    if (!Array.isArray(rawRequests)) return alternateFileRequests;
+    if (rawRequests.length === 0) return alternateFileRequests;
+
+    return normalizeContextRequests(rawRequests, limits);
+}
+
+function normalizeContextRequests(rawRequests: unknown[], limits: ContextRequestLimits): ContextRequest[] {
     if (!Array.isArray(rawRequests)) return [];
 
     const requests: ContextRequest[] = [];
@@ -164,6 +208,50 @@ export function parseContextRequests(content: string, limits: ContextRequestLimi
         requests.push({ path, line_start: lineStart, line_end: lineEnd, reason });
     }
     return requests;
+}
+
+function parseAlternateFileRequests(payload: unknown, limits: ContextRequestLimits): ContextRequest[] {
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return [];
+    const record = payload as Record<string, unknown>;
+    const data = typeof record.data === 'object' && record.data !== null && !Array.isArray(record.data)
+        ? record.data as Record<string, unknown>
+        : undefined;
+    const rawFiles = Array.isArray(record.files) ? record.files : (Array.isArray(data?.files) ? data.files : undefined);
+    if (!rawFiles) return [];
+
+    const requests: ContextRequest[] = [];
+    for (const raw of rawFiles.slice(0, limits.maxSnippets)) {
+        if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
+        const file = raw as Record<string, unknown>;
+        const path = typeof file.path === 'string' ? file.path.trim() : '';
+        if (!path) continue;
+        const { lineStart, lineEnd } = parseLineRange(file, limits);
+        const reason = typeof file.reason === 'string'
+            ? file.reason.trim().slice(0, 300)
+            : 'model requested file range using alternate context-request JSON';
+        requests.push({ path, line_start: lineStart, line_end: lineEnd, reason });
+    }
+    return requests;
+}
+
+function parseLineRange(file: Record<string, unknown>, limits: ContextRequestLimits): { lineStart: number; lineEnd: number } {
+    const hasExplicitStart = file.line_start !== undefined || file.lineStart !== undefined;
+    const hasExplicitEnd = file.line_end !== undefined || file.lineEnd !== undefined;
+    const rawStart = hasExplicitStart
+        ? (typeof file.line_start === 'number' ? file.line_start : Number(file.line_start ?? file.lineStart))
+        : NaN;
+    const rawEnd = hasExplicitEnd
+        ? (typeof file.line_end === 'number' ? file.line_end : Number(file.line_end ?? file.lineEnd))
+        : NaN;
+    const lines = typeof file.lines === 'string' ? file.lines.match(/^\s*(\d+)\s*-\s*(\d+)\s*$/) : null;
+    const lineStart = Number.isFinite(rawStart)
+        ? Math.max(1, Math.floor(rawStart))
+        : (lines ? Math.max(1, Number(lines[1])) : 1);
+    const proposedEnd = Number.isFinite(rawEnd)
+        ? Math.floor(rawEnd)
+        : (lines ? Number(lines[2]) : lineStart + limits.maxLines - 1);
+    const lineEnd = Math.max(lineStart, Math.min(proposedEnd, lineStart + limits.maxLines - 1));
+    return { lineStart, lineEnd };
 }
 
 function isInside(root: string, path: string): boolean {
@@ -249,7 +337,7 @@ ${renderContextSnippets(snippets)}
 ## Finalization
 
 Return your final findings now. Do not request more context. Tools are disabled in this pass.
-Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, and namespaced forms such as <minimax:tool_call>.
+Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
 `;
 }
 
@@ -261,11 +349,12 @@ export function buildFinalizationRetryPrompt(originalPrompt: string, requestText
 Your previous finalization attempted to call tools or emitted tool-call markup. Tools are disabled in this pass, so that response is invalid.
 
 \`\`\`text
-${invalidResponse.slice(0, 4_000)}
+${truncateUtf8(invalidResponse, 4_000)}
 \`\`\`
 
 Produce the final findings now using only the original prompt, the shared evidence pack, and the fulfilled context snippets above.
 Do not request more context. Do not emit XML, function-call, tool-call, invoke, or parameter markup.
+Do not return needs_context JSON or file-result JSON such as {"status":"success","data":{"files":[]}}.
 `;
 }
 

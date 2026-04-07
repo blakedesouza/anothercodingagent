@@ -5,10 +5,12 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
     appendSharedContextPack,
+    buildContextRequestRetryPrompt,
     buildContextRequestPrompt,
     buildFinalizationPrompt,
     buildFinalizationRetryPrompt,
     buildSharedContextRequestPrompt,
+    containsContextRequestLikeJson,
     fulfillContextRequests,
     containsPseudoToolCall,
     parseContextRequests,
@@ -58,11 +60,15 @@ describe('consult context requests', () => {
         expect(containsPseudoToolCall('<function_calls><invoke name="read_file">')).toBe(true);
         expect(containsPseudoToolCall('<minimax:tool_call><invoke name="read_file">')).toBe(true);
         expect(containsPseudoToolCall('<parameter name="path">src/index.ts</parameter>')).toBe(true);
+        expect(containsPseudoToolCall('read_file\n<arg_key>path</arg_key>\n<arg_value>src/index.ts</arg_value>')).toBe(true);
+        expect(containsPseudoToolCall('[TOOL_CALL]\n{"tool":"read_file"}\n[/TOOL_CALL]')).toBe(true);
+        expect(containsPseudoToolCall('{"tool_calls":[{"name":"read_file","arguments":{}}]}')).toBe(true);
         expect(containsPseudoToolCall('## Q1\nNo tool markup here.')).toBe(false);
     });
 
     it('allows cited pseudo-tool markup inside Markdown code', () => {
         expect(containsPseudoToolCall('The invalid example is `<minimax:tool_call><invoke name="read_file">`.')).toBe(false);
+        expect(containsPseudoToolCall('The invalid example is `{"tool_calls":[{"name":"read_file"}]}`.')).toBe(false);
         expect(containsPseudoToolCall([
             'The guard detects this fixture:',
             '```xml',
@@ -98,7 +104,41 @@ describe('consult context requests', () => {
         expect(prompt).toContain('Produce the final findings now');
         expect(prompt).toContain('Do not request more context');
         expect(prompt).toContain('Do not emit XML, function-call, tool-call, invoke, or parameter markup');
+        expect(prompt).toContain('Do not return needs_context JSON or file-result JSON');
         expect(prompt).toContain('<tool_call>{"name":"read_file"}</tool_call>');
+    });
+
+    it('builds generic no-tools context-request retry prompts', () => {
+        const prompt = buildContextRequestRetryPrompt(
+            'Review the code.',
+            '[TOOL_CALL] read_file [/TOOL_CALL]',
+            { maxSnippets: 2, maxLines: 50, maxBytes: 1000 },
+        );
+
+        expect(prompt).toContain('Invalid Previous Context Request');
+        expect(prompt).toContain('return only the needs_context JSON object');
+        expect(prompt).toContain('Do not emit XML, function-call, tool-call, invoke, parameter, arg_key, arg_value, [TOOL_CALL], or "tool_calls" markup');
+    });
+
+    it('parses alternate file-list context requests from routed models', () => {
+        const requests = parseContextRequests(
+            '{"status":"success","data":{"files":[{"path":"src/providers/nanogpt-driver.ts","lines":"140-220"}]}}',
+            { maxSnippets: 1, maxLines: 40, maxBytes: 1000 },
+        );
+
+        expect(requests).toEqual([{
+            path: 'src/providers/nanogpt-driver.ts',
+            line_start: 140,
+            line_end: 179,
+            reason: 'model requested file range using alternate context-request JSON',
+        }]);
+    });
+
+    it('detects context-request-shaped JSON outputs', () => {
+        expect(containsContextRequestLikeJson('{"needs_context":[]}')).toBe(true);
+        expect(containsContextRequestLikeJson('{"status":"success","data":{"files":[{"path":"src/index.ts","text":"code"}]}}')).toBe(true);
+        expect(containsContextRequestLikeJson('{"status":"success","summary":"no files"}')).toBe(false);
+        expect(containsContextRequestLikeJson('Plain Markdown findings')).toBe(false);
     });
 
     it('builds shared context scout prompts that request ranges rather than summaries', () => {

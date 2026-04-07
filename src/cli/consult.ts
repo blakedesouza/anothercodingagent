@@ -5,10 +5,12 @@ import { spawn } from 'node:child_process';
 import { appendEvidencePack, buildEvidencePack, type EvidencePackSummary } from '../consult/evidence-pack.js';
 import {
     appendSharedContextPack,
+    buildContextRequestRetryPrompt,
     buildContextRequestPrompt,
     buildFinalizationPrompt,
     buildFinalizationRetryPrompt,
     buildSharedContextRequestPrompt,
+    containsContextRequestLikeJson,
     containsPseudoToolCall,
     fulfillContextRequests,
     parseContextRequests,
@@ -125,6 +127,14 @@ function errorMessage(response: InvokeResponse, stderr: string): string {
 }
 
 function shouldRetryNoToolsFinalization(response: InvokeResponse): boolean {
+    if (response.status === 'success') {
+        const result = response.result ?? '';
+        return containsPseudoToolCall(result) || containsContextRequestLikeJson(result);
+    }
+    return response.errors?.some(error => error.code === 'turn.max_steps' && error.retryable) ?? false;
+}
+
+function shouldRetryNoToolsContextRequest(response: InvokeResponse): boolean {
     if (response.status === 'success') return containsPseudoToolCall(response.result ?? '');
     return response.errors?.some(error => error.code === 'turn.max_steps' && error.retryable) ?? false;
 }
@@ -209,7 +219,24 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
         maxLines: limits.maxContextLines,
         maxBytes: limits.maxContextBytes,
     });
-    const first = await invoke(witness.model, firstPrompt, projectDir, { maxSteps: 1, maxTotalTokens: 30_000, outPath: requestPath });
+    const firstAttempt = await invoke(witness.model, firstPrompt, projectDir, { maxSteps: 1, maxTotalTokens: 30_000, outPath: requestPath });
+    const firstRetry = shouldRetryNoToolsContextRequest(firstAttempt.response)
+        ? await invoke(
+            witness.model,
+            buildContextRequestRetryPrompt(
+                prompt,
+                firstAttempt.response.result ?? errorMessage(firstAttempt.response, firstAttempt.stderr),
+                {
+                    maxSnippets: limits.maxContextSnippets,
+                    maxLines: limits.maxContextLines,
+                    maxBytes: limits.maxContextBytes,
+                },
+            ),
+            projectDir,
+            { maxSteps: 1, maxTotalTokens: 30_000, outPath: requestPath },
+        )
+        : null;
+    const first = firstRetry ?? firstAttempt;
     if (first.response.status !== 'success') {
         return {
             name: witness.name,
@@ -283,15 +310,16 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
         : null;
     const finalResponse = finalRetry?.response ?? final.response;
     const finalStderr = finalRetry?.stderr ?? final.stderr;
-    const finalRetryPseudoToolCall = containsPseudoToolCall(finalResponse.result ?? '');
+    const finalRetryProtocolViolation = containsPseudoToolCall(finalResponse.result ?? '')
+        || containsContextRequestLikeJson(finalResponse.result ?? '');
     return {
         name: witness.name,
         model: witness.model,
-        status: finalResponse.status === 'success' && !finalRetryPseudoToolCall ? 'ok' : 'error',
+        status: finalResponse.status === 'success' && !finalRetryProtocolViolation ? 'ok' : 'error',
         error: finalResponse.status === 'success'
-            ? (finalRetryPseudoToolCall ? 'pseudo-tool call emitted in no-tools finalization pass after retry' : null)
+            ? (finalRetryProtocolViolation ? 'tool/context-request shaped output emitted in no-tools finalization pass after retry' : null)
             : errorMessage(finalResponse, finalStderr),
-        response_path: finalResponse.status === 'success' && !finalRetryPseudoToolCall ? responsePath : null,
+        response_path: finalResponse.status === 'success' && !finalRetryProtocolViolation ? responsePath : null,
         raw_request_path: requestPath,
         usage: mergeUsage(first.response.usage, final.response.usage, finalRetry?.response.usage),
         safety: {

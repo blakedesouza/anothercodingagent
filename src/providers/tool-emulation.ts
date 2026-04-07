@@ -30,6 +30,7 @@ export function buildToolSchemaPrompt(tools: ToolDefinition[]): string {
         'You have access to the following tools. When you need to use a tool, respond',
         'ONLY with a JSON object in exactly this format (no surrounding text):',
         '{"tool_calls":[{"name":"<tool_name>","arguments":{<arguments>}}]}',
+        'Do not wrap the JSON in Markdown fences.',
         '',
         'Available tools:',
         toolList,
@@ -87,7 +88,7 @@ export interface EmulatedToolCallResult {
  * The `arguments` field is a JSON string (to match ToolCallDeltaEvent.arguments).
  */
 export function parseEmulatedToolCalls(text: string): EmulatedToolCallResult | null {
-    const trimmed = text.trim();
+    const trimmed = stripJsonMarkdownFence(text.trim());
     if (!trimmed.includes('tool_calls')) return null;
 
     // O(n) scan: find each '{' and use brace-depth counting to find the matching '}'.
@@ -135,6 +136,11 @@ export function parseEmulatedToolCalls(text: string): EmulatedToolCallResult | n
     }
 
     return null;
+}
+
+function stripJsonMarkdownFence(text: string): string {
+    const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+    return fenced?.[1]?.trim() ?? text;
 }
 
 // ---------------------------------------------------------------------------
