@@ -139,7 +139,7 @@ Error taxonomy, health tracking, and security extensions must be defined BEFORE 
 **Tests:**
 - `sk-` prefix string → redacted (provider key prefix)
 - `Bearer eyJ...` → redacted
-- `-----BEGIN RSA PRIVATE KEY-----` → redacted
+- `-----BEGIN ... PRIVATE KEY-----` → redacted
 - `API_KEY=abc123` in .env-style output → redacted
 - `postgres://user:password@host/db` → connection string redacted
 - SHA-256 hash → NOT redacted

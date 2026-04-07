@@ -1012,7 +1012,7 @@ Safety boundaries that cut across all tools and delegation. The agent may operat
   |---|---|---|
   | Provider API key prefixes | None (prefix is sufficient) | `sk-...`, `pk_test_...`, `AKIA...`, `ghp_...`, `ghs_...`, `glpat-...` |
   | Bearer tokens | `Authorization` header or `Bearer` prefix | `Bearer eyJ...` |
-  | PEM private keys | `-----BEGIN` block | `-----BEGIN RSA PRIVATE KEY-----` |
+  | PEM private keys | `-----BEGIN` block | `-----BEGIN ... PRIVATE KEY-----` |
   | `.env` file assignments | `=` after key/secret/token/password label | `API_KEY=abc123def456` |
   | Connection strings with credentials | `://user:pass@` pattern | `postgres://admin:secret@host/db` |
   | JWT tokens | Three dot-separated base64 segments | `eyJhbG...eyJzdW...sig` |

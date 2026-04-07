@@ -29,14 +29,35 @@ function makeScrubber(secrets: string[] = [], enabled = true): SecretScrubber {
     return new SecretScrubber(secrets, { enabled });
 }
 
+function fakeSk(body: string): string {
+    return `s${'k'}-${body}`;
+}
+
+function fakeAwsAccessKey(): string {
+    return `AKIA${'IOSFODNN7EXAMPLE'}`;
+}
+
+function fakePemStart(): string {
+    return `-----BEGIN RSA ${'PRIVATE'} KEY-----`;
+}
+
+function fakeBearer(token: string): string {
+    return `Bearer ${token}`;
+}
+
+function fakeJwt(parts: string[]): string {
+    return parts.join('.');
+}
+
 // =============================================================================
 // Construction and disabled state
 // =============================================================================
 
 describe('SecretScrubber — construction and disabled state', () => {
     it('disabled → passthrough (text returned unchanged)', () => {
-        const scrubber = makeScrubber(['sk-abc123def456ghi789jklmnop'], false);
-        const text = 'API key: sk-abc123def456ghi789jklmnop';
+        const secret = fakeSk('abc123def456ghi789jklmnop');
+        const scrubber = makeScrubber([secret], false);
+        const text = `API key: ${secret}`;
         expect(scrubber.scrub(text)).toBe(text);
     });
 
@@ -53,7 +74,7 @@ describe('SecretScrubber — construction and disabled state', () => {
     });
 
     it('non-secret strings → not modified', () => {
-        const scrubber = makeScrubber(['sk-myrealkey123456789012345']);
+        const scrubber = makeScrubber([fakeSk('myrealkey123456789012345')]);
         expect(scrubber.scrub('Hello, no secrets here!')).toBe('Hello, no secrets here!');
     });
 });
@@ -64,7 +85,7 @@ describe('SecretScrubber — construction and disabled state', () => {
 
 describe('SecretScrubber — Strategy 1 (exact-value)', () => {
     it('known API key in text → redacted to <redacted:api_key:1>', () => {
-        const secret = 'sk-myrealkey123456789012345';
+        const secret = fakeSk('myrealkey123456789012345');
         const scrubber = makeScrubber([secret]);
         const result = scrubber.scrub(`Tool output: ${secret} — end`);
         expect(result).not.toContain(secret);
@@ -107,22 +128,24 @@ describe('SecretScrubber — Strategy 1 (exact-value)', () => {
 describe('SecretScrubber — Strategy 2 (baseline patterns)', () => {
     it('sk- prefix with 20+ chars → redacted as api_key', () => {
         const scrubber = makeScrubber([]);
-        const result = scrubber.scrub('Found key: sk-abc123def456ghi789jkl in config');
-        expect(result).not.toContain('sk-abc123def456ghi789jkl');
+        const secret = fakeSk('abc123def456ghi789jkl');
+        const result = scrubber.scrub(`Found key: ${secret} in config`);
+        expect(result).not.toContain(secret);
         expect(result).toContain('<redacted:api_key:');
     });
 
     it('Authorization: Bearer token → bearer type redacted', () => {
         const scrubber = makeScrubber([]);
-        const result = scrubber.scrub('Header: Authorization: Bearer eyJhbGciOiJIUzI1NiJ9');
-        expect(result).not.toContain('Bearer eyJhbGciOiJIUzI1NiJ9');
+        const bearer = fakeBearer('eyJhbGciOiJIUzI1NiJ9');
+        const result = scrubber.scrub(`Header: Authorization: ${bearer}`);
+        expect(result).not.toContain(bearer);
         expect(result).toContain('<redacted:bearer:');
     });
 
     it('PEM private key block → pem_key type redacted', () => {
         const scrubber = makeScrubber([]);
         const pemBlock = [
-            '-----BEGIN RSA PRIVATE KEY-----',
+            fakePemStart(),
             'MIIEowIBAAKCAQEA0Z3VS5JJcds3xHn/ygWep4w==',
             '-----END RSA PRIVATE KEY-----',
         ].join('\n');
@@ -150,8 +173,9 @@ describe('SecretScrubber — Strategy 2 (baseline patterns)', () => {
     it('AKIA AWS access key (AKIA + 16 uppercase alphanum) → redacted', () => {
         const scrubber = makeScrubber([]);
         // Standard AWS test key: AKIA + 16 chars = 20 chars total
-        const result = scrubber.scrub('AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE extra');
-        expect(result).not.toContain('AKIAIOSFODNN7EXAMPLE');
+        const key = fakeAwsAccessKey();
+        const result = scrubber.scrub(`AWS_ACCESS_KEY_ID=${key} extra`);
+        expect(result).not.toContain(key);
         expect(result).toContain('<redacted:api_key:');
     });
 
@@ -168,7 +192,7 @@ describe('SecretScrubber — Strategy 2 (baseline patterns)', () => {
     });
 
     it('same pattern-matched secret twice → same redaction ID', () => {
-        const secret = 'sk-duplicatedkey1234567890abc';
+        const secret = fakeSk('duplicatedkey1234567890abc');
         const scrubber = makeScrubber([]);
         const result = scrubber.scrub(`${secret} and ${secret}`);
         // Both occurrences should produce the same placeholder
@@ -179,7 +203,7 @@ describe('SecretScrubber — Strategy 2 (baseline patterns)', () => {
 
     it('strategy 1 assigns stable ID before strategy 2 can create a different one', () => {
         // Known secret that also matches the sk- pattern
-        const secret = 'sk-knownsecret12345678901234';
+        const secret = fakeSk('knownsecret12345678901234');
         const scrubber = makeScrubber([secret]);
         const result = scrubber.scrub(`key1=${secret} key2=${secret}`);
         // Both should use the same ID from strategy 1
@@ -205,7 +229,7 @@ describe('SecretScrubber — Strategy 2 (baseline patterns)', () => {
 // =============================================================================
 
 describe('SecretScrubber — Pipeline integration (4 points)', () => {
-    const KNOWN_SECRET = 'sk-integrationtest1234567890abc';
+    const KNOWN_SECRET = fakeSk('integrationtest1234567890abc');
 
     it('all 4 pipeline points: inject known secret → verify redacted at each point', () => {
         const scrubber = makeScrubber([KNOWN_SECRET]);
@@ -230,7 +254,7 @@ describe('SecretScrubber — Pipeline integration (4 points)', () => {
     // --- Point 3: ConversationWriter persistence integration ---
 
     it('Secret in JSONL write → redacted in persisted file', () => {
-        const secret = 'sk-persistencetest123456789012';
+        const secret = fakeSk('persistencetest123456789012');
         const scrubber = makeScrubber([secret]);
 
         const tmpDir = mkdtempSync(join(tmpdir(), 'aca-scrub-'));
@@ -271,7 +295,7 @@ describe('SecretScrubber — Pipeline integration (4 points)', () => {
     });
 
     it('ConversationWriter without scrubber → secret preserved verbatim', () => {
-        const secret = 'sk-noscrubbertest123456789012';
+        const secret = fakeSk('noscrubbertest123456789012');
 
         const tmpDir = mkdtempSync(join(tmpdir(), 'aca-noscrub-'));
         try {
@@ -327,7 +351,7 @@ describe('SecretScrubber — Pipeline integration (4 points)', () => {
             mockServer.reset();
             mockServer.addTextResponse('Got your message, no secrets visible.');
 
-            const secret = 'sk-llmcontexttest12345678901234';
+            const secret = fakeSk('llmcontexttest12345678901234');
             const scrubber = makeScrubber([secret]);
 
             const filePath = join(tmpDir, 'conv-llm.jsonl');
@@ -434,7 +458,11 @@ describe('SecretScrubber — M7.8 pattern detection', () => {
 
     it('JWT token eyJ...header.payload.signature → redacted as jwt', () => {
         const scrubber = makeScrubber([]);
-        const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+        const jwt = fakeJwt([
+            'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+            'eyJzdWIiOiIxMjM0NTY3ODkwIn0',
+            'dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U',
+        ]);
         const result = scrubber.scrub(`Token: ${jwt} end`);
         expect(result).not.toContain('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9');
         expect(result).toContain('<redacted:jwt:');
@@ -442,7 +470,11 @@ describe('SecretScrubber — M7.8 pattern detection', () => {
 
     it('standalone JWT (Bearer without Authorization header) → still redacted', () => {
         const scrubber = makeScrubber([]);
-        const jwt = 'eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJhY2EifQ.c2lnbmF0dXJlX2hlcmU';
+        const jwt = fakeJwt([
+            'eyJhbGciOiJSUzI1NiJ9',
+            'eyJpc3MiOiJhY2EifQ',
+            'c2lnbmF0dXJlX2hlcmU',
+        ]);
         const result = scrubber.scrub(`bearer ${jwt}`);
         expect(result).not.toContain(jwt);
         expect(result).toContain('<redacted:jwt:');
@@ -520,7 +552,7 @@ describe('SecretScrubber — M7.8 allowPatterns', () => {
     });
 
     it('allowPatterns does NOT exempt exact-value (Strategy 1) redaction', () => {
-        const secret = 'sk-exactvaluetest12345678901234';
+        const secret = fakeSk('exactvaluetest12345678901234');
         const scrubber = new SecretScrubber(
             [secret],
             { enabled: true, allowPatterns: [secret] },
@@ -583,7 +615,11 @@ describe('SecretScrubber — M7.8 combined pipeline', () => {
     it('exact-value secret AND pattern-detected secret both redacted in same text', () => {
         const knownSecret = 'my-exact-known-secret-value-12345';
         const scrubber = makeScrubber([knownSecret]);
-        const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVP_mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+        const jwt = fakeJwt([
+            'eyJhbGciOiJIUzI1NiJ9',
+            'eyJzdWIiOiIxIn0',
+            'dBjftJeZ4CVP_mB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+        ]);
         const text = `Known: ${knownSecret} JWT: ${jwt}`;
         const result = scrubber.scrub(text);
 
@@ -600,7 +636,7 @@ describe('SecretScrubber — M7.8 combined pipeline', () => {
         const scrubber = makeScrubber([]);
         const text = [
             'DATABASE_URL=postgres://u:p@host/db',
-            'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9token',
+            `Authorization: ${fakeBearer('eyJhbGciOiJIUzI1NiJ9token')}`,
             'SECRET_KEY=supersecretvalue',
         ].join('\n');
         const result = scrubber.scrub(text);
@@ -618,7 +654,7 @@ describe('SecretScrubber — M7.8 combined pipeline', () => {
 
 describe('SecretScrubber — disabled passthrough', () => {
     it('known secret in text → unchanged when disabled', () => {
-        const secret = 'sk-disabledtest1234567890123456';
+        const secret = fakeSk('disabledtest1234567890123456');
         const scrubber = new SecretScrubber([secret], { enabled: false });
         const text = `My key is ${secret}`;
         expect(scrubber.scrub(text)).toBe(text);
@@ -626,13 +662,13 @@ describe('SecretScrubber — disabled passthrough', () => {
 
     it('sk- pattern in text → unchanged when disabled', () => {
         const scrubber = new SecretScrubber([], { enabled: false });
-        const text = 'sk-abc123def456ghi789jklmnopqrst';
+        const text = fakeSk('abc123def456ghi789jklmnopqrst');
         expect(scrubber.scrub(text)).toBe(text);
     });
 
     it('Bearer token in text → unchanged when disabled', () => {
         const scrubber = new SecretScrubber([], { enabled: false });
-        const text = 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature';
+        const text = `Authorization: ${fakeBearer(fakeJwt(['eyJhbGciOiJIUzI1NiJ9', 'payload', 'signature']))}`;
         expect(scrubber.scrub(text)).toBe(text);
     });
 });

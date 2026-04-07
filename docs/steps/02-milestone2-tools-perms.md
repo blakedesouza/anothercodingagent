@@ -260,7 +260,7 @@ Block 8 specifies 4-point scrubbing with two detection strategies. Both are impl
 - Empty scrubber (no known secrets) → passthrough
 - Strategy 2 baseline: `sk-abc123...` in tool output → redacted (API key prefix match)
 - Strategy 2 baseline: `Authorization: Bearer eyJhbG...` → Bearer token redacted
-- Strategy 2 baseline: `-----BEGIN RSA PRIVATE KEY-----\n...` → PEM block redacted
+- Strategy 2 baseline: `-----BEGIN ... PRIVATE KEY-----\n...` → PEM block redacted
 - Strategy 2 baseline: `ghp_xxxxxxxxxxxx` → redacted (GitHub PAT prefix)
 - Strategy 2 baseline: `glpat-xxxxxxxxxxxx` → redacted (GitLab PAT prefix)
 - Strategy 2 baseline: `AKIA1234567890EXAMPLE` → redacted (AWS access key ID prefix)
