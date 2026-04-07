@@ -914,6 +914,11 @@ program
     .option('--max-context-snippets <n>', 'Maximum witness-requested snippets', value => Number(value), 3)
     .option('--max-context-lines <n>', 'Maximum lines per witness-requested snippet', value => Number(value), 120)
     .option('--max-context-bytes <n>', 'Maximum bytes per witness-requested snippet', value => Number(value), 8_000)
+    .option('--shared-context', 'Use a scout model to select shared raw snippets before witness invocation', false)
+    .option('--shared-context-model <model>', 'Scout model for --shared-context', 'zai-org/glm-5')
+    .option('--shared-context-max-snippets <n>', 'Maximum shared raw snippets selected by the scout', value => Number(value), 8)
+    .option('--shared-context-max-lines <n>', 'Maximum lines per shared raw snippet', value => Number(value), 160)
+    .option('--shared-context-max-bytes <n>', 'Maximum bytes per shared raw snippet', value => Number(value), 16_000)
     .option('--skip-triage', 'Skip triage aggregation', false)
     .option('--out <path>', 'Write result JSON to this path')
     .action(async (options: {
@@ -929,6 +934,11 @@ program
         maxContextSnippets: number;
         maxContextLines: number;
         maxContextBytes: number;
+        sharedContext: boolean;
+        sharedContextModel: string;
+        sharedContextMaxSnippets: number;
+        sharedContextMaxLines: number;
+        sharedContextMaxBytes: number;
         skipTriage: boolean;
         out?: string;
     }) => {

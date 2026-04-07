@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+    appendSharedContextPack,
     buildContextRequestPrompt,
     buildFinalizationPrompt,
+    buildSharedContextRequestPrompt,
     fulfillContextRequests,
     containsPseudoToolCall,
     parseContextRequests,
@@ -80,5 +82,41 @@ describe('consult context requests', () => {
             expect(prompt).toContain('<minimax:tool_call>');
             expect(prompt).toContain('needs_context');
         }
+    });
+
+    it('builds shared context scout prompts that request ranges rather than summaries', () => {
+        const prompt = buildSharedContextRequestPrompt('Review the code.', {
+            maxSnippets: 4,
+            maxLines: 80,
+            maxBytes: 2000,
+        });
+
+        expect(prompt).toContain('Shared Raw Evidence Scout Protocol');
+        expect(prompt).toContain('Return only this JSON object');
+        expect(prompt).toContain('Request at most 4 snippets');
+        expect(prompt).toContain('at most 80 lines');
+        expect(prompt).toContain('ACA will read accepted snippets directly from disk');
+        expect(prompt).toContain('Do not summarize findings or quote code yourself');
+        expect(prompt).toContain('<minimax:tool_call>');
+    });
+
+    it('appends shared context as raw ACA-read evidence', () => {
+        const packed = appendSharedContextPack('Review the code.', 'zai-org/glm-5', [{
+            path: 'src/core/turn-engine.ts',
+            line_start: 47,
+            line_end: 55,
+            reason: 'fallback trigger codes',
+            status: 'ok',
+            error: null,
+            bytes: 85,
+            truncated: false,
+            text: "const FALLBACK_TRIGGER_CODES = new Set(['llm.rate_limit']);",
+        }]);
+
+        expect(packed).toContain('## Shared Raw Evidence Pack');
+        expect(packed).toContain('scout model (zai-org/glm-5) selected the ranges');
+        expect(packed).toContain('ACA read the file contents deterministically from disk');
+        expect(packed).toContain('src/core/turn-engine.ts:47-55');
+        expect(packed).toContain("const FALLBACK_TRIGGER_CODES = new Set(['llm.rate_limit']);");
     });
 });

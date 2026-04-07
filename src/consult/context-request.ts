@@ -105,6 +105,39 @@ Limits:
 `;
 }
 
+export function buildSharedContextRequestPrompt(prompt: string, limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS): string {
+    return `${prompt.trimEnd()}
+
+## Shared Raw Evidence Scout Protocol
+
+You are selecting raw code ranges for a shared witness evidence pack. Tools are disabled.
+The final evidence pack will be assembled by ACA, not by you: ACA will read accepted snippets directly from disk after your response.
+
+Return only this JSON object and no Markdown:
+\`\`\`json
+{
+  "needs_context": [
+    {
+      "path": "relative/path.ts",
+      "line_start": 1,
+      "line_end": 120,
+      "reason": "short concrete reason"
+    }
+  ]
+}
+\`\`\`
+
+Limits:
+- Request at most ${limits.maxSnippets} snippets.
+- Each snippet should be at most ${limits.maxLines} lines.
+- Request only repo-relative paths.
+- Prefer narrow ranges that satisfy all witnesses before their review.
+- Do not request broad directories or whole-repo searches.
+- Do not summarize findings or quote code yourself.
+- Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, and namespaced forms such as <minimax:tool_call>.
+`;
+}
+
 export function parseContextRequests(content: string, limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS): ContextRequest[] {
     let payload: unknown;
     try {
@@ -217,5 +250,19 @@ ${renderContextSnippets(snippets)}
 
 Return your final findings now. Do not request more context. Tools are disabled in this pass.
 Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, and namespaced forms such as <minimax:tool_call>.
+`;
+}
+
+export function appendSharedContextPack(prompt: string, scoutModel: string, snippets: ContextSnippet[]): string {
+    if (snippets.length === 0) return prompt;
+    return `${prompt.trimEnd()}
+
+## Shared Raw Evidence Pack
+
+ACA assembled the following raw snippets before witness invocation.
+The scout model (${scoutModel}) selected the ranges, but ACA read the file contents deterministically from disk.
+Treat these snippets as shared evidence, not as a model summary.
+
+${renderContextSnippets(snippets)}
 `;
 }

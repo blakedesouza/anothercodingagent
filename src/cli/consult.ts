@@ -4,8 +4,10 @@ import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { appendEvidencePack, buildEvidencePack, type EvidencePackSummary } from '../consult/evidence-pack.js';
 import {
+    appendSharedContextPack,
     buildContextRequestPrompt,
     buildFinalizationPrompt,
+    buildSharedContextRequestPrompt,
     containsPseudoToolCall,
     fulfillContextRequests,
     parseContextRequests,
@@ -28,6 +30,11 @@ export interface ConsultOptions {
     maxContextSnippets?: number;
     maxContextLines?: number;
     maxContextBytes?: number;
+    sharedContext?: boolean;
+    sharedContextModel?: string;
+    sharedContextMaxSnippets?: number;
+    sharedContextMaxLines?: number;
+    sharedContextMaxBytes?: number;
     skipTriage?: boolean;
     out?: string;
 }
@@ -52,6 +59,16 @@ interface ConsultResult {
     degraded: boolean;
     result_path: string;
     evidence_pack_summary?: EvidencePackSummary;
+    shared_context?: {
+        status: 'ok' | 'skipped' | 'error';
+        model: string | null;
+        request_path: string | null;
+        error: string | null;
+        usage: InvokeUsage | null;
+        safety: InvokeSafety | null;
+        context_requests: ReturnType<typeof parseContextRequests>;
+        context_snippets: Omit<ContextSnippet, 'text'>[];
+    };
     witnesses: Record<string, WitnessResult>;
     triage: {
         status: 'ok' | 'skipped' | 'error';
@@ -64,6 +81,9 @@ interface ConsultResult {
 }
 
 const TRIAGE_MODEL = 'zai-org/glm-5';
+const DEFAULT_SHARED_CONTEXT_SNIPPETS = 8;
+const DEFAULT_SHARED_CONTEXT_LINES = 160;
+const DEFAULT_SHARED_CONTEXT_BYTES = 16_000;
 
 function parseList(raw: string | undefined): string[] {
     return (raw ?? '')
@@ -261,6 +281,76 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     };
 }
 
+async function buildSharedContext(prompt: string, projectDir: string, suffix: string, options: {
+    model: string;
+    maxSnippets: number;
+    maxLines: number;
+    maxBytes: number;
+}): Promise<NonNullable<ConsultResult['shared_context']> & { snippetsWithText: ContextSnippet[] }> {
+    const requestPath = join(tmpdir(), `aca-consult-shared-context-${suffix}.md`);
+    const scoutPrompt = buildSharedContextRequestPrompt(prompt, {
+        maxSnippets: options.maxSnippets,
+        maxLines: options.maxLines,
+        maxBytes: options.maxBytes,
+    });
+    const scout = await invoke(options.model, scoutPrompt, projectDir, {
+        maxSteps: 1,
+        maxTotalTokens: 30_000,
+        outPath: requestPath,
+    });
+
+    if (scout.response.status !== 'success') {
+        return {
+            status: 'error',
+            model: options.model,
+            request_path: requestPath,
+            error: errorMessage(scout.response, scout.stderr),
+            usage: usageOrNull(scout.response),
+            safety: scout.response.safety ?? null,
+            context_requests: [],
+            context_snippets: [],
+            snippetsWithText: [],
+        };
+    }
+
+    if (containsPseudoToolCall(scout.response.result ?? '')) {
+        return {
+            status: 'error',
+            model: options.model,
+            request_path: requestPath,
+            error: 'pseudo-tool call emitted in shared raw context scout pass',
+            usage: usageOrNull(scout.response),
+            safety: scout.response.safety ?? null,
+            context_requests: [],
+            context_snippets: [],
+            snippetsWithText: [],
+        };
+    }
+
+    const requests = parseContextRequests(scout.response.result ?? '', {
+        maxSnippets: options.maxSnippets,
+        maxLines: options.maxLines,
+        maxBytes: options.maxBytes,
+    });
+    const snippets = fulfillContextRequests(requests, projectDir, {
+        maxSnippets: options.maxSnippets,
+        maxLines: options.maxLines,
+        maxBytes: options.maxBytes,
+    });
+
+    return {
+        status: 'ok',
+        model: options.model,
+        request_path: requestPath,
+        error: null,
+        usage: usageOrNull(scout.response),
+        safety: scout.response.safety ?? null,
+        context_requests: requests,
+        context_snippets: snippets.map(({ text: _text, ...snippet }) => snippet),
+        snippetsWithText: snippets,
+    };
+}
+
 function buildTriagePrompt(witnesses: Record<string, WitnessResult>): string {
     const sections = Object.values(witnesses).map(result => {
         const body = result.response_path ? readFileSync(result.response_path, 'utf8') : `(failed: ${result.error})`;
@@ -315,6 +405,17 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
         })
         : undefined;
     const prompt = pack ? appendEvidencePack(promptBase, pack) : promptBase;
+    const sharedContext = options.sharedContext
+        ? await buildSharedContext(prompt, projectDir, suffix, {
+            model: options.sharedContextModel ?? TRIAGE_MODEL,
+            maxSnippets: options.sharedContextMaxSnippets ?? DEFAULT_SHARED_CONTEXT_SNIPPETS,
+            maxLines: options.sharedContextMaxLines ?? DEFAULT_SHARED_CONTEXT_LINES,
+            maxBytes: options.sharedContextMaxBytes ?? DEFAULT_SHARED_CONTEXT_BYTES,
+        })
+        : undefined;
+    const promptForWitnesses = sharedContext?.status === 'ok' && sharedContext.snippetsWithText.length > 0
+        ? appendSharedContextPack(prompt, sharedContext.model ?? TRIAGE_MODEL, sharedContext.snippetsWithText)
+        : prompt;
     const witnesses = selectWitnesses(options.witnesses);
     const limits = {
         maxContextSnippets: options.maxContextSnippets ?? 3,
@@ -322,7 +423,7 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
         maxContextBytes: options.maxContextBytes ?? 8_000,
     };
     const witnessEntries = await Promise.all(
-        witnesses.map(async witness => [witness.name, await runWitness(witness, prompt, projectDir, suffix, limits)] as const),
+        witnesses.map(async witness => [witness.name, await runWitness(witness, promptForWitnesses, projectDir, suffix, limits)] as const),
     );
     const witnessResults = Object.fromEntries(witnessEntries);
     const successCount = Object.values(witnessResults).filter(result => result.status === 'ok').length;
@@ -371,9 +472,21 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
         mode: 'context_request',
         success_count: successCount,
         total_witnesses: witnesses.length,
-        degraded: successCount !== witnesses.length || triage.status === 'error',
+        degraded: successCount !== witnesses.length || triage.status === 'error' || sharedContext?.status === 'error',
         result_path: resultPath,
         ...(pack ? { evidence_pack_summary: pack.summary } : {}),
+        ...(sharedContext ? {
+            shared_context: {
+                status: sharedContext.status,
+                model: sharedContext.model,
+                request_path: sharedContext.request_path,
+                error: sharedContext.error,
+                usage: sharedContext.usage,
+                safety: sharedContext.safety,
+                context_requests: sharedContext.context_requests,
+                context_snippets: sharedContext.context_snippets,
+            },
+        } : {}),
         witnesses: witnessResults,
         triage,
     };
