@@ -333,6 +333,9 @@ export class NanoGptDriver implements ProviderDriver {
                     parameters: t.parameters,
                 },
             }));
+            body.tool_choice = 'auto';
+        } else {
+            body.tool_choice = 'none';
         }
 
         return body;

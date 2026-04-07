@@ -179,6 +179,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             expect(body.temperature).toBe(0.5);
             expect(body.top_p).toBe(0.95);
             expect(body.thinking).toEqual({ type: 'enabled' });
+            expect(body.tool_choice).toBe('none');
             const messages = body.messages as Array<Record<string, unknown>>;
             expect(messages).toHaveLength(2);
             expect(messages[0].role).toBe('system');
@@ -510,6 +511,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             const body = server.receivedRequests[0].body as Record<string, unknown>;
             const tools = body.tools as Array<Record<string, unknown>>;
             expect(tools).toHaveLength(1);
+            expect(body.tool_choice).toBe('auto');
             expect(tools[0].type).toBe('function');
             const fn = tools[0].function as Record<string, unknown>;
             expect(fn.name).toBe('read_file');
