@@ -6,6 +6,7 @@ Start here:
 - [Roadmap](roadmap.md): current state, known limits, and next work.
 - [Changelog](changelog.md): release-facing summary plus historical development log.
 - [Publication checklist](publication-checklist.md): pre-GitHub checks.
+- [Public cleanup notes](public-cleanup-notes.md): what to keep for WIP and what to revisit before a cleaner v1.
 - [Known issues](known-issues.md): current test/product caveats.
 - [Security](../SECURITY.md): safe-use notes for a tool-running local agent.
 
