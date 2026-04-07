@@ -10,7 +10,7 @@ import {
     buildFinalizationPrompt,
     buildFinalizationRetryPrompt,
     buildSharedContextRequestPrompt,
-    containsContextRequestLikeJson,
+    containsProtocolEnvelopeJson,
     containsPseudoToolCall,
     fulfillContextRequests,
     parseContextRequests,
@@ -129,7 +129,7 @@ function errorMessage(response: InvokeResponse, stderr: string): string {
 function shouldRetryNoToolsFinalization(response: InvokeResponse): boolean {
     if (response.status === 'success') {
         const result = response.result ?? '';
-        return containsPseudoToolCall(result) || containsContextRequestLikeJson(result);
+        return containsPseudoToolCall(result) || containsProtocolEnvelopeJson(result);
     }
     return response.errors?.some(error => error.code === 'turn.max_steps' && error.retryable) ?? false;
 }
@@ -311,7 +311,7 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     const finalResponse = finalRetry?.response ?? final.response;
     const finalStderr = finalRetry?.stderr ?? final.stderr;
     const finalRetryProtocolViolation = containsPseudoToolCall(finalResponse.result ?? '')
-        || containsContextRequestLikeJson(finalResponse.result ?? '');
+        || containsProtocolEnvelopeJson(finalResponse.result ?? '');
     return {
         name: witness.name,
         model: witness.model,

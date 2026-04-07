@@ -796,7 +796,7 @@ describe('M11.5 — Witness models use catalog ceilings via invoke path', () => 
 
     // Witness models and their actual API ceilings (from NanoGPT, 2026-04-05)
     const WITNESS_CEILINGS: Array<{ model: string; maxOutput: number }> = [
-        { model: 'minimax/minimax-m2.7', maxOutput: 131_072 },
+        { model: 'deepseek/deepseek-v3.2', maxOutput: 65_536 },
         { model: 'moonshotai/kimi-k2.5', maxOutput: 65_536 },
         { model: 'qwen/qwen3.5-397b-a17b', maxOutput: 65_536 },
         { model: 'google/gemma-4-31b-it', maxOutput: 131_072 },
@@ -836,7 +836,7 @@ describe('M11.5 — Witness models use catalog ceilings via invoke path', () => 
 
         server.addTextResponse('witness review output');
         await collectEvents(driver.stream(makeRequest({
-            model: 'minimax/minimax-m2.7',
+            model: 'deepseek/deepseek-v3.2',
             maxTokens: 8192, // old consult_ring.py value
         })));
 

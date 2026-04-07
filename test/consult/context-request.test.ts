@@ -10,8 +10,8 @@ import {
     buildFinalizationPrompt,
     buildFinalizationRetryPrompt,
     buildSharedContextRequestPrompt,
-    containsContextRequestLikeJson,
     fulfillContextRequests,
+    containsProtocolEnvelopeJson,
     containsPseudoToolCall,
     parseContextRequests,
     truncateUtf8,
@@ -60,7 +60,10 @@ describe('consult context requests', () => {
         expect(containsPseudoToolCall('<function_calls><invoke name="read_file">')).toBe(true);
         expect(containsPseudoToolCall('<minimax:tool_call><invoke name="read_file">')).toBe(true);
         expect(containsPseudoToolCall('<parameter name="path">src/index.ts</parameter>')).toBe(true);
+        expect(containsPseudoToolCall('<read_file><path>src/index.ts</path></read_file>')).toBe(true);
         expect(containsPseudoToolCall('read_file\n<arg_key>path</arg_key>\n<arg_value>src/index.ts</arg_value>')).toBe(true);
+        expect(containsPseudoToolCall('```javascript\nread_file({ "path": "src/index.ts" })\n```')).toBe(true);
+        expect(containsPseudoToolCall('[{"name":"read_file","arguments":{"absolute_path":"/tmp/x"}}]')).toBe(true);
         expect(containsPseudoToolCall('[TOOL_CALL]\n{"tool":"read_file"}\n[/TOOL_CALL]')).toBe(true);
         expect(containsPseudoToolCall('{"tool_calls":[{"name":"read_file","arguments":{}}]}')).toBe(true);
         expect(containsPseudoToolCall('## Q1\nNo tool markup here.')).toBe(false);
@@ -117,7 +120,7 @@ describe('consult context requests', () => {
 
         expect(prompt).toContain('Invalid Previous Context Request');
         expect(prompt).toContain('return only the needs_context JSON object');
-        expect(prompt).toContain('Do not emit XML, function-call, tool-call, invoke, parameter, arg_key, arg_value, [TOOL_CALL], or "tool_calls" markup');
+        expect(prompt).toContain('Do not emit XML, function-call, tool-call, invoke, parameter, arg_key, arg_value, read_file, [TOOL_CALL], or "tool_calls" markup');
     });
 
     it('parses alternate file-list context requests from routed models', () => {
@@ -134,11 +137,12 @@ describe('consult context requests', () => {
         }]);
     });
 
-    it('detects context-request-shaped JSON outputs', () => {
-        expect(containsContextRequestLikeJson('{"needs_context":[]}')).toBe(true);
-        expect(containsContextRequestLikeJson('{"status":"success","data":{"files":[{"path":"src/index.ts","text":"code"}]}}')).toBe(true);
-        expect(containsContextRequestLikeJson('{"status":"success","summary":"no files"}')).toBe(false);
-        expect(containsContextRequestLikeJson('Plain Markdown findings')).toBe(false);
+    it('detects context-request and tool-result JSON envelopes', () => {
+        expect(containsProtocolEnvelopeJson('{"needs_context":[]}')).toBe(true);
+        expect(containsProtocolEnvelopeJson('{"status":"success","data":{"files":[{"path":"src/index.ts","text":"code"}]}}')).toBe(true);
+        expect(containsProtocolEnvelopeJson('{"status":"error","error":{"code":"tool.not_allowed"}}')).toBe(true);
+        expect(containsProtocolEnvelopeJson('{"status":"success","summary":"no files"}')).toBe(false);
+        expect(containsProtocolEnvelopeJson('Plain Markdown findings')).toBe(false);
     });
 
     it('builds shared context scout prompts that request ranges rather than summaries', () => {

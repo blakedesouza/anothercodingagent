@@ -37,6 +37,14 @@ describe('M5.1 — Model Registry (JSON-based)', () => {
             expect(caps?.supportsVision).toBe(false);
         });
 
+        it('returns correct capabilities for deepseek v3.2', () => {
+            const caps = getModelCapabilities('deepseek/deepseek-v3.2');
+            expect(caps).toBeDefined();
+            expect(caps?.maxContext).toBe(163_000);
+            expect(caps?.maxOutput).toBe(65_536);
+            expect(caps?.supportsTools).toBe('native');
+        });
+
         it('returns undefined for unknown model ID', () => {
             expect(getModelCapabilities('unknown-model-xyz')).toBeUndefined();
         });
@@ -86,6 +94,7 @@ describe('M5.1 — Model Registry (JSON-based)', () => {
             expect(ids).toContain('gpt-4o');
             expect(ids).toContain('gpt-4o-mini');
             expect(ids).toContain('deepseek-chat');
+            expect(ids).toContain('deepseek/deepseek-v3.2');
             expect(ids).toContain('deepseek-reasoner');
         });
 

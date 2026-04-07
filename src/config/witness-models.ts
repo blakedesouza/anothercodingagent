@@ -19,9 +19,9 @@ import { DEFAULT_API_TIMEOUT_MS } from './schema.js';
 export const DEFAULT_WITNESS_TIMEOUT_S = DEFAULT_API_TIMEOUT_MS / 1000;
 
 export interface WitnessModelConfig {
-    /** Short canonical name used by consult_ring.py (e.g., "minimax") */
+    /** Short canonical name used by consult_ring.py (e.g., "deepseek") */
     name: string;
-    /** Display name for reports (e.g., "MiniMax") */
+    /** Display name for reports (e.g., "DeepSeek") */
     displayName: string;
     /** NanoGPT model ID */
     model: string;
@@ -47,12 +47,12 @@ export interface WitnessModelConfig {
  */
 export const WITNESS_MODELS: readonly Readonly<WitnessModelConfig>[] = Object.freeze([
     Object.freeze({
-        name: 'minimax',
-        displayName: 'MiniMax',
-        model: 'minimax/minimax-m2.7',
-        fallbackModel: 'minimax/minimax-m2.5',
-        maxOutputTokens: 131_072,
-        contextLength: 204_800,
+        name: 'deepseek',
+        displayName: 'DeepSeek',
+        model: 'deepseek/deepseek-v3.2',
+        fallbackModel: 'deepseek-chat',
+        maxOutputTokens: 65_536,
+        contextLength: 163_000,
         timeout: DEFAULT_WITNESS_TIMEOUT_S,
         temperature: 0.6,
     }),

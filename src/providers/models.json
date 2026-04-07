@@ -97,6 +97,22 @@
       "bytesPerToken": 2.5
     },
     {
+      "id": "deepseek/deepseek-v3.2",
+      "aliases": [],
+      "maxContext": 163000,
+      "maxOutput": 65536,
+      "supportsTools": "native",
+      "supportsVision": false,
+      "supportsStreaming": true,
+      "supportsPrefill": false,
+      "supportsEmbedding": false,
+      "embeddingModels": [],
+      "toolReliability": "good",
+      "costPerMillion": { "input": 0, "output": 0 },
+      "specialFeatures": [],
+      "bytesPerToken": 2.5
+    },
+    {
       "id": "deepseek-reasoner",
       "aliases": [],
       "maxContext": 64000,

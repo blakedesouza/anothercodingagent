@@ -63,18 +63,50 @@ function stripMarkdownCode(text: string): string {
         .replace(/`[^`\n]*`/g, '');
 }
 
+const ACA_TOOL_NAMES = 'read_file|write_file|edit_file|delete_path|move_path|make_directory|stat_path|find_paths|search_text|exec_command|open_session|session_io|close_session|ask_user|confirm_action|estimate_tokens|lsp_query|web_search|fetch_url|lookup_docs';
+
 export function containsPseudoToolCall(text: string): boolean {
+    if (containsActiveFencedToolCall(text) || containsToolCallJsonArray(text)) return true;
     const inspectableText = stripMarkdownCode(text);
     return /<\s*(?:[\w-]+:)?(tool_call|function_calls?|call)\b/i.test(inspectableText)
         || /\[\s*\/?\s*(?:[\w-]+:)?(tool_call|function_calls?|call)\s*\]/i.test(inspectableText)
         || /<\s*invoke\b/i.test(inspectableText)
         || /<\s*parameter\b/i.test(inspectableText)
         || /<\s*arg_(key|value)\b/i.test(inspectableText)
+        || new RegExp(`<\\s*\\/?\\s*(${ACA_TOOL_NAMES})\\b`, 'i').test(inspectableText)
         || /"tool_calls"\s*:/i.test(inspectableText)
         || /"needs_tool"\s*:/i.test(inspectableText);
 }
 
-export function containsContextRequestLikeJson(text: string): boolean {
+function containsActiveFencedToolCall(text: string): boolean {
+    const toolName = new RegExp(`^\\s*(${ACA_TOOL_NAMES})\\s*[({]`, 'i');
+    const fencedBlocks = text.matchAll(/```(?:\w+)?\s*([\s\S]*?)```/g);
+    for (const block of fencedBlocks) {
+        const body = block[1]?.trim() ?? '';
+        if (toolName.test(body) || containsToolCallJsonArray(body)) return true;
+    }
+    return false;
+}
+
+function containsToolCallJsonArray(text: string): boolean {
+    let payload: unknown;
+    try {
+        const stripped = text.trim();
+        payload = JSON.parse(stripped.startsWith('[') ? stripped : extractJsonPayload(text));
+    } catch {
+        return false;
+    }
+    if (!Array.isArray(payload)) return false;
+    return payload.some(item => {
+        if (typeof item !== 'object' || item === null || Array.isArray(item)) return false;
+        const record = item as Record<string, unknown>;
+        return typeof record.name === 'string'
+            && new RegExp(`^(${ACA_TOOL_NAMES})$`, 'i').test(record.name)
+            && record.arguments !== undefined;
+    });
+}
+
+export function containsProtocolEnvelopeJson(text: string): boolean {
     let payload: unknown;
     try {
         payload = JSON.parse(extractJsonPayload(text));
@@ -85,6 +117,7 @@ export function containsContextRequestLikeJson(text: string): boolean {
     const record = payload as Record<string, unknown>;
     if (Array.isArray(record.needs_context)) return true;
     if (Array.isArray(record.files)) return true;
+    if (typeof record.status === 'string' && (record.data !== undefined || record.error !== undefined)) return true;
     const data = typeof record.data === 'object' && record.data !== null && !Array.isArray(record.data)
         ? record.data as Record<string, unknown>
         : undefined;
@@ -120,7 +153,7 @@ Limits:
 - Request only repo-relative paths.
 - Do not request broad directories or whole-repo searches.
 - Tools are disabled in this pass. Do not emit tool-call markup or tool-call intent.
-- Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
+- Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, <read_file>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
 - If you need more context, use only the needs_context JSON object above. ACA will read accepted snippets deterministically.
 `;
 }
@@ -137,7 +170,7 @@ ${truncateUtf8(invalidResponse, 4_000)}
 \`\`\`
 
 Try again now. If you need more context, return only the needs_context JSON object from the protocol above. If the evidence is enough, return final findings in Markdown.
-Do not emit XML, function-call, tool-call, invoke, parameter, arg_key, arg_value, [TOOL_CALL], or "tool_calls" markup.
+Do not emit XML, function-call, tool-call, invoke, parameter, arg_key, arg_value, read_file, [TOOL_CALL], or "tool_calls" markup.
 `;
 }
 
@@ -170,7 +203,7 @@ Limits:
 - Prefer narrow ranges that satisfy all witnesses before their review.
 - Do not request broad directories or whole-repo searches.
 - Do not summarize findings or quote code yourself.
-- Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
+- Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, <read_file>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
 `;
 }
 
@@ -337,7 +370,7 @@ ${renderContextSnippets(snippets)}
 ## Finalization
 
 Return your final findings now. Do not request more context. Tools are disabled in this pass.
-Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
+Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, <read_file>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
 `;
 }
 
