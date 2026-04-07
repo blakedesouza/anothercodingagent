@@ -43,11 +43,9 @@ export class NanoGptDriver implements ProviderDriver {
 
     constructor(options: NanoGptDriverOptions = {}) {
         this.apiKey = options.apiKey ?? process.env.NANOGPT_API_KEY;
-        // Subscription endpoint: flat-rate models (qwen, kimi, minimax, gemma, deepseek, etc).
-        // The paid per-token endpoint at api.nano-gpt.com/v1 rejects some flat-rate-only
-        // models (notably google/gemma-4-31b-it → HTTP 400 "Model not supported"), so ACA
-        // always uses the subscription path. Claude/GPT/Gemini are NOT routed through ACA,
-        // so losing access to the paid endpoint is intentional.
+        // Subscription endpoint: model availability differs from the paid-compatible
+        // api.nano-gpt.com/v1 endpoint. ACA keeps catalog discovery and invocation on
+        // the same subscription API path so a listed model is actually invokable.
         this.baseUrl = options.baseUrl ?? 'https://nano-gpt.com/api/subscription/v1';
         // Most callers pass `config.apiTimeout` explicitly. The fallback exists so
         // direct constructor uses (e.g. tests) get the project-wide default rather than
@@ -319,6 +317,12 @@ export class NanoGptDriver implements ProviderDriver {
             max_tokens: maxTokens,
             temperature: request.temperature,
         };
+        if (request.topP !== undefined) {
+            body.top_p = request.topP;
+        }
+        if (request.thinking !== undefined) {
+            body.thinking = request.thinking;
+        }
 
         if (request.tools && request.tools.length > 0) {
             body.tools = request.tools.map(t => ({

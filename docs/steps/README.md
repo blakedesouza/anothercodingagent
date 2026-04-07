@@ -1,5 +1,7 @@
 # ACA Implementation Steps — File Index
 
+This directory is the implementation milestone archive. It is useful for understanding how ACA was built, but it is not the public user guide. Start with the root `README.md` and `docs/roadmap.md` for current status.
+
 Split from `steps.md` for agent readability. Each file is one milestone or sub-milestone.
 
 M7 split into 4 parts (reordered so error/health/security foundations and review aggregation come before delegation/tools that depend on them).

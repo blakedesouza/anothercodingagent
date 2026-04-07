@@ -85,9 +85,8 @@ export interface NanoGptCatalogOptions {
     apiKey?: string;
     /**
      * Host root for NanoGPT (no path suffix). Defaults to https://api.nano-gpt.com.
-     * The catalog always calls /subscription/v1/models?detailed=true to get
-     * flat-rate subscription models only, excluding premium paid models
-     * (Claude/GPT/Gemini) that are not included in the flat-rate subscription.
+     * The catalog calls /subscription/v1/models?detailed=true so discovery matches
+     * the subscription invocation path used by the NanoGPT driver.
      */
     baseUrl?: string;
     timeout?: number;
@@ -101,10 +100,9 @@ export interface NanoGptCatalogOptions {
  * Calls GET <baseUrl>/subscription/v1/models?detailed=true with auth header.
  * Falls back to StaticCatalog on failure.
  *
- * Note: the canonical /v1/models endpoint includes paid/premium models that
- * are not part of the flat-rate subscription. This catalog deliberately uses
- * the subscription endpoint so ACA only offers models the user can actually
- * invoke without incurring per-token charges.
+ * Note: NanoGPT's general /v1/models and subscription endpoints can expose
+ * different model sets. ACA deliberately uses the subscription endpoint here
+ * so catalog discovery and invocation agree.
  */
 export class NanoGptCatalog implements ModelCatalog {
     private readonly entries = new Map<string, ModelCatalogEntry>();

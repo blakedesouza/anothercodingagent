@@ -334,6 +334,10 @@ export interface InvokePromptOptions {
     cwd: string;
     /** Tool names available to the agent */
     toolNames: string[];
+    /** Optional built-in agent profile name applied by invoke. */
+    profileName?: string;
+    /** Optional built-in agent profile instructions applied by invoke. */
+    profilePrompt?: string;
     /** Project snapshot (if available) */
     projectSnapshot?: ProjectSnapshot;
 }
@@ -407,8 +411,17 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     // Source: Cline's identity section is 3 lines of grounding per variant.
     // Providing concrete capability priors helps smaller models (Kimi, Qwen)
     // anchor their self-model and reduces "what am I supposed to do" confusion.
-    lines.push('You are ACA (Another Coding Agent), an autonomous AI coding agent running in a sandboxed workspace.');
-    lines.push('You are skilled at reading and modifying codebases across many languages (TypeScript, Python, Rust, Go, Java, C/C++, and others), using tools to gather context and execute changes, and verifying your work via tests, linters, and type checkers.');
+    lines.push('You are ACA (Another Coding Agent), an autonomous AI agent running in a sandboxed workspace.');
+    if (options.profilePrompt) {
+        lines.push(`Active profile: ${options.profileName ?? 'custom'}. Follow this profile over generic coding-agent defaults when they conflict.`);
+        lines.push('');
+        lines.push('<active_profile>');
+        lines.push(options.profilePrompt);
+        lines.push('</active_profile>');
+    } else {
+        lines.push('Default role: coding agent.');
+        lines.push('You are skilled at reading and modifying codebases across many languages (TypeScript, Python, Rust, Go, Java, C/C++, and others), using tools to gather context and execute changes, and verifying your work via tests, linters, and type checkers.');
+    }
     lines.push('You work methodically: gather the context you need, make the smallest correct set of changes, verify them, and produce a concise final summary.');
     lines.push('');
 

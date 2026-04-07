@@ -29,14 +29,20 @@ ACA (Another Coding Agent) exists to give Claude hands. Claude reasons, plans, a
 - **Claude orchestrates**: designs architecture, reviews results, makes judgment calls, decides what to build next
 - **ACA agents do the work**: each agent gets its own NanoGPT LLM call, its own tool access, its own context window. Claude doesn't hold any of that.
 - **Witnesses get tools too**: instead of Claude summarizing code for review, witnesses run as ACA agents that can read the code themselves and form opinions from the actual source — not from Claude's summary of the source
-- **NanoGPT is $8/mo flat rate**: zero marginal cost per call, so use all witnesses every time, spawn as many agents as needed
+- **Provider aggregation matters**: NanoGPT gives access to many models through one provider surface, which makes multi-agent experimentation practical. Keep cost assumptions out of safety decisions; use guardrails even when calls feel cheap.
+
+## Product Boundary
+
+ACA must be functional and safe by itself. Claude/Codex skills are convenience adapters only, not the implementation boundary.
+
+Durable safety features belong in ACA-native code: delegation caps, witness/triage profiles, deterministic evidence packing, context-request snippet fulfillment, no-tools finalization, result artifacts, and safety telemetry. Local skills may call those ACA surfaces, but a GitHub user should not need someone else's `.claude` or `.codex` skill folders to get the safe behavior.
 
 ## Why This Matters
 
 - **Save Claude's context**: offload file reading, code generation, test running to ACA agents. Claude stays focused on reasoning.
 - **Better reviews**: witnesses that read code directly catch things that summaries miss
 - **Parallel work**: multiple ACA agents working simultaneously on different tasks
-- **Cost efficiency**: NanoGPT flat rate means the heavy lifting (thousands of tool calls) costs nothing extra
+- **Cost efficiency**: offload heavy context and tool work to bounded model calls while preserving Claude/Codex for judgment and orchestration
 
 ## The End State
 

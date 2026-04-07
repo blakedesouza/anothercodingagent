@@ -2,7 +2,7 @@
  * Tests for M7.1a: Agent Registry + Profiles
  *
  * Covers:
- * - Registry loads 5 built-in profiles at session start (general, researcher, coder, reviewer, witness)
+ * - Registry loads built-in profiles at session start
  * - Project config adds custom profile → registered alongside built-ins
  * - Profile lookup by name → correct tools, delegation permissions
  * - Narrowing validation: attempt to add tool not in profile → rejected
@@ -63,6 +63,8 @@ function buildTestToolRegistry(): ToolRegistry {
     // external-effect tools
     registry.register(makeToolSpec('exec_command', 'external-effect'), noopImpl);
     registry.register(makeToolSpec('fetch_url', 'external-effect'), noopImpl);
+    registry.register(makeToolSpec('fetch_mediawiki_page', 'external-effect'), noopImpl);
+    registry.register(makeToolSpec('fetch_mediawiki_category', 'external-effect'), noopImpl);
     registry.register(makeToolSpec('web_search', 'external-effect'), noopImpl);
     registry.register(makeToolSpec('lookup_docs', 'external-effect'), noopImpl);
     registry.register(makeToolSpec('open_session', 'external-effect'), noopImpl);
@@ -97,14 +99,15 @@ function buildTestToolRegistry(): ToolRegistry {
 
 describe('AgentRegistry', () => {
     describe('built-in profiles', () => {
-        it('loads 6 built-in profiles at session start', () => {
+        it('loads 7 built-in profiles at session start', () => {
             const toolReg = buildTestToolRegistry();
             const { registry } = AgentRegistry.resolve(toolReg);
 
             const names = registry.getProfileNames();
-            expect(names).toHaveLength(6);
+            expect(names).toHaveLength(7);
             expect(names).toContain('general');
             expect(names).toContain('researcher');
+            expect(names).toContain('rp-researcher');
             expect(names).toContain('coder');
             expect(names).toContain('reviewer');
             expect(names).toContain('witness');
@@ -172,6 +175,41 @@ describe('AgentRegistry', () => {
             // Should NOT include delegation or user-facing
             expect(tools).not.toContain('spawn_agent');
             expect(tools).not.toContain('ask_user');
+        });
+
+        it('rp-researcher profile has bounded lore writing tools and cannot delegate', () => {
+            const toolReg = buildTestToolRegistry();
+            const { registry } = AgentRegistry.resolve(toolReg);
+
+            const profile = registry.getProfile('rp-researcher');
+            expect(profile).toBeDefined();
+            expect(profile!.canDelegate).toBe(false);
+            expect([...profile!.defaultTools].sort()).toEqual([
+                'fetch_mediawiki_category',
+                'fetch_mediawiki_page',
+                'fetch_url',
+                'find_paths',
+                'make_directory',
+                'read_file',
+                'search_text',
+                'web_search',
+                'write_file',
+            ]);
+            expect(profile!.systemPrompt).toContain('RP lore research writer');
+            expect(profile!.systemPrompt).toContain('prefer fetch_mediawiki_category');
+            expect(profile!.systemPrompt).toContain('Write Markdown only');
+            expect(profile!.systemPrompt).toContain('world/character/<character>.md');
+            expect(profile!.systemPrompt).toContain('world/characters/<character>.md');
+            expect(profile!.systemPrompt).toContain('character research notes');
+            expect(profile!.systemPrompt).toContain('dynamic multi-pass workflow');
+            expect(profile!.systemPrompt).toContain('orchestrator planning pass');
+            expect(profile!.systemPrompt).toContain('bounded research passes');
+            expect(profile!.systemPrompt).toContain('discover the cast/topic list');
+            expect(profile!.systemPrompt).toContain('Do not spend the whole tool budget on unbounded exploration');
+            expect(profile!.systemPrompt).toContain('Do not create per-character instructions.md files');
+            expect(profile!.systemPrompt).toContain('Do not include Japanese script');
+            expect(profile!.systemPrompt).toContain('Knowledge and Secrets');
+            expect(profile!.systemPrompt).toContain('Avoid over-exposing hidden traits');
         });
 
         it('coder profile gets all tools except delegation and user-facing', () => {
@@ -351,7 +389,7 @@ describe('AgentRegistry', () => {
             const { registry } = AgentRegistry.resolve(toolReg);
 
             const delegationTools = ['spawn_agent', 'message_agent', 'await_agent'];
-            for (const profileName of ['coder', 'researcher', 'reviewer', 'witness', 'triage']) {
+            for (const profileName of ['coder', 'researcher', 'rp-researcher', 'reviewer', 'witness', 'triage']) {
                 const profile = registry.getProfile(profileName);
                 for (const tool of delegationTools) {
                     expect([...profile!.defaultTools]).not.toContain(tool);
@@ -390,7 +428,7 @@ describe('AgentRegistry', () => {
             const { registry } = AgentRegistry.resolve(toolReg, [customProfile]);
 
             const names = registry.getProfileNames();
-            expect(names).toHaveLength(7);
+            expect(names).toHaveLength(8);
             expect(names).toContain('data-analyst');
 
             const profile = registry.getProfile('data-analyst');
@@ -513,9 +551,9 @@ describe('AgentRegistry', () => {
             const { registry } = AgentRegistry.resolve(toolReg);
 
             const profiles = registry.listProfiles();
-            expect(profiles).toHaveLength(6);
+            expect(profiles).toHaveLength(7);
             const names = profiles.map(p => p.name);
-            expect(names).toEqual(['general', 'researcher', 'coder', 'reviewer', 'witness', 'triage']);
+            expect(names).toEqual(['general', 'researcher', 'rp-researcher', 'coder', 'reviewer', 'witness', 'triage']);
         });
     });
 

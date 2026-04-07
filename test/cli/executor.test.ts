@@ -47,6 +47,7 @@ describe('Executor Mode', () => {
             expect(descriptor.constraints.supports_streaming).toBe(false);
             expect(descriptor.constraints.ephemeral_sessions).toBe(true);
             expect(descriptor.constraints.supported_tools).toEqual(TOOL_NAMES);
+            expect(descriptor.constraints.supported_profiles).toContain('rp-researcher');
         });
 
         it('input_schema requires task field', () => {
@@ -55,6 +56,23 @@ describe('Executor Mode', () => {
             const schema = descriptor.input_schema as { required?: string[] };
 
             expect(schema.required).toContain('task');
+        });
+
+        it('input_schema documents context model and profile fields', () => {
+            const output = runDescribe(TOOL_NAMES);
+            const descriptor: CapabilityDescriptor = JSON.parse(output);
+            const schema = descriptor.input_schema as {
+                properties: { context: { properties: Record<string, unknown> } };
+            };
+
+            expect(schema.properties.context.properties).toHaveProperty('model');
+            expect(schema.properties.context.properties).toHaveProperty('profile');
+            expect(JSON.stringify(schema.properties.context.properties.profile)).toContain('rp-researcher');
+            expect(schema.properties.context.properties).toHaveProperty('temperature');
+            expect(schema.properties.context.properties).toHaveProperty('top_p');
+            expect(schema.properties.context.properties).toHaveProperty('thinking');
+            expect(JSON.stringify(descriptor.input_schema)).toContain('required_output_paths');
+            expect(JSON.stringify(descriptor.input_schema)).toContain('fail_on_rejected_tool_calls');
         });
 
         it('output_schema requires contract_version, schema_version, status', () => {
@@ -147,8 +165,22 @@ describe('Executor Mode', () => {
                 schema_version: '1.0.0',
                 task: 'Fix the bug in auth.ts',
                 input: { file: 'auth.ts' },
-                context: { project: 'myapp' },
-                constraints: { max_steps: 10, max_total_tokens: 200_000 },
+                context: {
+                    project: 'myapp',
+                    profile: 'rp-researcher',
+                    temperature: 1,
+                    top_p: 0.95,
+                    thinking: { type: 'enabled' },
+                },
+                constraints: {
+                    max_steps: 10,
+                    max_tool_calls: 4,
+                    max_tool_calls_by_name: { read_file: 1 },
+                    max_tool_result_bytes: 12_000,
+                    max_input_tokens: 30_000,
+                    max_repeated_read_calls: 1,
+                    max_total_tokens: 200_000,
+                },
                 authority: [{ tool: 'exec_command', decision: 'approve' }],
                 deadline: 30000,
             });
@@ -159,8 +191,19 @@ describe('Executor Mode', () => {
                 const req = result.request;
                 expect(req.task).toBe('Fix the bug in auth.ts');
                 expect(req.input).toEqual({ file: 'auth.ts' });
-                expect(req.context).toEqual({ project: 'myapp' });
+                expect(req.context).toEqual({
+                    project: 'myapp',
+                    profile: 'rp-researcher',
+                    temperature: 1,
+                    top_p: 0.95,
+                    thinking: { type: 'enabled' },
+                });
                 expect(req.constraints?.max_steps).toBe(10);
+                expect(req.constraints?.max_tool_calls).toBe(4);
+                expect(req.constraints?.max_tool_calls_by_name).toEqual({ read_file: 1 });
+                expect(req.constraints?.max_tool_result_bytes).toBe(12_000);
+                expect(req.constraints?.max_input_tokens).toBe(30_000);
+                expect(req.constraints?.max_repeated_read_calls).toBe(1);
                 expect(req.constraints?.max_total_tokens).toBe(200_000);
                 expect(req.authority).toHaveLength(1);
                 expect(req.authority![0].tool).toBe('exec_command');
@@ -293,7 +336,14 @@ describe('Executor Mode', () => {
                 task: 'hello',
                 constraints: {
                     max_steps: 5,
+                    max_tool_calls: 2,
+                    max_tool_calls_by_name: { read_file: 1, search_text: 1 },
+                    max_tool_result_bytes: 12_000,
+                    max_input_tokens: 30_000,
+                    max_repeated_read_calls: 1,
                     max_total_tokens: 50_000,
+                    required_output_paths: ['world/setting.md', '', 42],
+                    fail_on_rejected_tool_calls: true,
                     allowed_tools: ['read_file', 'write_file'],
                     denied_tools: ['exec_command'],
                 },
@@ -302,7 +352,14 @@ describe('Executor Mode', () => {
             expect('request' in result).toBe(true);
             if ('request' in result) {
                 expect(result.request.constraints?.max_steps).toBe(5);
+                expect(result.request.constraints?.max_tool_calls).toBe(2);
+                expect(result.request.constraints?.max_tool_calls_by_name).toEqual({ read_file: 1, search_text: 1 });
+                expect(result.request.constraints?.max_tool_result_bytes).toBe(12_000);
+                expect(result.request.constraints?.max_input_tokens).toBe(30_000);
+                expect(result.request.constraints?.max_repeated_read_calls).toBe(1);
                 expect(result.request.constraints?.max_total_tokens).toBe(50_000);
+                expect(result.request.constraints?.required_output_paths).toEqual(['world/setting.md']);
+                expect(result.request.constraints?.fail_on_rejected_tool_calls).toBe(true);
                 expect(result.request.constraints?.allowed_tools).toEqual(['read_file', 'write_file']);
                 expect(result.request.constraints?.denied_tools).toEqual(['exec_command']);
             }
@@ -391,6 +448,26 @@ describe('Executor Mode', () => {
             const resp = buildErrorResponse('protocol.malformed_request', 'bad');
             expect(resp.errors![0].retryable).toBe(false);
         });
+
+        it('can include safety stats on guardrail errors', () => {
+            const resp = buildErrorResponse('turn.max_tool_calls', 'capped', true, {
+                outcome: 'max_tool_calls',
+                steps: 2,
+                accepted_tool_calls: 1,
+                rejected_tool_calls: 1,
+                accepted_tool_calls_by_name: { read_file: 1 },
+                tool_result_bytes: 100,
+                guardrails: ['max_tool_calls'],
+            }, {
+                input_tokens: 100,
+                output_tokens: 20,
+                cost_usd: 0,
+            });
+            expect(resp.status).toBe('error');
+            expect(resp.safety?.outcome).toBe('max_tool_calls');
+            expect(resp.safety?.accepted_tool_calls_by_name).toEqual({ read_file: 1 });
+            expect(resp.usage?.input_tokens).toBe(100);
+        });
     });
 
     describe('buildSuccessResponse', () => {
@@ -399,6 +476,15 @@ describe('Executor Mode', () => {
                 input_tokens: 100,
                 output_tokens: 50,
                 cost_usd: 0.01,
+            }, {
+                outcome: 'assistant_final',
+                steps: 2,
+                estimated_input_tokens_max: 1234,
+                accepted_tool_calls: 1,
+                rejected_tool_calls: 0,
+                accepted_tool_calls_by_name: { read_file: 1 },
+                tool_result_bytes: 100,
+                guardrails: [],
             });
             expect(resp.contract_version).toBe(CONTRACT_VERSION);
             expect(resp.schema_version).toBe(SCHEMA_VERSION);
@@ -407,6 +493,7 @@ describe('Executor Mode', () => {
             expect(resp.usage?.input_tokens).toBe(100);
             expect(resp.usage?.output_tokens).toBe(50);
             expect(resp.usage?.cost_usd).toBe(0.01);
+            expect(resp.safety?.accepted_tool_calls_by_name).toEqual({ read_file: 1 });
             expect(resp.errors).toBeUndefined();
         });
     });

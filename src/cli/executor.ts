@@ -9,7 +9,7 @@
 // --- Contract versions ---
 
 export const CONTRACT_VERSION = '1.0.0';
-export const SCHEMA_VERSION = '1.0.0';
+export const SCHEMA_VERSION = '1.1.0';
 
 // --- Capability Descriptor (aca describe) ---
 
@@ -28,6 +28,7 @@ export interface DescriptorConstraints {
     supports_streaming: boolean;
     ephemeral_sessions: boolean;
     supported_tools: string[];
+    supported_profiles: string[];
 }
 
 // --- Invoke Request (stdin envelope) ---
@@ -37,15 +38,31 @@ export interface InvokeRequest {
     schema_version: string;
     task: string;
     input?: Record<string, unknown>;
-    context?: Record<string, unknown>;
+    context?: InvokeContext;
     constraints?: InvokeConstraints;
     authority?: AuthorityGrant[];
     deadline?: number;
 }
 
+export interface InvokeContext extends Record<string, unknown> {
+    model?: string;
+    profile?: string;
+    temperature?: number;
+    top_p?: number;
+    topP?: number;
+    thinking?: 'enabled' | 'disabled' | { type?: 'enabled' | 'disabled' };
+}
+
 export interface InvokeConstraints {
     max_steps?: number;
+    max_tool_calls?: number;
+    max_tool_calls_by_name?: Record<string, number>;
+    max_tool_result_bytes?: number;
+    max_input_tokens?: number;
+    max_repeated_read_calls?: number;
     max_total_tokens?: number;
+    required_output_paths?: string[];
+    fail_on_rejected_tool_calls?: boolean;
     allowed_tools?: string[];
     denied_tools?: string[];
 }
@@ -64,6 +81,7 @@ export interface InvokeResponse {
     status: 'success' | 'error';
     result?: string;
     usage?: InvokeUsage;
+    safety?: InvokeSafety;
     errors?: InvokeError[];
 }
 
@@ -71,6 +89,17 @@ export interface InvokeUsage {
     input_tokens: number;
     output_tokens: number;
     cost_usd: number;
+}
+
+export interface InvokeSafety {
+    outcome?: string;
+    steps: number;
+    estimated_input_tokens_max?: number;
+    accepted_tool_calls: number;
+    rejected_tool_calls: number;
+    accepted_tool_calls_by_name: Record<string, number>;
+    tool_result_bytes: number;
+    guardrails: string[];
 }
 
 export interface InvokeError {
@@ -164,12 +193,52 @@ export function buildDescriptor(toolNames: string[]): CapabilityDescriptor {
             properties: {
                 task: { type: 'string', description: 'The task to execute' },
                 input: { type: 'object', description: 'Additional structured input' },
-                context: { type: 'object', description: 'Contextual information for the task' },
+                context: {
+                    type: 'object',
+                    description: 'Contextual information for the task',
+                    properties: {
+                        model: { type: 'string', description: 'Model override for this invocation' },
+                        profile: {
+                            type: 'string',
+                            description: 'Built-in agent profile to apply. Use rp-researcher for RP lore/anime/manga/VN research and Markdown compendium writing.',
+                        },
+                        temperature: { type: 'number', minimum: 0, maximum: 2, description: 'Model sampling temperature override' },
+                        top_p: { type: 'number', minimum: 0, maximum: 1, description: 'Model nucleus sampling override' },
+                        thinking: {
+                            oneOf: [
+                                { type: 'string', enum: ['enabled', 'disabled'] },
+                                {
+                                    type: 'object',
+                                    properties: { type: { type: 'string', enum: ['enabled', 'disabled'] } },
+                                    required: ['type'],
+                                },
+                            ],
+                            description: 'Provider thinking mode override when supported',
+                        },
+                    },
+                },
                 constraints: {
                     type: 'object',
                     properties: {
                         max_steps: { type: 'number' },
+                        max_tool_calls: { type: 'number' },
+                        max_tool_calls_by_name: {
+                            type: 'object',
+                            additionalProperties: { type: 'number' },
+                        },
+                        max_tool_result_bytes: { type: 'number' },
+                        max_input_tokens: { type: 'number' },
+                        max_repeated_read_calls: { type: 'number' },
                         max_total_tokens: { type: 'number' },
+                        required_output_paths: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            description: 'Output files that must exist and be non-empty when invoke completes',
+                        },
+                        fail_on_rejected_tool_calls: {
+                            type: 'boolean',
+                            description: 'Treat any rejected tool call as an invoke error instead of a successful-but-degraded turn',
+                        },
                         allowed_tools: { type: 'array', items: { type: 'string' } },
                         denied_tools: { type: 'array', items: { type: 'string' } },
                     },
@@ -205,6 +274,22 @@ export function buildDescriptor(toolNames: string[]): CapabilityDescriptor {
                         cost_usd: { type: 'number' },
                     },
                 },
+                safety: {
+                    type: 'object',
+                    properties: {
+                        outcome: { type: 'string' },
+                        steps: { type: 'number' },
+                        estimated_input_tokens_max: { type: 'number' },
+                        accepted_tool_calls: { type: 'number' },
+                        rejected_tool_calls: { type: 'number' },
+                        accepted_tool_calls_by_name: {
+                            type: 'object',
+                            additionalProperties: { type: 'number' },
+                        },
+                        tool_result_bytes: { type: 'number' },
+                        guardrails: { type: 'array', items: { type: 'string' } },
+                    },
+                },
                 errors: {
                     type: 'array',
                     items: {
@@ -224,6 +309,15 @@ export function buildDescriptor(toolNames: string[]): CapabilityDescriptor {
             supports_streaming: false,
             ephemeral_sessions: true,
             supported_tools: toolNames,
+            supported_profiles: [
+                'general',
+                'researcher',
+                'rp-researcher',
+                'coder',
+                'reviewer',
+                'witness',
+                'triage',
+            ],
         },
     };
 }
@@ -360,10 +454,30 @@ function parseConstraints(raw: unknown): InvokeConstraints | undefined {
     const obj = raw as Record<string, unknown>;
     return {
         max_steps: typeof obj.max_steps === 'number' ? obj.max_steps : undefined,
+        max_tool_calls: typeof obj.max_tool_calls === 'number' ? obj.max_tool_calls : undefined,
+        max_tool_calls_by_name: parseNumberMap(obj.max_tool_calls_by_name),
+        max_tool_result_bytes: typeof obj.max_tool_result_bytes === 'number' ? obj.max_tool_result_bytes : undefined,
+        max_input_tokens: typeof obj.max_input_tokens === 'number' ? obj.max_input_tokens : undefined,
+        max_repeated_read_calls: typeof obj.max_repeated_read_calls === 'number' ? obj.max_repeated_read_calls : undefined,
         max_total_tokens: typeof obj.max_total_tokens === 'number' ? obj.max_total_tokens : undefined,
+        required_output_paths: Array.isArray(obj.required_output_paths)
+            ? obj.required_output_paths.filter((path): path is string => typeof path === 'string' && path.trim() !== '')
+            : undefined,
+        fail_on_rejected_tool_calls: typeof obj.fail_on_rejected_tool_calls === 'boolean' ? obj.fail_on_rejected_tool_calls : undefined,
         allowed_tools: Array.isArray(obj.allowed_tools) ? obj.allowed_tools.filter((t): t is string => typeof t === 'string') : undefined,
         denied_tools: Array.isArray(obj.denied_tools) ? obj.denied_tools.filter((t): t is string => typeof t === 'string') : undefined,
     };
+}
+
+function parseNumberMap(raw: unknown): Record<string, number> | undefined {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+    const result: Record<string, number> = {};
+    for (const [key, value] of Object.entries(raw)) {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            result[key] = value;
+        }
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function parseAuthority(raw: unknown): AuthorityGrant[] | undefined {
@@ -382,23 +496,36 @@ function parseAuthority(raw: unknown): AuthorityGrant[] | undefined {
 
 // --- Build error response ---
 
-export function buildErrorResponse(code: string, message: string, retryable = false): InvokeResponse {
+export function buildErrorResponse(
+    code: string,
+    message: string,
+    retryable = false,
+    safety?: InvokeSafety,
+    usage?: InvokeUsage,
+): InvokeResponse {
     return {
         contract_version: CONTRACT_VERSION,
         schema_version: SCHEMA_VERSION,
         status: 'error',
         errors: [{ code, message, retryable }],
+        ...(usage ? { usage } : {}),
+        ...(safety ? { safety } : {}),
     };
 }
 
 // --- Build success response ---
 
-export function buildSuccessResponse(result: string, usage: InvokeUsage): InvokeResponse {
+export function buildSuccessResponse(
+    result: string,
+    usage: InvokeUsage,
+    safety?: InvokeSafety,
+): InvokeResponse {
     return {
         contract_version: CONTRACT_VERSION,
         schema_version: SCHEMA_VERSION,
         status: 'success',
         result,
         usage,
+        ...(safety ? { safety } : {}),
     };
 }

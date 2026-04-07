@@ -14,8 +14,12 @@ M7b is delegation. After it lands:
 
 - **Claude stops doing the work.** Claude designs, orchestrates, reviews. ACA agents (qwen3-coder, deepseek, etc. via NanoGPT) read files, write code, run tests — with their own tools, their own context windows.
 - **Witnesses get hands.** Instead of reviewing Opus's summary of the code, witnesses `read_file` and `search_text` themselves. They form opinions from the actual source. They catch what summaries miss.
-- **The cost flips.** Right now every substep costs a full Opus session. After M7b, the heavy lifting (thousands of tool calls, file reads, code generation) shifts to NanoGPT's $8/mo flat rate. Opus just orchestrates.
+- **The cost model improves.** Right now every substep can consume a full primary-agent session. After M7b, the heavy lifting shifts to bounded ACA agents through NanoGPT while the primary agent orchestrates.
 - **Work parallelizes.** Multiple agents on different tasks simultaneously. No more one-substep-at-a-time bottleneck.
+
+## Product Boundary
+
+The payoff only counts if ACA owns the safety and workflow primitives itself. Claude/Codex skills can remain useful launchers, but they must not be the canonical place where witness safety, context-request reads, triage behavior, or delegation caps live. Those belong in tracked ACA modules and CLI/MCP surfaces so ACA stands alone outside a user's local skill setup.
 
 ## The Remaining Path
 

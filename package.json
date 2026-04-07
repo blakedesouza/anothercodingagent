@@ -1,7 +1,8 @@
 {
   "name": "anothercodingagent",
   "version": "0.1.0",
-  "description": "Another Coding Agent — an AI-powered coding assistant",
+  "description": "Experimental local-first CLI for tool-using coding agents",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

@@ -1,6 +1,42 @@
 # Changelog
 
-Living record of design and implementation work on Another Coding Agent (ACA). Each session appends its entries. The canonical spec is always `fundamentals.md` at the project root.
+Release-facing summary first; detailed development history follows below.
+
+This project is still experimental, so entries before a tagged release are grouped as WIP milestones rather than semver releases.
+
+## Unreleased
+
+### Added
+
+- ACA-native `consult` workflow for bounded witness review, context-request follow-up, no-tools triage, and result artifacts.
+- Structured `aca invoke` profile support via `context.profile`, including `rp-researcher` for anime, manga, VN, and RP lore research/write workflows.
+- MediaWiki/Fandom API tools: `fetch_mediawiki_page` and `fetch_mediawiki_category`.
+- Required output validation for invoke/write workflows through `constraints.required_output_paths`.
+- Safety telemetry surfaced through invoke results.
+
+### Changed
+
+- Default ACA-native consult triage moved to GLM-5 for no-tools aggregation after live smoke testing.
+- Witness and packed-review workflows now favor bounded context-request/finalization patterns over open-ended live tool loops.
+- RP research is moving toward dynamic discovery/research/write passes with exact output paths and model-specific budgets.
+
+### Fixed
+
+- Enforced `denied_tools` and authority deny rules in invoke execution.
+- Added hard caps for total tool calls, per-tool calls, aggregate tool-result bytes, estimated input tokens, and repeated overlapping reads.
+- Fixed invoke-mode tool visibility so prompts and API schemas only expose actually available tools.
+- Fixed Gemma/NanoGPT parallel tool-call reconstruction when provider deltas reuse `index: 0` with distinct tool call IDs.
+
+### Notes
+
+- The historical log below is intentionally verbose and includes debugging context from active development. It is retained for traceability, not as first-stop user documentation.
+- The canonical public entry point is the root `README.md`; roadmap/status lives in `docs/roadmap.md`.
+
+---
+
+## Detailed Development History
+
+Living record of design and implementation work on Another Coding Agent (ACA). Older entries were written as internal session logs and may mention local development paths or now-obsolete workflow details.
 
 ---
 
@@ -74,7 +110,7 @@ Five files changed:
 
 ```
 ~ src/types/provider.ts
-~ src/providers/nanogpt-driver.ts            (+ id, + ACA_DUMP_SSE temp debug — see below)
+~ src/providers/nanogpt-driver.ts            (+ id; temporary dump instrumentation later removed)
 ~ src/providers/openai-driver.ts             (+ id)
 ~ src/providers/anthropic-driver.ts          (+ id)
 ~ src/providers/tool-emulation.ts            (+ id)
@@ -84,9 +120,9 @@ Five files changed:
 ~ plan.md
 ```
 
-### Known follow-up
+### Follow-up
 
-- Temporary debug instrumentation in `nanogpt-driver.ts` (`ACA_DUMP_BODY` and `ACA_DUMP_SSE` env-gated dumps) is still in place — used to capture the smoking-gun SSE stream during diagnosis. Will be removed after a wider empirical batch confirms the fix is stable.
+- Temporary debug instrumentation in `nanogpt-driver.ts` was removed after the wider empirical batch confirmed the fix was stable.
 
 ---
 
@@ -222,7 +258,7 @@ Unblocks M10.2 (real delegated coding) by fixing three root causes identified in
 
 ### Part B — Executor model evaluation
 
-- **NanoGptCatalog endpoint**: `${baseUrl}/models?detailed=true` → `${baseUrl}/subscription/v1/models?detailed=true`. The canonical endpoint returned 589 models including paid premium (Claude/GPT/Gemini) not in the flat-rate subscription; subscription endpoint returns 265 flat-rate-only models.
+- **NanoGptCatalog endpoint**: `${baseUrl}/models?detailed=true` → `${baseUrl}/subscription/v1/models?detailed=true`. The canonical endpoint returned 589 general endpoint models; the subscription endpoint returned 265 invokable subscription models.
 - `baseUrl` default changed from `https://api.nano-gpt.com/v1` to `https://api.nano-gpt.com` (host root); all 15 test usages updated.
 - **Empirical benchmark** of 7 subscription candidates on 2 tasks:
   - **Simple task** (list slash commands in src/cli/commands.ts): all 7 produced correct answers. Could not differentiate.
@@ -297,7 +333,7 @@ Post-milestone review for M11 (Dynamic Model Utilization): architecture + bug hu
 
 Wired `NanoGptCatalog` with `StaticCatalog` fallback into the interactive/one-shot CLI path, bringing it to parity with the invoke handler (which had catalog wiring since M11.5). The main action now creates a live catalog at startup, passes it to `NanoGptDriver`, and logs discovered model limits at verbose level (including fallback notification when the model isn't found in the catalog). 6 new integration tests verify end-to-end catalog→driver flow, StaticCatalog fallback on unreachable API, maxOutputTokens override in request body, invoke prompt assembly (M11.6), peer agent profiles (M11.7), and unknown model fallback. 2296 tests passing.
 
-**Consultation:** 4/4 witnesses. 2 consensus fixes applied (P1: replaced unsafe `globalThis.fetch` override with `vi.spyOn` + `afterEach` cleanup; P1: expanded verbose logging to report model-not-found fallback). 5 findings rejected: maxTokens clamping (BY DESIGN — catalog ceiling always wins for flat-rate NanoGPT), concurrent fetch race (FALSE POSITIVE — `fetchPromise` guard already deduplicates), invoke verbose logging (NOT APPLICABLE — MCP stdout is JSON protocol), edge case tests (covered by existing unit tests).
+**Consultation:** 4/4 witnesses. 2 consensus fixes applied (P1: replaced unsafe `globalThis.fetch` override with `vi.spyOn` + `afterEach` cleanup; P1: expanded verbose logging to report model-not-found fallback). 5 findings rejected: maxTokens clamping (BY DESIGN — catalog ceiling is capability data and runtime guardrails handle workflow budgets), concurrent fetch race (FALSE POSITIVE — `fetchPromise` guard already deduplicates), invoke verbose logging (NOT APPLICABLE — MCP stdout is JSON protocol), edge case tests (covered by existing unit tests).
 
 ---
 
@@ -350,7 +386,7 @@ Formalized the idle timeout pattern (timer resets on each SSE event) across all 
 
 ## 2026-04-05 — M11.3: Remove Artificial Ceilings
 
-Removed hardcoded limits that constrained non-interactive/invoke mode. NanoGPT flat-rate pricing means zero marginal cost — no reason for artificial caps.
+Removed hardcoded limits that constrained non-interactive/invoke mode. Later guardrail work reintroduced explicit bounded budgets where needed for safety and cost control.
 
 **Changes:**
 - Turn engine step limit: non-interactive `50` → `Infinity`. MCP deadline is the safety net, not a step counter. Interactive mode keeps 25 (UX concern).

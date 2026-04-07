@@ -2,7 +2,7 @@
 
 Every model ACA delegates to was being massively under-utilized. Qwen3-Coder has 65K max output — we gave it 4K. MiniMax M2.7 has 131K — we gave it 8K. The coder agent couldn't even finish writing a single file before being cut off.
 
-This milestone makes ACA query actual model limits at runtime and use them. No model is artificially constrained below its ceiling. The flat-rate NanoGPT subscription means there is zero cost to maximizing utilization.
+This milestone made ACA query actual model limits at runtime so delegation could stop under-utilizing capable models. Later guardrail work treats these limits as capability data, not permission to run unbounded.
 
 **Prerequisite:** M10.1b complete (MCP spawn path works)
 **Blocks:** M10.2 (delegation can't succeed without real limits and proper context)
@@ -25,8 +25,8 @@ The coder agent was operating at **6%** of its output capacity. That's why deleg
 
 ## Design Principles
 
-1. **Maximize utilization.** NanoGPT is $8/mo flat rate, zero marginal cost. Every model gets its actual ceiling — context, output, steps. No artificial caps.
-2. **Peer treatment.** These are 30B-1T parameter models performing at frontier level. Full toolkit, full limits. Safety comes from sandbox boundaries and time limits, not tool blocklists or token caps.
+1. **Use real ceilings as capability data.** Every model advertises its actual context/output limits, but runtime budgets and guardrails decide how much of that ceiling a workflow should use.
+2. **Peer treatment with guardrails.** These are 30B-1T parameter models performing at frontier level. Give capable models appropriate tools and room, while safety comes from sandbox boundaries, deadlines, and explicit per-workflow budgets.
 3. **Provider-agnostic.** The catalog interface works for NanoGPT today, OpenRouter tomorrow, Anthropic/OpenAI via static fallback. Ready for GitHub release.
 4. **Runtime discovery.** Query the API for real limits instead of hardcoding. If a model gets upgraded, ACA picks it up automatically.
 
@@ -67,7 +67,7 @@ Wire the live catalog into the NanoGPT driver so `capabilities()` returns real l
 
 ### M11.3 — Remove Artificial Ceilings
 
-Remove hardcoded limits that were protecting against cost runaway (irrelevant with flat-rate pricing).
+Remove early hardcoded limits that were too low for delegation. Later guardrail work reintroduced explicit bounded budgets for safety and cost control.
 
 - [x] **Invoke step limit:** currently 30 → remove for invoke mode (set to `Infinity`). The MCP deadline is the safety net, not a step counter. Interactive mode keeps its limit (25) since that's about UX, not cost
 - [x] **MCP deadline default:** 5 minutes → 15 minutes in `src/mcp/server.ts`. A coding agent doing read→write→test→iterate needs room

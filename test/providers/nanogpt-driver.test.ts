@@ -167,6 +167,8 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
                 ],
                 maxTokens: 2048,
                 temperature: 0.5,
+                topP: 0.95,
+                thinking: { type: 'enabled' },
             });
             await collectEvents(driver.stream(request));
 
@@ -175,6 +177,8 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             expect(body.stream).toBe(true);
             expect(body.max_tokens).toBe(2048);
             expect(body.temperature).toBe(0.5);
+            expect(body.top_p).toBe(0.95);
+            expect(body.thinking).toEqual({ type: 'enabled' });
             const messages = body.messages as Array<Record<string, unknown>>;
             expect(messages).toHaveLength(2);
             expect(messages[0].role).toBe('system');

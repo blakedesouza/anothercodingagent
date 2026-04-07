@@ -35,6 +35,34 @@ function makeSuccessResult(text: string, inputTokens = 100, outputTokens = 50): 
     };
 }
 
+function makeSuccessResultWithSafety(text: string): AcaInvokeResult {
+    return {
+        stdout: JSON.stringify({
+            contract_version: CONTRACT_VERSION,
+            schema_version: SCHEMA_VERSION,
+            status: 'success',
+            result: text,
+            usage: {
+                input_tokens: 100,
+                output_tokens: 50,
+                cost_usd: 0,
+            },
+            safety: {
+                outcome: 'assistant_final',
+                steps: 2,
+                estimated_input_tokens_max: 1000,
+                accepted_tool_calls: 1,
+                rejected_tool_calls: 1,
+                accepted_tool_calls_by_name: { read_file: 1 },
+                tool_result_bytes: 500,
+                guardrails: ['max_tool_result_bytes'],
+            },
+        }),
+        stderr: '',
+        exitCode: 0,
+    };
+}
+
 function makeErrorResult(code: string, message: string): AcaInvokeResult {
     return {
         stdout: JSON.stringify({
@@ -158,15 +186,52 @@ describe('runAcaInvoke', () => {
         expect(parsed.constraints.allowed_tools).toEqual(['read_file', 'search_text']);
     });
 
+    it('includes model context when provided', async () => {
+        const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
+            .mockResolvedValue(makeSuccessResult('done'));
+
+        await runAcaInvoke('task', { model: 'minimax/minimax-m2.7' }, spawnFn);
+
+        const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
+        expect(parsed.context.model).toBe('minimax/minimax-m2.7');
+    });
+
+    it('includes profile context when provided', async () => {
+        const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
+            .mockResolvedValue(makeSuccessResult('done'));
+
+        await runAcaInvoke('task', { profile: 'rp-researcher' }, spawnFn);
+
+        const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
+        expect(parsed.context.profile).toBe('rp-researcher');
+    });
+
     it('includes explicit max_steps and max_total_tokens in constraints', async () => {
         const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
             .mockResolvedValue(makeSuccessResult('done'));
 
-        await runAcaInvoke('task', { maxSteps: 7, maxTotalTokens: 50000 }, spawnFn);
+        await runAcaInvoke('task', {
+            maxSteps: 7,
+            maxToolCalls: 3,
+            maxToolCallsByName: { read_file: 1 },
+            maxToolResultBytes: 12000,
+            maxInputTokens: 30000,
+            maxRepeatedReadCalls: 1,
+            maxTotalTokens: 50000,
+            requiredOutputPaths: ['world/setting.md'],
+            failOnRejectedToolCalls: true,
+        }, spawnFn);
 
         const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
         expect(parsed.constraints.max_steps).toBe(7);
+        expect(parsed.constraints.max_tool_calls).toBe(3);
+        expect(parsed.constraints.max_tool_calls_by_name).toEqual({ read_file: 1 });
+        expect(parsed.constraints.max_tool_result_bytes).toBe(12000);
+        expect(parsed.constraints.max_input_tokens).toBe(30000);
+        expect(parsed.constraints.max_repeated_read_calls).toBe(1);
         expect(parsed.constraints.max_total_tokens).toBe(50000);
+        expect(parsed.constraints.required_output_paths).toEqual(['world/setting.md']);
+        expect(parsed.constraints.fail_on_rejected_tool_calls).toBe(true);
     });
 
     it('uses default deadline when not specified', async () => {
@@ -215,10 +280,20 @@ describe('MCP Server (in-memory transport)', () => {
         expect(acaRun!.description).toContain('ACA');
         expect(acaRun!.inputSchema.properties).toHaveProperty('task');
         expect(acaRun!.inputSchema.properties).toHaveProperty('allowed_tools');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('denied_tools');
         expect(acaRun!.inputSchema.properties).toHaveProperty('max_steps');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('max_tool_calls');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('max_tool_calls_by_name');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('max_tool_result_bytes');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('max_input_tokens');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('max_repeated_read_calls');
         expect(acaRun!.inputSchema.properties).toHaveProperty('max_total_tokens');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('profile');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('model');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('temperature');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('top_p');
+        expect(acaRun!.inputSchema.properties).toHaveProperty('thinking');
         expect(acaRun!.inputSchema.properties).toHaveProperty('timeout_ms');
-        expect(acaRun!.inputSchema.properties).not.toHaveProperty('model');
         expect(acaRun!.inputSchema.required).toContain('task');
 
         await client.close();
@@ -296,7 +371,25 @@ describe('MCP Server (in-memory transport)', () => {
         await client.close();
     });
 
-    it('aca_run with allowed_tools passes constraints', async () => {
+    it('aca_run includes safety stats from InvokeResponse', async () => {
+        spawnFn.mockResolvedValue(makeSuccessResultWithSafety('result text'));
+        const client = await connectClient(spawnFn);
+
+        const result = await client.callTool({
+            name: 'aca_run',
+            arguments: { task: 'do something' },
+        });
+
+        const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+        expect(text).toContain('Safety: 2 steps');
+        expect(text).toContain('1 accepted tool calls');
+        expect(text).toContain('1 rejected tool calls');
+        expect(text).toContain('max_tool_result_bytes');
+
+        await client.close();
+    });
+
+    it('aca_run with allowed_tools and denied_tools passes constraints', async () => {
         spawnFn.mockResolvedValue(makeSuccessResult('done'));
         const client = await connectClient(spawnFn);
 
@@ -305,11 +398,41 @@ describe('MCP Server (in-memory transport)', () => {
             arguments: {
                 task: 'search the code',
                 allowed_tools: ['read_file', 'search_text'],
+                denied_tools: ['exec_command'],
             },
         });
 
         const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
         expect(parsed.constraints.allowed_tools).toEqual(['read_file', 'search_text']);
+        expect(parsed.constraints.denied_tools).toEqual(['exec_command']);
+
+        await client.close();
+    });
+
+    it('aca_run passes model, profile, and generation context', async () => {
+        spawnFn.mockResolvedValue(makeSuccessResult('done'));
+        const client = await connectClient(spawnFn);
+
+        await client.callTool({
+            name: 'aca_run',
+            arguments: {
+                task: 'research lore',
+                model: 'zai-org/glm-5',
+                profile: 'rp-researcher',
+                temperature: 1,
+                top_p: 0.95,
+                thinking: 'enabled',
+            },
+        });
+
+        const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
+        expect(parsed.context).toEqual({
+            model: 'zai-org/glm-5',
+            profile: 'rp-researcher',
+            temperature: 1,
+            top_p: 0.95,
+            thinking: 'enabled',
+        });
 
         await client.close();
     });
@@ -323,13 +446,27 @@ describe('MCP Server (in-memory transport)', () => {
             arguments: {
                 task: 'bounded task',
                 max_steps: 7,
+                max_tool_calls: 3,
+                max_tool_calls_by_name: { read_file: 1 },
+                max_tool_result_bytes: 12000,
+                max_input_tokens: 30000,
+                max_repeated_read_calls: 1,
                 max_total_tokens: 50000,
+                required_output_paths: ['world/setting.md'],
+                fail_on_rejected_tool_calls: true,
             },
         });
 
         const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
         expect(parsed.constraints.max_steps).toBe(7);
+        expect(parsed.constraints.max_tool_calls).toBe(3);
+        expect(parsed.constraints.max_tool_calls_by_name).toEqual({ read_file: 1 });
+        expect(parsed.constraints.max_tool_result_bytes).toBe(12000);
+        expect(parsed.constraints.max_input_tokens).toBe(30000);
+        expect(parsed.constraints.max_repeated_read_calls).toBe(1);
         expect(parsed.constraints.max_total_tokens).toBe(50000);
+        expect(parsed.constraints.required_output_paths).toEqual(['world/setting.md']);
+        expect(parsed.constraints.fail_on_rejected_tool_calls).toBe(true);
 
         await client.close();
     });

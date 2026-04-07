@@ -324,6 +324,255 @@ describe('TurnEngine', () => {
         expect(result.items.filter(isToolResult)).toHaveLength(2);
     });
 
+    it('configured maxToolCalls allows one tool call then a no-tools final step', async () => {
+        let secondRequest: ModelRequest | null = null;
+        let callIndex = 0;
+        const provider: ProviderDriver = {
+            capabilities: () => ({
+                maxContext: 128_000,
+                maxOutput: 4096,
+                supportsTools: 'native',
+                supportsVision: false,
+                supportsStreaming: true,
+                supportsPrefill: false,
+                supportsEmbedding: false,
+                embeddingModels: [],
+                toolReliability: 'native',
+                costPerMillion: { input: 3, output: 15 },
+                specialFeatures: [],
+                bytesPerToken: 3,
+            }),
+            async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
+                callIndex++;
+                if (callIndex === 1) {
+                    yield* toolCallResponse([{ name: 'echo', args: { text: 'once' } }]);
+                    return;
+                }
+                secondRequest = request;
+                yield* textResponse('Final after one tool');
+            },
+            validate: () => ({ ok: true as const, value: undefined }),
+        };
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true, maxToolCalls: 1 }),
+            'Use one tool then summarize',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(result.steps).toHaveLength(2);
+        expect(result.items.filter(isToolResult)).toHaveLength(1);
+        expect(secondRequest).not.toBeNull();
+        expect(secondRequest!.tools).toBeUndefined();
+    });
+
+    it('configured maxToolCalls stops when the model exceeds the cap', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([
+                { name: 'echo', args: { text: 'accepted' } },
+                { name: 'echo', args: { text: 'rejected' } },
+            ]),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true, maxToolCalls: 1 }),
+            'Try two tools',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('max_tool_calls');
+        expect(result.steps).toHaveLength(1);
+        const toolResults = result.items.filter(isToolResult);
+        expect(toolResults).toHaveLength(2);
+        expect(toolResults[0].output.status).toBe('success');
+        expect(toolResults[0].output.data).toBe('accepted');
+        expect(toolResults[1].output.status).toBe('error');
+        expect(toolResults[1].output.error?.code).toBe('tool.max_tool_calls');
+    });
+
+    it('authority deny rules reject matching tool calls without failing open', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([{ name: 'echo', args: { text: 'blocked' } }]),
+            textResponse('Saw the denial'),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({
+                interactive: false,
+                isSubAgent: true,
+                authority: [{
+                    tool: 'echo',
+                    args_match: { text: 'blocked' },
+                    decision: 'deny',
+                }],
+            }),
+            'Try denied echo',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        const toolResults = result.items.filter(isToolResult);
+        expect(toolResults).toHaveLength(1);
+        expect(toolResults[0].output.status).toBe('error');
+        expect(toolResults[0].output.error?.code).toBe('tool.permission');
+        expect(toolResults[0].output.error?.message).toContain('authority deny');
+    });
+
+    it('configured maxToolCallsByName rejects excess calls for a specific tool', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([
+                { name: 'echo', args: { text: 'accepted' } },
+                { name: 'echo', args: { text: 'rejected' } },
+            ]),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({
+                interactive: false,
+                isSubAgent: true,
+                maxToolCalls: 10,
+                maxToolCallsByName: { echo: 1 },
+            }),
+            'Try two echo calls',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('max_tool_calls');
+        const toolResults = result.items.filter(isToolResult);
+        expect(toolResults).toHaveLength(2);
+        expect(toolResults[0].output.status).toBe('success');
+        expect(toolResults[1].output.status).toBe('error');
+        expect(toolResults[1].output.error?.message).toContain('max_tool_calls_by_name.echo');
+        expect(result.steps[0].safetyStats?.acceptedToolCallsByName).toEqual({ echo: 1 });
+    });
+
+    it('configured maxToolResultBytes truncates stored tool output before the next LLM step', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([{ name: 'echo', args: { text: 'abcdef' } }]),
+            textResponse('Final after truncated result'),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true, maxToolResultBytes: 3 }),
+            'Echo too much data',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        const toolResults = result.items.filter(isToolResult);
+        expect(toolResults).toHaveLength(1);
+        expect(toolResults[0].output.data).toBe('abc');
+        expect(toolResults[0].output.truncated).toBe(true);
+        expect(result.steps[0].safetyStats?.guardrail).toBe('max_tool_result_bytes');
+        expect(result.steps[0].safetyStats?.cumulativeToolResultBytes).toBe(3);
+    });
+
+    it('configured maxToolResultBytes truncates without exceeding the byte budget on multibyte characters', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([{ name: 'echo', args: { text: 'éé' } }]),
+            textResponse('Final after truncated result'),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true, maxToolResultBytes: 3 }),
+            'Echo multibyte data',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        const toolResults = result.items.filter(isToolResult);
+        expect(toolResults).toHaveLength(1);
+        expect(toolResults[0].output.data).toBe('é');
+        expect(toolResults[0].output.bytesReturned).toBe(2);
+        expect(toolResults[0].output.bytesOmitted).toBe(2);
+        expect(Buffer.byteLength(toolResults[0].output.data, 'utf8')).toBeLessThanOrEqual(3);
+        expect(result.steps[0].safetyStats?.cumulativeToolResultBytes).toBe(2);
+    });
+
+    it('configured maxInputTokens stops before making an oversized LLM request', async () => {
+        const provider = createMockProvider([]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true, maxInputTokens: 1 }),
+            'This request is too large for the configured input guard',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('budget_exceeded');
+        expect(result.steps).toHaveLength(1);
+        expect(result.steps[0].finishReason).toBe('input_guard');
+        expect(result.steps[0].safetyStats?.guardrail).toBe('max_input_tokens');
+    });
+
+    it('configured maxRepeatedReadCalls rejects overlapping read_file calls', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([
+                { name: 'read_file', args: { path: 'src/index.ts', line_start: 1, line_end: 10 } },
+                { name: 'read_file', args: { path: 'src/index.ts', line_start: 5, line_end: 12 } },
+            ]),
+        ]);
+        const spec: ToolSpec = {
+            name: 'read_file',
+            description: 'Read a file',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string' },
+                    line_start: { type: 'number' },
+                    line_end: { type: 'number' },
+                },
+                required: ['path'],
+            },
+            approvalClass: 'read-only',
+            idempotent: true,
+            timeoutCategory: 'file',
+        };
+        const impl: ToolImplementation = async () => ({
+            status: 'success',
+            data: 'file chunk',
+            truncated: false,
+            bytesReturned: 10,
+            bytesOmitted: 0,
+            retryable: false,
+            timedOut: false,
+            mutationState: 'none',
+        });
+        registry.register(spec, impl);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({
+                interactive: false,
+                isSubAgent: true,
+                maxRepeatedReadCalls: 1,
+            }),
+            'Try overlapping reads',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('max_tool_calls');
+        const toolResults = result.items.filter(isToolResult);
+        expect(toolResults).toHaveLength(2);
+        expect(toolResults[0].output.status).toBe('success');
+        expect(toolResults[1].output.status).toBe('error');
+        expect(toolResults[1].output.error?.message).toContain('max_repeated_read_calls');
+    });
+
     it('configured maxTotalTokens caps cumulative turn token usage', async () => {
         const provider = createMockProvider([
             textResponse('This response is over the delegated token budget', 11, 5),

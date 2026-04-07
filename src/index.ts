@@ -17,6 +17,7 @@ import { mkdirSync } from 'node:fs';
 // --- Core ---
 import { SessionManager } from './core/session-manager.js';
 import { Repl } from './cli/repl.js';
+import { validateRequiredOutputPaths } from './cli/invoke-output-validation.js';
 import { TurnEngine } from './core/turn-engine.js';
 import type { TurnEngineConfig } from './core/turn-engine.js';
 import { buildInvokeSystemMessages } from './core/prompt-assembly.js';
@@ -89,6 +90,12 @@ import { BROWSER_TOOL_SPECS, createBrowserToolImpls } from './browser/browser-to
 // --- Web Tools ---
 import { webSearchSpec, createWebSearchImpl, TavilySearchProvider } from './tools/web-search.js';
 import { fetchUrlSpec, createFetchUrlImpl } from './tools/fetch-url.js';
+import {
+    fetchMediaWikiPageSpec,
+    fetchMediaWikiCategorySpec,
+    createFetchMediaWikiPageImpl,
+    createFetchMediaWikiCategoryImpl,
+} from './tools/fetch-mediawiki-page.js';
 import { lookupDocsSpec, createLookupDocsImpl } from './tools/lookup-docs.js';
 
 // --- Rendering ---
@@ -113,6 +120,7 @@ import { ProviderRegistry } from './providers/provider-registry.js';
 // --- CLI commands ---
 import { runStats } from './cli/stats.js';
 import { runInit, runConfigure, runTrust, runUntrust } from './cli/setup.js';
+import { runConsult } from './cli/consult.js';
 import { startServer } from './mcp/server.js';
 import {
     runDescribe,
@@ -123,6 +131,7 @@ import {
     EXIT_SUCCESS,
     EXIT_RUNTIME,
     EXIT_PROTOCOL,
+    type InvokeSafety,
 } from './cli/executor.js';
 import { createInterface } from 'node:readline';
 import { SessionGrantStore } from './permissions/session-grants.js';
@@ -160,6 +169,21 @@ function outcomeToExitCode(outcome: string): number {
             // aborted, max_steps, tool_error, budget_exceeded, etc.
             return EXIT_ONESHOT_RUNTIME;
     }
+}
+
+function finiteNumberInRange(value: unknown, min: number, max: number): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+    if (value < min || value > max) return undefined;
+    return value;
+}
+
+function parseThinkingMode(value: unknown): { type: 'enabled' | 'disabled' } | undefined {
+    if (value === 'enabled' || value === 'disabled') return { type: value };
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        const type = (value as { type?: unknown }).type;
+        if (type === 'enabled' || type === 'disabled') return { type };
+    }
+    return undefined;
 }
 
 interface MainOptions {
@@ -410,6 +434,8 @@ program
         // --- Register web tools (M7.5) ---
         toolRegistry.register(webSearchSpec, createWebSearchImpl({ searchProvider, networkPolicy }));
         toolRegistry.register(fetchUrlSpec, createFetchUrlImpl({ networkPolicy, browserManager }));
+        toolRegistry.register(fetchMediaWikiPageSpec, createFetchMediaWikiPageImpl({ networkPolicy }));
+        toolRegistry.register(fetchMediaWikiCategorySpec, createFetchMediaWikiCategoryImpl({ networkPolicy }));
         toolRegistry.register(lookupDocsSpec, createLookupDocsImpl({ searchProvider, networkPolicy, browserManager }));
 
         // --- Agent Registry + Delegation (M7.1a-c, M7.2) ---
@@ -846,7 +872,7 @@ const TOOL_NAMES = [
     'browser_navigate', 'browser_click', 'browser_type', 'browser_press',
     'browser_snapshot', 'browser_screenshot', 'browser_evaluate',
     'browser_extract', 'browser_wait', 'browser_close',
-    'web_search', 'fetch_url', 'lookup_docs',
+    'web_search', 'fetch_url', 'fetch_mediawiki_page', 'fetch_mediawiki_category', 'lookup_docs',
     'spawn_agent', 'message_agent', 'await_agent',
 ];
 
@@ -871,6 +897,54 @@ program
     .action(() => {
         process.stdout.write(serializeWitnessConfigs() + '\n');
         process.exit(0);
+    });
+
+program
+    .command('consult')
+    .description('Run ACA-native bounded witness consultation')
+    .option('--question <question>', 'Question to ask witnesses')
+    .option('--prompt-file <path>', 'Prompt file to use instead of --question')
+    .option('--project-dir <path>', 'Project directory', process.cwd())
+    .option('--witnesses <list>', 'Comma-separated witness list, or all', 'all')
+    .option('--pack-repo', 'Build an evidence pack from the repo', false)
+    .option('--pack-path <path>', 'File or directory to include in the evidence pack', (value, previous: string[]) => [...previous, value], [])
+    .option('--pack-max-files <n>', 'Maximum evidence-pack files', value => Number(value), 5)
+    .option('--pack-max-file-bytes <n>', 'Maximum bytes per packed file', value => Number(value), 8_000)
+    .option('--pack-max-total-bytes <n>', 'Maximum total evidence-pack bytes', value => Number(value), 240_000)
+    .option('--max-context-snippets <n>', 'Maximum witness-requested snippets', value => Number(value), 3)
+    .option('--max-context-lines <n>', 'Maximum lines per witness-requested snippet', value => Number(value), 120)
+    .option('--max-context-bytes <n>', 'Maximum bytes per witness-requested snippet', value => Number(value), 8_000)
+    .option('--skip-triage', 'Skip triage aggregation', false)
+    .option('--out <path>', 'Write result JSON to this path')
+    .action(async (options: {
+        question?: string;
+        promptFile?: string;
+        projectDir: string;
+        witnesses: string;
+        packRepo: boolean;
+        packPath: string[];
+        packMaxFiles: number;
+        packMaxFileBytes: number;
+        packMaxTotalBytes: number;
+        maxContextSnippets: number;
+        maxContextLines: number;
+        maxContextBytes: number;
+        skipTriage: boolean;
+        out?: string;
+    }) => {
+        if (Boolean(options.question) === Boolean(options.promptFile)) {
+            process.stderr.write('Pass exactly one of --question or --prompt-file\n');
+            process.exit(EXIT_ONESHOT_USAGE);
+        }
+        try {
+            const result = await runConsult(options);
+            process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+            process.exit(result.degraded ? EXIT_ONESHOT_RUNTIME : EXIT_ONESHOT_SUCCESS);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            process.stderr.write(`consult failed: ${message}\n`);
+            process.exit(EXIT_ONESHOT_RUNTIME);
+        }
     });
 
 program
@@ -975,12 +1049,23 @@ program
         toolRegistry.register(lspQuerySpec, createLspQueryImpl({ lspManager }));
         toolRegistry.register(webSearchSpec, createWebSearchImpl({ searchProvider, networkPolicy }));
         toolRegistry.register(fetchUrlSpec, createFetchUrlImpl({ networkPolicy, browserManager }));
+        toolRegistry.register(fetchMediaWikiPageSpec, createFetchMediaWikiPageImpl({ networkPolicy }));
+        toolRegistry.register(fetchMediaWikiCategorySpec, createFetchMediaWikiCategoryImpl({ networkPolicy }));
         toolRegistry.register(lookupDocsSpec, createLookupDocsImpl({ searchProvider, networkPolicy, browserManager }));
 
         // --- Model override from request context ---
         const contextModel = typeof request.context?.model === 'string'
             ? request.context.model.trim() : '';
         const effectiveModel = contextModel || config.model?.default || 'qwen/qwen3-coder-next';
+        const contextProfile = typeof request.context?.profile === 'string'
+            ? request.context.profile.trim() : '';
+        const contextTemperature = finiteNumberInRange(request.context?.temperature, 0, 2);
+        const contextTopP = finiteNumberInRange(
+            request.context?.top_p ?? request.context?.topP,
+            0,
+            1,
+        );
+        const contextThinking = parseThinkingMode(request.context?.thinking);
 
         // --- Ephemeral session ---
         const sessionsDir = join(homedir(), '.aca', 'sessions');
@@ -1007,14 +1092,57 @@ program
             // Non-fatal: filesystem/git errors shouldn't crash invoke
             projectSnapshot = undefined;
         }
+        const agentRegistryResult = AgentRegistry.resolve(toolRegistry);
+        const agentRegistry = agentRegistryResult.registry;
+        const activeProfile = contextProfile ? agentRegistry.getProfile(contextProfile) : undefined;
+        if (contextProfile && !activeProfile) {
+            process.stdout.write(JSON.stringify(
+                buildErrorResponse(
+                    'protocol.invalid_profile',
+                    `Unknown profile "${contextProfile}". Available: ${agentRegistry.getProfileNames().join(', ')}`,
+                    false,
+                ),
+            ) + '\n');
+            process.exit(EXIT_PROTOCOL);
+        }
+
+        if (contextProfile && activeProfile && request.constraints?.allowed_tools) {
+            const narrowing = agentRegistry.validateToolNarrowing(contextProfile, request.constraints.allowed_tools);
+            if (!narrowing.valid) {
+                process.stdout.write(JSON.stringify(
+                    buildErrorResponse(
+                        'protocol.invalid_allowed_tools',
+                        `allowed_tools includes tools outside profile "${contextProfile}": ${narrowing.rejected.join(', ')}`,
+                        false,
+                    ),
+                ) + '\n');
+                process.exit(EXIT_PROTOCOL);
+            }
+        }
+
+        const allRegisteredToolNames = toolRegistry.list().map(t => t.spec.name);
+        const deniedToolSet = new Set(request.constraints?.denied_tools ?? []);
+        const authorityDeniedToolSet = new Set(
+            (request.authority ?? [])
+                .filter(rule => rule.decision === 'deny' && rule.args_match === undefined)
+                .map(rule => rule.tool),
+        );
         const requestedAllowedTools = request.constraints?.allowed_tools;
         const allowedToolSet = requestedAllowedTools ? new Set(requestedAllowedTools) : null;
+        const profileToolSet = activeProfile ? new Set(activeProfile.defaultTools) : null;
+        const effectiveAllowedTools = allRegisteredToolNames
+            .filter(name => profileToolSet === null || profileToolSet.has(name))
+            .filter(name => allowedToolSet === null || allowedToolSet.has(name))
+            .filter(name => !deniedToolSet.has(name))
+            .filter(name => !authorityDeniedToolSet.has(name));
         const toolNames = toolRegistry.list()
             .map(t => t.spec.name)
-            .filter(name => allowedToolSet === null || allowedToolSet.has(name));
+            .filter(name => effectiveAllowedTools.includes(name));
         const systemMessages = buildInvokeSystemMessages({
             cwd,
             toolNames,
+            profileName: activeProfile?.name,
+            profilePrompt: activeProfile?.systemPrompt,
             projectSnapshot,
         });
 
@@ -1043,9 +1171,18 @@ program
             workspaceRoot: cwd,
             resolvedConfig: config,
             sessionGrants: new SessionGrantStore(),
-            allowedTools: request.constraints?.allowed_tools ?? null,
+            allowedTools: effectiveAllowedTools,
+            authority: request.authority,
             maxSteps: request.constraints?.max_steps,
+            maxToolCalls: request.constraints?.max_tool_calls,
+            maxToolCallsByName: request.constraints?.max_tool_calls_by_name,
+            maxToolResultBytes: request.constraints?.max_tool_result_bytes,
+            maxInputTokens: request.constraints?.max_input_tokens,
+            maxRepeatedReadCalls: request.constraints?.max_repeated_read_calls,
             maxTotalTokens: request.constraints?.max_total_tokens,
+            temperature: contextTemperature,
+            topP: contextTopP,
+            thinking: contextThinking,
             extraTrustedRoots: config.sandbox?.extraTrustedRoots,
             systemMessages,
         };
@@ -1089,14 +1226,52 @@ program
             if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
         }
 
+        // Accumulate usage/safety before checking the final outcome so guardrail
+        // errors like max_tool_calls still report the safety envelope that fired.
+        const guardrails = new Set<string>();
+        const acceptedToolCallsByName = new Map<string, number>();
+        let acceptedToolCalls = 0;
+        let rejectedToolCalls = 0;
+        let toolResultBytes = 0;
+        let estimatedInputTokensMax: number | undefined;
+        for (const step of turnResult.steps) {
+            totalInputTokens += step.tokenUsage.inputTokens;
+            totalOutputTokens += step.tokenUsage.outputTokens;
+            if (step.safetyStats) {
+                acceptedToolCalls += step.safetyStats.acceptedToolCalls ?? 0;
+                rejectedToolCalls += step.safetyStats.rejectedToolCalls ?? 0;
+                toolResultBytes += step.safetyStats.toolResultBytes ?? 0;
+                if (step.safetyStats.guardrail) guardrails.add(step.safetyStats.guardrail);
+                if (step.safetyStats.estimatedInputTokens !== undefined) {
+                    estimatedInputTokensMax = Math.max(
+                        estimatedInputTokensMax ?? 0,
+                        step.safetyStats.estimatedInputTokens,
+                    );
+                }
+                for (const [name, count] of Object.entries(step.safetyStats.acceptedToolCallsByName ?? {})) {
+                    acceptedToolCallsByName.set(name, Math.max(acceptedToolCallsByName.get(name) ?? 0, count));
+                }
+            }
+        }
+        const safety: InvokeSafety = {
+            outcome: turnResult.turn.outcome,
+            steps: turnResult.steps.length,
+            ...(estimatedInputTokensMax !== undefined ? { estimated_input_tokens_max: estimatedInputTokensMax } : {}),
+            accepted_tool_calls: acceptedToolCalls,
+            rejected_tool_calls: rejectedToolCalls,
+            accepted_tool_calls_by_name: Object.fromEntries([...acceptedToolCallsByName.entries()].sort()),
+            tool_result_bytes: toolResultBytes,
+            guardrails: [...guardrails].sort(),
+        };
+
         // Check for non-success outcomes before building response.
         // Success outcomes: assistant_final, awaiting_user, approval_required.
         // Error outcomes: aborted, tool_error, budget_exceeded, max_steps,
-        // cancelled, max_consecutive_tools.
+        // max_tool_calls, cancelled, max_consecutive_tools.
         const outcome = turnResult.turn.outcome;
         const ERROR_OUTCOMES = new Set([
             'aborted', 'tool_error', 'budget_exceeded',
-            'max_steps', 'cancelled', 'max_consecutive_tools',
+            'max_steps', 'max_tool_calls', 'cancelled', 'max_consecutive_tools',
         ]);
         if (outcome && ERROR_OUTCOMES.has(outcome)) {
             const errorCode = turnResult.lastError?.code ?? `turn.${outcome}`;
@@ -1105,7 +1280,48 @@ program
             // aborted (LLM transient errors) and max_steps (could succeed with more steps) are retryable.
             const retryable = outcome !== 'budget_exceeded' && outcome !== 'tool_error';
             process.stdout.write(JSON.stringify(
-                buildErrorResponse(errorCode, errorMsg, retryable),
+                buildErrorResponse(errorCode, errorMsg, retryable, safety, {
+                    input_tokens: totalInputTokens,
+                    output_tokens: totalOutputTokens,
+                    cost_usd: 0,
+                }),
+            ) + '\n');
+            process.exit(EXIT_RUNTIME);
+        }
+
+        const failOnRejectedToolCalls = request.constraints?.fail_on_rejected_tool_calls === true
+            || contextProfile === 'rp-researcher';
+        if (failOnRejectedToolCalls && rejectedToolCalls > 0) {
+            process.stdout.write(JSON.stringify(
+                buildErrorResponse(
+                    'turn.rejected_tool_calls',
+                    `Turn completed with ${rejectedToolCalls} rejected tool call(s); treating as degraded workflow failure`,
+                    true,
+                    safety,
+                    {
+                        input_tokens: totalInputTokens,
+                        output_tokens: totalOutputTokens,
+                        cost_usd: 0,
+                    },
+                ),
+            ) + '\n');
+            process.exit(EXIT_RUNTIME);
+        }
+
+        const missingRequiredOutputs = validateRequiredOutputPaths(cwd, request.constraints?.required_output_paths);
+        if (missingRequiredOutputs.length > 0) {
+            process.stdout.write(JSON.stringify(
+                buildErrorResponse(
+                    'turn.required_outputs_missing',
+                    `Required output file(s) missing or empty: ${missingRequiredOutputs.join(', ')}`,
+                    true,
+                    safety,
+                    {
+                        input_tokens: totalInputTokens,
+                        output_tokens: totalOutputTokens,
+                        cost_usd: 0,
+                    },
+                ),
             ) + '\n');
             process.exit(EXIT_RUNTIME);
         }
@@ -1121,17 +1337,11 @@ program
             }
         }
 
-        // Accumulate token usage
-        for (const step of turnResult.steps) {
-            totalInputTokens += step.tokenUsage.inputTokens;
-            totalOutputTokens += step.tokenUsage.outputTokens;
-        }
-
         const response = buildSuccessResponse(resultText, {
             input_tokens: totalInputTokens,
             output_tokens: totalOutputTokens,
             cost_usd: 0, // Cost calculation deferred to provider-specific logic
-        });
+        }, safety);
         process.stdout.write(JSON.stringify(response) + '\n');
         process.exit(EXIT_SUCCESS);
     });

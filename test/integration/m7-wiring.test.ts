@@ -49,6 +49,12 @@ import { BROWSER_TOOL_SPECS, createBrowserToolImpls } from '../../src/browser/br
 // --- Web tools ---
 import { webSearchSpec, createWebSearchImpl } from '../../src/tools/web-search.js';
 import { fetchUrlSpec, createFetchUrlImpl } from '../../src/tools/fetch-url.js';
+import {
+    fetchMediaWikiPageSpec,
+    fetchMediaWikiCategorySpec,
+    createFetchMediaWikiPageImpl,
+    createFetchMediaWikiCategoryImpl,
+} from '../../src/tools/fetch-mediawiki-page.js';
 import { lookupDocsSpec, createLookupDocsImpl } from '../../src/tools/lookup-docs.js';
 
 // --- Session ---
@@ -97,6 +103,8 @@ describe('M7.15 CLI Wiring Integration', () => {
         // Web tools
         toolRegistry.register(webSearchSpec, createWebSearchImpl({ networkPolicy }));
         toolRegistry.register(fetchUrlSpec, createFetchUrlImpl({ networkPolicy, browserManager }));
+        toolRegistry.register(fetchMediaWikiPageSpec, createFetchMediaWikiPageImpl({ networkPolicy }));
+        toolRegistry.register(fetchMediaWikiCategorySpec, createFetchMediaWikiCategoryImpl({ networkPolicy }));
         toolRegistry.register(lookupDocsSpec, createLookupDocsImpl({ networkPolicy, browserManager }));
 
         // Delegation (must be after tool registration for AgentRegistry.resolve)
@@ -166,6 +174,8 @@ describe('M7.15 CLI Wiring Integration', () => {
         // Web (M7.5)
         expect(toolNames).toContain('web_search');
         expect(toolNames).toContain('fetch_url');
+        expect(toolNames).toContain('fetch_mediawiki_page');
+        expect(toolNames).toContain('fetch_mediawiki_category');
         expect(toolNames).toContain('lookup_docs');
 
         // Delegation (M7.1)
@@ -173,8 +183,8 @@ describe('M7.15 CLI Wiring Integration', () => {
         expect(toolNames).toContain('message_agent');
         expect(toolNames).toContain('await_agent');
 
-        // Total: 1 core + 1 lsp + 10 browser + 3 web + 3 delegation = 18
-        expect(toolNames.length).toBe(18);
+        // Total: 1 core + 1 lsp + 10 browser + 5 web + 3 delegation = 20
+        expect(toolNames.length).toBe(20);
     });
 
     it('T2: delegation — spawn returns agent ID', async () => {
@@ -246,11 +256,15 @@ describe('M7.15 CLI Wiring Integration', () => {
         const tools = toolRegistry.list().map(t => t.spec.name);
         expect(tools).toContain('web_search');
         expect(tools).toContain('fetch_url');
+        expect(tools).toContain('fetch_mediawiki_page');
+        expect(tools).toContain('fetch_mediawiki_category');
         expect(tools).toContain('lookup_docs');
 
         // Verify each has an implementation
         expect(toolRegistry.lookup('web_search')?.impl).toBeDefined();
         expect(toolRegistry.lookup('fetch_url')?.impl).toBeDefined();
+        expect(toolRegistry.lookup('fetch_mediawiki_page')?.impl).toBeDefined();
+        expect(toolRegistry.lookup('fetch_mediawiki_category')?.impl).toBeDefined();
         expect(toolRegistry.lookup('lookup_docs')?.impl).toBeDefined();
     });
 

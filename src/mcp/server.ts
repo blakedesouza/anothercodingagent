@@ -52,9 +52,22 @@ export async function runAcaInvoke(
     task: string,
     options: {
         allowedTools?: string[];
+        deniedTools?: string[];
         deadlineMs?: number;
         maxSteps?: number;
+        maxToolCalls?: number;
+        maxToolCallsByName?: Record<string, number>;
+        maxToolResultBytes?: number;
+        maxInputTokens?: number;
+        maxRepeatedReadCalls?: number;
         maxTotalTokens?: number;
+        requiredOutputPaths?: string[];
+        failOnRejectedToolCalls?: boolean;
+        model?: string;
+        profile?: string;
+        temperature?: number;
+        topP?: number;
+        thinking?: 'enabled' | 'disabled';
     },
     spawnFn = defaultSpawn,
 ): Promise<AcaInvokeResult> {
@@ -67,11 +80,42 @@ export async function runAcaInvoke(
     if (options.allowedTools !== undefined) {
         constraints.allowed_tools = options.allowedTools;
     }
+    if (options.deniedTools !== undefined) {
+        constraints.denied_tools = options.deniedTools;
+    }
+    if (options.maxToolCalls !== undefined) {
+        constraints.max_tool_calls = options.maxToolCalls;
+    }
+    if (options.maxToolCallsByName !== undefined) {
+        constraints.max_tool_calls_by_name = options.maxToolCallsByName;
+    }
+    if (options.maxToolResultBytes !== undefined) {
+        constraints.max_tool_result_bytes = options.maxToolResultBytes;
+    }
+    if (options.maxInputTokens !== undefined) {
+        constraints.max_input_tokens = options.maxInputTokens;
+    }
+    if (options.maxRepeatedReadCalls !== undefined) {
+        constraints.max_repeated_read_calls = options.maxRepeatedReadCalls;
+    }
+    if (options.requiredOutputPaths !== undefined) {
+        constraints.required_output_paths = options.requiredOutputPaths;
+    }
+    if (options.failOnRejectedToolCalls !== undefined) {
+        constraints.fail_on_rejected_tool_calls = options.failOnRejectedToolCalls;
+    }
 
     const request = {
         contract_version: CONTRACT_VERSION,
         schema_version: SCHEMA_VERSION,
         task,
+        ...((options.model || options.profile || options.temperature !== undefined || options.topP !== undefined || options.thinking) ? { context: {
+            ...(options.model ? { model: options.model } : {}),
+            ...(options.profile ? { profile: options.profile } : {}),
+            ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+            ...(options.topP !== undefined ? { top_p: options.topP } : {}),
+            ...(options.thinking ? { thinking: options.thinking } : {}),
+        } } : {}),
         constraints,
         deadline,
     };
@@ -258,20 +302,65 @@ export function createMcpServer(
     server.registerTool(
         'aca_run',
         {
-            description: 'Delegate a coding task to an ACA agent. The agent has access to file, shell, search, and browser tools. Model is determined by ACA configuration.',
+            description: 'Delegate a task to an ACA agent. For RP lore/anime/manga/VN research, set profile="rp-researcher" and usually model="zai-org/glm-5" or "moonshotai/kimi-k2.5".',
             inputSchema: {
                 task: z.string().describe('The coding task for ACA to execute'),
                 allowed_tools: z.array(z.string()).optional()
                     .describe('Restrict which tools the ACA agent can use (e.g. ["read_file", "search_text"])'),
+                denied_tools: z.array(z.string()).optional()
+                    .describe('Deny specific tools even if otherwise available'),
                 max_steps: z.number().int().positive().optional()
                     .describe(`Maximum ACA agent loop steps (default: ${DEFAULT_MAX_STEPS})`),
+                max_tool_calls: z.number().int().positive().optional()
+                    .describe('Maximum total tool calls ACA may accept for this task'),
+                max_tool_calls_by_name: z.record(z.string(), z.number().int().positive()).optional()
+                    .describe('Per-tool accepted call caps, e.g. {"read_file": 1, "search_text": 1}'),
+                max_tool_result_bytes: z.number().int().positive().optional()
+                    .describe('Maximum cumulative bytes returned in tool result data'),
+                max_input_tokens: z.number().int().positive().optional()
+                    .describe('Maximum estimated input tokens before each LLM request'),
+                max_repeated_read_calls: z.number().int().positive().optional()
+                    .describe('Maximum overlapping read_file calls permitted for the same file/range'),
                 max_total_tokens: z.number().int().positive().optional()
                     .describe(`Maximum cumulative input+output tokens (default: ${DEFAULT_MAX_TOTAL_TOKENS})`),
+                required_output_paths: z.array(z.string()).optional()
+                    .describe('Output files that must exist and be non-empty when aca_run completes. Use for write phases with exact assigned files.'),
+                fail_on_rejected_tool_calls: z.boolean().optional()
+                    .describe('Treat any rejected tool call as an aca_run error. Defaults to true for the rp-researcher profile inside aca invoke.'),
+                profile: z.string().optional()
+                    .describe('Built-in ACA agent profile to apply. Use rp-researcher for RP lore/anime/manga/VN research and Markdown compendium writing.'),
+                model: z.string().optional()
+                    .describe('NanoGPT model override for this invocation'),
+                temperature: z.number().min(0).max(2).optional()
+                    .describe('Model sampling temperature override'),
+                top_p: z.number().min(0).max(1).optional()
+                    .describe('Model nucleus sampling override'),
+                thinking: z.enum(['enabled', 'disabled']).optional()
+                    .describe('Provider thinking mode override when supported'),
                 timeout_ms: z.number().optional()
                     .describe('Timeout in milliseconds (default: 900000 = 15 minutes)'),
             },
         },
-        async ({ task, allowed_tools, max_steps, max_total_tokens, timeout_ms }) => {
+        async ({
+            task,
+            allowed_tools,
+            denied_tools,
+            max_steps,
+            max_tool_calls,
+            max_tool_calls_by_name,
+            max_tool_result_bytes,
+            max_input_tokens,
+            max_repeated_read_calls,
+            max_total_tokens,
+            required_output_paths,
+            fail_on_rejected_tool_calls,
+            profile,
+            model,
+            temperature,
+            top_p,
+            thinking,
+            timeout_ms,
+        }) => {
             // Concurrency guard: reject if at capacity
             if (activeInvocations >= MAX_CONCURRENT_AGENTS) {
                 return {
@@ -288,9 +377,22 @@ export function createMcpServer(
                     task,
                     {
                         allowedTools: allowed_tools,
+                        deniedTools: denied_tools,
                         deadlineMs,
                         maxSteps: max_steps,
+                        maxToolCalls: max_tool_calls,
+                        maxToolCallsByName: max_tool_calls_by_name,
+                        maxToolResultBytes: max_tool_result_bytes,
+                        maxInputTokens: max_input_tokens,
+                        maxRepeatedReadCalls: max_repeated_read_calls,
                         maxTotalTokens: max_total_tokens,
+                        requiredOutputPaths: required_output_paths,
+                        failOnRejectedToolCalls: fail_on_rejected_tool_calls,
+                        model,
+                        profile,
+                        temperature,
+                        topP: top_p,
+                        thinking,
                     },
                     spawnFn,
                 );
@@ -311,6 +413,13 @@ export function createMcpServer(
                 let text = response.result ?? '';
                 if (response.usage) {
                     text += `\n\n[Usage: ${response.usage.input_tokens} input tokens, ${response.usage.output_tokens} output tokens]`;
+                }
+                if (response.safety) {
+                    text += `\n[Safety: ${response.safety.steps} steps, ${response.safety.accepted_tool_calls} accepted tool calls, ${response.safety.rejected_tool_calls} rejected tool calls`;
+                    if (response.safety.guardrails?.length > 0) {
+                        text += `, guardrails=${response.safety.guardrails.join(',')}`;
+                    }
+                    text += ']';
                 }
 
                 return {

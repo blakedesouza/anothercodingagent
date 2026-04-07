@@ -1,7 +1,7 @@
 import { generateId } from '../types/ids.js';
 import type { SessionId, TurnId, StepId, ItemId, ToolCallId } from '../types/ids.js';
 import type { SecretScrubber } from '../permissions/secret-scrubber.js';
-import type { TurnOutcome, TurnRecord, StepRecord, TokenUsage } from '../types/session.js';
+import type { TurnOutcome, TurnRecord, StepRecord, StepSafetyStats, TokenUsage } from '../types/session.js';
 import type {
     ConversationItem,
     MessageItem,
@@ -42,6 +42,7 @@ import type { CapabilityHealthMap } from './capability-health.js';
 import type { CheckpointManager, CheckpointMetadata } from '../checkpointing/checkpoint-manager.js';
 import type { MetricsAccumulator } from '../observability/telemetry.js';
 import { EventEmitter } from 'node:events';
+import { estimateRequestTokens } from './token-estimator.js';
 
 // --- Error codes that trigger model fallback (provider-level failures only) ---
 // TODO(M5.x): Add retry-before-fallback logic. Per spec, fallback occurs "after retry
@@ -132,10 +133,32 @@ export interface TurnEngineConfig {
     sessionGrants?: SessionGrantStore;
     /** Restrict which tools the agent can use. null = all tools allowed. */
     allowedTools?: string[] | null;
+    /** Additional invoke/delegation authority rules. Deny rules are enforced even without interactive approval flow. */
+    authority?: Array<{
+        tool: string;
+        args_match?: Record<string, unknown>;
+        decision: 'approve' | 'deny';
+    }>;
     /** Optional hard cap on LLM steps for delegated/executor turns. */
     maxSteps?: number;
+    /** Optional hard cap on total accepted tool calls for the turn. */
+    maxToolCalls?: number;
+    /** Optional hard caps on accepted tool calls by tool name. */
+    maxToolCallsByName?: Record<string, number>;
+    /** Optional hard cap on cumulative tool-result data bytes for the turn. */
+    maxToolResultBytes?: number;
+    /** Optional hard cap on estimated input tokens before each LLM request. */
+    maxInputTokens?: number;
+    /** Optional hard cap on overlapping read_file calls for the same file/range. */
+    maxRepeatedReadCalls?: number;
     /** Optional hard cap on cumulative input + output tokens for the turn. */
     maxTotalTokens?: number;
+    /** Optional model sampling temperature override. */
+    temperature?: number;
+    /** Optional model nucleus sampling override. */
+    topP?: number;
+    /** Optional provider-specific thinking mode override. */
+    thinking?: { type: 'enabled' | 'disabled' };
     /** Custom system messages for invoke/delegation mode (replaces default "You are a helpful coding assistant."). */
     systemMessages?: RequestMessage[];
 }
@@ -157,6 +180,99 @@ const MAX_TOOL_CALLS_PER_MESSAGE = 10;
 function positiveIntegerLimit(value: number | undefined): number | undefined {
     if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
     return Math.floor(value);
+}
+
+function positiveIntegerLimitMap(value: Record<string, number> | undefined): Map<string, number> {
+    const limits = new Map<string, number>();
+    if (!value) return limits;
+    for (const [toolName, rawLimit] of Object.entries(value)) {
+        const limit = positiveIntegerLimit(rawLimit);
+        if (limit !== undefined) limits.set(toolName, limit);
+    }
+    return limits;
+}
+
+function mapToRecord(map: Map<string, number>): Record<string, number> {
+    return Object.fromEntries([...map.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+interface ReadRange {
+    path: string;
+    start: number;
+    end: number;
+}
+
+function readRangeFor(part: ToolCallPart): ReadRange | null {
+    if (part.toolName !== 'read_file') return null;
+    const path = part.arguments.path;
+    if (typeof path !== 'string') return null;
+    const rawStart = part.arguments.line_start;
+    const rawEnd = part.arguments.line_end;
+    const start = typeof rawStart === 'number' && Number.isFinite(rawStart)
+        ? Math.max(1, Math.floor(rawStart))
+        : 1;
+    const end = typeof rawEnd === 'number' && Number.isFinite(rawEnd)
+        ? Math.max(start, Math.floor(rawEnd))
+        : Number.MAX_SAFE_INTEGER;
+    return { path, start, end };
+}
+
+function rangesOverlap(a: ReadRange, b: ReadRange): boolean {
+    return a.path === b.path && a.start <= b.end && b.start <= a.end;
+}
+
+function dataBytes(data: string): number {
+    return Buffer.byteLength(data, 'utf8');
+}
+
+function truncateUtf8(text: string, maxBytes: number): string {
+    if (maxBytes <= 0) return '';
+    if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+    let result = '';
+    let usedBytes = 0;
+    for (const char of text) {
+        const charBytes = Buffer.byteLength(char, 'utf8');
+        if (usedBytes + charBytes > maxBytes) break;
+        result += char;
+        usedBytes += charBytes;
+    }
+    return result;
+}
+
+function errorOutput(code: string, message: string): ToolOutput {
+    return {
+        status: 'error',
+        data: '',
+        error: { code, message, retryable: false },
+        truncated: false,
+        bytesReturned: 0,
+        bytesOmitted: 0,
+        retryable: false,
+        timedOut: false,
+        mutationState: 'none',
+    };
+}
+
+function authorityArgsMatch(
+    actual: Record<string, unknown>,
+    expected?: Record<string, unknown>,
+): boolean {
+    if (expected === undefined) return true;
+    return Object.entries(expected).every(([key, value]) =>
+        JSON.stringify(actual[key]) === JSON.stringify(value)
+    );
+}
+
+function matchingAuthorityDecision(
+    part: ToolCallPart,
+    config: TurnEngineConfig,
+    decision: 'approve' | 'deny',
+): boolean {
+    return (config.authority ?? []).some(rule =>
+        rule.decision === decision &&
+        rule.tool === part.toolName &&
+        authorityArgsMatch(part.arguments, rule.args_match)
+    );
 }
 
 function resolveStepLimit(config: TurnEngineConfig): number {
@@ -223,6 +339,11 @@ export class TurnEngine extends EventEmitter {
         const stepLimit = resolveStepLimit(config);
         const consecutiveToolLimit = config.interactive ? 10 : Infinity;
         const tokenLimit = positiveIntegerLimit(config.maxTotalTokens);
+        const toolCallLimit = positiveIntegerLimit(config.maxToolCalls);
+        const toolCallLimitsByName = positiveIntegerLimitMap(config.maxToolCallsByName);
+        const toolResultByteLimit = positiveIntegerLimit(config.maxToolResultBytes);
+        const inputTokenLimit = positiveIntegerLimit(config.maxInputTokens);
+        const repeatedReadLimit = positiveIntegerLimit(config.maxRepeatedReadCalls);
 
         const turnId = generateId('turn') as TurnId;
         const turnNumber = 1; // Caller should provide, but for now we derive from existing state
@@ -266,6 +387,10 @@ export class TurnEngine extends EventEmitter {
         let stepNumber = 0;
         let outcome: TurnOutcome | undefined;
         let totalTurnTokens = 0;
+        let totalAcceptedToolCalls = 0;
+        let totalToolResultBytes = 0;
+        const totalAcceptedToolCallsByName = new Map<string, number>();
+        const acceptedReadRanges: ReadRange[] = [];
 
         while (!outcome) {
             stepNumber++;
@@ -279,7 +404,14 @@ export class TurnEngine extends EventEmitter {
             this.transitionTo(Phase.AssembleContext);
             const allItems = [...existingItems, ...items];
             const messages = this.assembleMessages(allItems, config.systemMessages);
-            const toolDefs = this.assembleToolDefinitions(config.allowedTools);
+            const remainingToolCalls = toolCallLimit === undefined
+                ? undefined
+                : Math.max(0, toolCallLimit - totalAcceptedToolCalls);
+            const toolResultByteBudgetExhausted = toolResultByteLimit !== undefined
+                && totalToolResultBytes >= toolResultByteLimit;
+            const toolDefs = remainingToolCalls === 0 || toolResultByteBudgetExhausted
+                ? []
+                : this.assembleToolDefinitions(config.allowedTools);
 
             // --- Phase 4: CreateStep ---
             this.transitionTo(Phase.CreateStep);
@@ -288,13 +420,51 @@ export class TurnEngine extends EventEmitter {
 
             // --- Phase 5: CallLLM ---
             this.transitionTo(Phase.CallLLM);
-            const request: ModelRequest = {
+            let request: ModelRequest = {
                 model: activeModel,
                 messages,
                 tools: toolDefs.length > 0 ? toolDefs : undefined,
                 maxTokens: 4096,
-                temperature: 0.7,
+                temperature: config.temperature ?? 0.7,
+                topP: config.topP,
+                thinking: config.thinking,
             };
+            const resolvedForRequest = resolveModel(activeModel);
+            const requestCaps = resolvedForRequest ? getModelCapabilities(resolvedForRequest) : undefined;
+            let estimatedInputTokens = estimateRequestTokens(request, requestCaps?.bytesPerToken);
+            let guardrail: string | undefined = toolResultByteBudgetExhausted
+                ? 'tool_result_byte_budget_exhausted_tools_hidden'
+                : undefined;
+
+            if (inputTokenLimit !== undefined && estimatedInputTokens > inputTokenLimit && request.tools) {
+                request = { ...request, tools: undefined };
+                estimatedInputTokens = estimateRequestTokens(request, requestCaps?.bytesPerToken);
+                guardrail = 'max_input_tokens_tools_hidden';
+            }
+
+            const stepSafetyStats: StepSafetyStats = {
+                estimatedInputTokens,
+                toolDefinitionCount: request.tools?.length ?? 0,
+                acceptedToolCalls: 0,
+                rejectedToolCalls: 0,
+                acceptedToolCallsByName: mapToRecord(totalAcceptedToolCallsByName),
+                toolResultBytes: 0,
+                cumulativeToolResultBytes: totalToolResultBytes,
+                ...(guardrail ? { guardrail } : {}),
+            };
+
+            if (inputTokenLimit !== undefined && estimatedInputTokens > inputTokenLimit) {
+                outcome = 'budget_exceeded';
+                stepSafetyStats.guardrail = 'max_input_tokens';
+                const step = this.recordStep(
+                    stepId, turnId, stepNumber, config, inputSeqs, items,
+                    'input_guard', { inputTokens: 0, outputTokens: 0 },
+                    activeModel, activeProvider, stepSafetyStats,
+                );
+                steps.push(step);
+                this.writer.writeStep(step);
+                break;
+            }
 
             const streamEvents: StreamEvent[] = [];
             let streamError: StreamEvent | null = null;
@@ -402,7 +572,7 @@ export class TurnEngine extends EventEmitter {
                 if (budgetResult.status === 'exceeded') {
                     outcome = 'budget_exceeded';
                     const step = this.recordStep(
-                        stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider,
+                        stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats,
                     );
                     steps.push(step);
                     this.writer.writeStep(step);
@@ -413,7 +583,7 @@ export class TurnEngine extends EventEmitter {
             if (tokenLimit !== undefined && totalTurnTokens > tokenLimit) {
                 outcome = 'budget_exceeded';
                 const step = this.recordStep(
-                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider,
+                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats,
                 );
                 steps.push(step);
                 this.writer.writeStep(step);
@@ -425,7 +595,7 @@ export class TurnEngine extends EventEmitter {
                 outcome = 'assistant_final';
                 // Record the step before yielding
                 const step = this.recordStep(
-                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider,
+                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats,
                 );
                 steps.push(step);
                 this.writer.writeStep(step);
@@ -436,7 +606,7 @@ export class TurnEngine extends EventEmitter {
             if (stepNumber >= stepLimit) {
                 outcome = 'max_steps';
                 const step = this.recordStep(
-                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider,
+                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats,
                 );
                 steps.push(step);
                 this.writer.writeStep(step);
@@ -448,7 +618,7 @@ export class TurnEngine extends EventEmitter {
             if (consecutiveToolSteps >= consecutiveToolLimit) {
                 outcome = 'max_consecutive_tools';
                 const step = this.recordStep(
-                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider,
+                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats,
                 );
                 steps.push(step);
                 this.writer.writeStep(step);
@@ -460,9 +630,74 @@ export class TurnEngine extends EventEmitter {
             // --- Phase 9: ValidateToolCalls ---
             this.transitionTo(Phase.ValidateToolCalls);
 
-            // Enforce max tool calls per message
-            const activeCalls = toolCallParts.slice(0, MAX_TOOL_CALLS_PER_MESSAGE);
-            const deferredCalls = toolCallParts.slice(MAX_TOOL_CALLS_PER_MESSAGE);
+            // Enforce per-message, per-turn, per-tool, and repeated-read caps
+            // before executing anything. Prompt text is advisory; these limits are
+            // the actual leash for weaker or overly persistent tool callers.
+            type RejectedToolCall = {
+                part: ToolCallPart;
+                code: 'tool.deferred' | 'tool.max_tool_calls';
+                message: string;
+                hardLimit: boolean;
+            };
+            const activeCalls: ToolCallPart[] = [];
+            const rejectedCalls: RejectedToolCall[] = [];
+            const acceptedThisStepByName = new Map<string, number>();
+            const plannedReadRanges = [...acceptedReadRanges];
+
+            for (const part of toolCallParts) {
+                if (activeCalls.length >= MAX_TOOL_CALLS_PER_MESSAGE) {
+                    rejectedCalls.push({
+                        part,
+                        code: 'tool.deferred',
+                        message: `Tool call deferred: max ${MAX_TOOL_CALLS_PER_MESSAGE} calls per message.`,
+                        hardLimit: false,
+                    });
+                    continue;
+                }
+
+                if (remainingToolCalls !== undefined && activeCalls.length >= remainingToolCalls) {
+                    rejectedCalls.push({
+                        part,
+                        code: 'tool.max_tool_calls',
+                        message: `Tool call rejected: max_tool_calls limit ${toolCallLimit} reached`,
+                        hardLimit: true,
+                    });
+                    continue;
+                }
+
+                const toolLimit = toolCallLimitsByName.get(part.toolName);
+                const acceptedForTool =
+                    (totalAcceptedToolCallsByName.get(part.toolName) ?? 0) +
+                    (acceptedThisStepByName.get(part.toolName) ?? 0);
+                if (toolLimit !== undefined && acceptedForTool >= toolLimit) {
+                    rejectedCalls.push({
+                        part,
+                        code: 'tool.max_tool_calls',
+                        message: `Tool call rejected: max_tool_calls_by_name.${part.toolName} limit ${toolLimit} reached`,
+                        hardLimit: true,
+                    });
+                    continue;
+                }
+
+                const readRange = readRangeFor(part);
+                if (readRange && repeatedReadLimit !== undefined) {
+                    const overlappingReads = plannedReadRanges.filter(range => rangesOverlap(range, readRange)).length;
+                    if (overlappingReads >= repeatedReadLimit) {
+                        rejectedCalls.push({
+                            part,
+                            code: 'tool.max_tool_calls',
+                            message: `Tool call rejected: max_repeated_read_calls limit ${repeatedReadLimit} reached for ${readRange.path}`,
+                            hardLimit: true,
+                        });
+                        continue;
+                    }
+                    plannedReadRanges.push(readRange);
+                }
+
+                activeCalls.push(part);
+                acceptedThisStepByName.set(part.toolName, (acceptedThisStepByName.get(part.toolName) ?? 0) + 1);
+            }
+            const exceededTurnToolLimit = rejectedCalls.some(call => call.hardLimit);
 
             // Validate each tool call against registry
             const validatedCalls: Array<{ part: ToolCallPart; valid: boolean; errorCode?: string; error?: string }> = [];
@@ -517,6 +752,7 @@ export class TurnEngine extends EventEmitter {
             this.transitionTo(Phase.ExecuteToolCalls);
 
             const toolResults: ToolResultItem[] = [];
+            let toolResultBytesThisStep = 0;
             const toolContext: Omit<ToolContext, 'signal'> = {
                 sessionId: config.sessionId,
                 workspaceRoot: config.workspaceRoot,
@@ -532,22 +768,14 @@ export class TurnEngine extends EventEmitter {
                 if (this.interrupted) break;
 
                 let output: ToolOutput;
-                if (!valid) {
-                    output = {
-                        status: 'error',
-                        data: '',
-                        error: {
-                            code: errorCode ?? 'tool.not_found',
-                            message: error!,
-                            retryable: false,
-                        },
-                        truncated: false,
-                        bytesReturned: 0,
-                        bytesOmitted: 0,
-                        retryable: false,
-                        timedOut: false,
-                        mutationState: 'none',
-                    };
+                if (toolResultByteLimit !== undefined && totalToolResultBytes >= toolResultByteLimit) {
+                    output = errorOutput(
+                        'tool.max_tool_result_bytes',
+                        `Tool call rejected: max_tool_result_bytes limit ${toolResultByteLimit} reached`,
+                    );
+                    stepSafetyStats.guardrail = 'max_tool_result_bytes';
+                } else if (!valid) {
+                    output = errorOutput(errorCode ?? 'tool.not_found', error!);
                 } else {
                     // Approval flow: resolve permission before executing
                     const approvalDenied = await this.resolveToolApproval(part, config);
@@ -612,6 +840,26 @@ export class TurnEngine extends EventEmitter {
                     }
                 }
 
+                const outputBytes = dataBytes(output.data);
+                const remainingToolResultBytes = toolResultByteLimit === undefined
+                    ? undefined
+                    : Math.max(0, toolResultByteLimit - totalToolResultBytes);
+                if (remainingToolResultBytes !== undefined && outputBytes > remainingToolResultBytes) {
+                    const truncatedData = truncateUtf8(output.data, remainingToolResultBytes);
+                    const returnedBytes = dataBytes(truncatedData);
+                    output = {
+                        ...output,
+                        data: truncatedData,
+                        truncated: true,
+                        bytesReturned: returnedBytes,
+                        bytesOmitted: output.bytesOmitted + Math.max(0, outputBytes - returnedBytes),
+                    };
+                    stepSafetyStats.guardrail = 'max_tool_result_bytes';
+                }
+                const storedOutputBytes = dataBytes(output.data);
+                totalToolResultBytes += storedOutputBytes;
+                toolResultBytesThisStep += storedOutputBytes;
+
                 const resultItem: ToolResultItem = {
                     kind: 'tool_result',
                     id: generateId('item') as ItemId,
@@ -624,9 +872,8 @@ export class TurnEngine extends EventEmitter {
                 toolResults.push(resultItem);
             }
 
-            // Create synthetic error results for deferred calls
-            const deferredNames = deferredCalls.map(d => d.toolName).join(', ');
-            for (const part of deferredCalls) {
+            // Create synthetic error results for calls rejected by guardrails.
+            for (const { part, code, message } of rejectedCalls) {
                 const resultItem: ToolResultItem = {
                     kind: 'tool_result',
                     id: generateId('item') as ItemId,
@@ -637,8 +884,8 @@ export class TurnEngine extends EventEmitter {
                         status: 'error',
                         data: '',
                         error: {
-                            code: 'tool.deferred',
-                            message: `Tool call deferred: max ${MAX_TOOL_CALLS_PER_MESSAGE} calls per message. Deferred tools: ${deferredNames}`,
+                            code,
+                            message,
                             retryable: false,
                         },
                         truncated: false,
@@ -652,6 +899,20 @@ export class TurnEngine extends EventEmitter {
                 };
                 toolResults.push(resultItem);
             }
+            totalAcceptedToolCalls += activeCalls.length;
+            for (const part of activeCalls) {
+                totalAcceptedToolCallsByName.set(
+                    part.toolName,
+                    (totalAcceptedToolCallsByName.get(part.toolName) ?? 0) + 1,
+                );
+                const readRange = readRangeFor(part);
+                if (readRange) acceptedReadRanges.push(readRange);
+            }
+            stepSafetyStats.acceptedToolCalls = activeCalls.length;
+            stepSafetyStats.rejectedToolCalls = rejectedCalls.length;
+            stepSafetyStats.acceptedToolCallsByName = mapToRecord(totalAcceptedToolCallsByName);
+            stepSafetyStats.toolResultBytes = toolResultBytesThisStep;
+            stepSafetyStats.cumulativeToolResultBytes = totalToolResultBytes;
 
             // --- Confusion tracking ---
             // Count ALL results for session total (no early break).
@@ -707,7 +968,7 @@ export class TurnEngine extends EventEmitter {
 
             // Record step
             const step = this.recordStep(
-                stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage,
+                stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats,
             );
             steps.push(step);
             this.writer.writeStep(step);
@@ -718,6 +979,14 @@ export class TurnEngine extends EventEmitter {
             // Confusion threshold reached → yield immediately
             if (confusionYield) {
                 outcome = 'tool_error';
+                break;
+            }
+
+            // A model can use exactly the final permitted tool call and still
+            // get one no-tools follow-up step to summarize. If it exceeds the
+            // cap in the current step, stop immediately.
+            if (exceededTurnToolLimit) {
+                outcome = 'max_tool_calls';
                 break;
             }
 
@@ -1014,6 +1283,7 @@ export class TurnEngine extends EventEmitter {
         tokenUsage: TokenUsage,
         modelOverride?: string,
         providerOverride?: string,
+        safetyStats?: StepSafetyStats,
     ): StepRecord {
         const outputSeqs = items
             .filter(i => !inputSeqs.includes(i.seq))
@@ -1035,6 +1305,7 @@ export class TurnEngine extends EventEmitter {
                 systemPromptFingerprint: 'v1',
             },
             tokenUsage,
+            ...(safetyStats ? { safetyStats } : {}),
             timestamp: new Date().toISOString(),
         };
     }
@@ -1066,6 +1337,24 @@ export class TurnEngine extends EventEmitter {
                     mutationState: 'none',
                 };
             }
+        }
+
+        if (matchingAuthorityDecision(part, config, 'deny')) {
+            return {
+                status: 'error',
+                data: '',
+                error: {
+                    code: 'tool.permission',
+                    message: 'Denied: matched invoke authority deny rule',
+                    retryable: false,
+                },
+                truncated: false,
+                bytesReturned: 0,
+                bytesOmitted: 0,
+                retryable: false,
+                timedOut: false,
+                mutationState: 'none',
+            };
         }
 
         // Full approval flow requires config + session grants
@@ -1120,6 +1409,13 @@ export class TurnEngine extends EventEmitter {
                 timedOut: false,
                 mutationState: 'none',
             };
+        }
+
+        if (
+            result.decision === 'confirm' &&
+            matchingAuthorityDecision(part, config, 'approve')
+        ) {
+            return null;
         }
 
         // confirm or confirm_always — prompt user

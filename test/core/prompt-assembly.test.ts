@@ -712,6 +712,21 @@ describe('buildInvokeSystemMessages', () => {
         expect(content).not.toContain('confirm_action');
     });
 
+    it('includes active profile instructions when provided', () => {
+        const msgs = buildInvokeSystemMessages({
+            cwd: '/tmp',
+            toolNames: ['read_file', 'write_file'],
+            profileName: 'rp-researcher',
+            profilePrompt: 'Write Markdown only. Do not spend the whole tool budget on research.',
+        });
+
+        const content = msgs[0].content as string;
+        expect(content).toContain('Active profile: rp-researcher');
+        expect(content).toContain('<active_profile>');
+        expect(content).toContain('Write Markdown only');
+        expect(content).toContain('Do not spend the whole tool budget on research');
+    });
+
     it('includes safety block forbidding unauthorized destructive ops', () => {
         const msgs = buildInvokeSystemMessages({
             cwd: '/tmp',

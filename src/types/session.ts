@@ -7,6 +7,7 @@ export type TurnOutcome =
     | 'awaiting_user'
     | 'approval_required'
     | 'max_steps'
+    | 'max_tool_calls'
     | 'max_consecutive_tools'
     | 'tool_error'
     | 'cancelled'
@@ -33,6 +34,7 @@ export interface StepRecord {
     finishReason: string;
     contextStats: ContextStats;
     tokenUsage: TokenUsage;
+    safetyStats?: StepSafetyStats;
     timestamp: string;
 }
 
@@ -40,6 +42,17 @@ export interface TokenUsage {
     inputTokens: number;
     outputTokens: number;
     cachedInputTokens?: number;
+}
+
+export interface StepSafetyStats {
+    estimatedInputTokens?: number;
+    toolDefinitionCount?: number;
+    acceptedToolCalls?: number;
+    rejectedToolCalls?: number;
+    acceptedToolCallsByName?: Record<string, number>;
+    toolResultBytes?: number;
+    cumulativeToolResultBytes?: number;
+    guardrail?: string;
 }
 
 // --- Turn record ---

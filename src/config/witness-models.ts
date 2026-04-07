@@ -42,8 +42,8 @@ export interface WitnessModelConfig {
 /**
  * Canonical witness model configurations.
  *
- * These values are the actual model ceilings from NanoGPT.
- * NanoGPT is flat-rate ($8/mo), so every model gets its actual ceiling.
+ * These values are model ceilings reported by NanoGPT. Runtime guardrails still
+ * decide how much of each ceiling a workflow should use.
  */
 export const WITNESS_MODELS: readonly Readonly<WitnessModelConfig>[] = Object.freeze([
     Object.freeze({

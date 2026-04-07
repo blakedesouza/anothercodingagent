@@ -1,17 +1,32 @@
 /tmp
 /out-tsc
 /dist
+/coverage
+/.nyc_output
+*.tsbuildinfo
 
 /node_modules
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.log
+logs/
+debug/
 /.pnp
 .pnp.js
+
+.env
+.env.*
+!.env.example
 
 .vscode/*
 .idea/
 .DS_Store
+
+# Browser/test artifacts
+screenshots/
+test-results/
+playwright-report/
 
 # Local agent/editor runtime config
 .aca/
@@ -23,3 +38,7 @@ yarn-error.log*
 bug-report-*/
 codex-ideas/
 codex-troubleshooting/
+
+# Local/generated RP research output; ACA product code lives in this repo, not
+# generated compendium folders.
+rpproject/

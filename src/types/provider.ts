@@ -54,6 +54,8 @@ export interface ModelRequest {
     tools?: ToolDefinition[];
     maxTokens: number;
     temperature: number;
+    topP?: number;
+    thinking?: { type: 'enabled' | 'disabled' };
     extensions?: ExtensionRequest[];
 }
 

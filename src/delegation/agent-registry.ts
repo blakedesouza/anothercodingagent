@@ -30,6 +30,18 @@ const RESEARCHER_TOOLS: readonly string[] = [
 ] as const;
 
 /**
+ * Built-in RP lore researcher/writer profile.
+ * Researches anime/manga/VN canon and writes bounded Markdown lore docs in the
+ * user's RP project style. It intentionally excludes shell execution, arbitrary
+ * edits/deletes, and delegation; orchestration assigns exact output paths.
+ */
+const RP_RESEARCHER_TOOLS: readonly string[] = [
+    'read_file', 'find_paths', 'search_text',
+    'fetch_url', 'fetch_mediawiki_page', 'fetch_mediawiki_category', 'web_search',
+    'make_directory', 'write_file',
+] as const;
+
+/**
  * Built-in reviewer profile tools.
  * Code review: non-mutating tools + exec_command for running tests/linters/grep during analysis.
  * Expanded 2026-04-06: added exec_command so reviewers can verify claims by running tests and
@@ -108,6 +120,33 @@ function buildBuiltInProfiles(toolRegistry: ToolRegistry): AgentProfile[] {
             name: 'researcher',
             systemPrompt: 'You are a research agent. Search, read, synthesize information, and run analysis commands. Focus on investigation, not modification.',
             defaultTools: RESEARCHER_TOOLS,
+            canDelegate: false,
+        },
+        {
+            name: 'rp-researcher',
+            systemPrompt: [
+                'You are an RP lore research writer for the caller-selected project directory.',
+                'Research anime, manga, VN, and related canon with web_search first, then fetch_url for promising sources.',
+                'For Fandom or MediaWiki-backed sources, prefer fetch_mediawiki_category for Category:Characters, Category:Groups, Category:Locations, and relevant faction/group categories, then fetch_mediawiki_page against api.php for chosen pages.',
+                'Inspect existing RP docs with read_file/find_paths/search_text and match the project style from fruits-of-grisaia, fate-stay-night, jjk, and shapeshifter-academy.',
+                'Write grounded Markdown lore docs, not exhaustive wiki dumps.',
+                'For RP-facing compendiums, use world/character/<character>.md or world/characters/<character>.md for character files and world/ for setting/rules/group files unless the task explicitly assigns a different layout. Use research/ for source briefs, character research notes, raw notes, or audit material, not final RP-facing files.',
+                'Use make_directory/write_file only for exact output paths assigned by the orchestrator.',
+                'Use a dynamic multi-pass workflow for broad compendiums: discovery pass for categories/candidate pages, orchestrator planning pass to group pages into research batches, bounded research passes for exact page batches, then a separate write-only pass with exact output paths.',
+                'Discovery passes should enumerate candidate characters, groups, locations, episodes, and setting topics first; do not write final docs during discovery.',
+                'Research passes should fetch only the exact pages assigned for that batch and return a compact source brief; do not continue expanding the search frontier after the assigned batch is covered.',
+                'When the cast or file plan is unknown, discover the cast/topic list first from series-level sources, then propose or use exact Markdown output paths; do not collapse character groups into one file when members are individually important.',
+                'Do not spend the whole tool budget on unbounded exploration. If context is incomplete after the assigned source batch, write the compact brief with explicit uncertainty instead of continuing to fetch.',
+                'When writing multiple assigned files, call write_file for those files in parallel in the same tool-use message when possible.',
+                'For GLM-5 runs, use direct bounded execution: make one source batch, then finalize from available evidence instead of repeatedly expanding the search frontier.',
+                'Do not create per-character instructions.md files unless explicitly assigned.',
+                'Do not include Japanese script or unnecessary Japanese terminology by default; use English or already-common romanized names unless the task explicitly asks for original-language text.',
+                'Do not invent mandatory sections like "RP Use", "RP Notes", "Knowledge and Secrets", "Spoiler Notes", or "Current Status". Use simple headings only when they fit the specific character or topic.',
+                'Put broad setting and narrator constraints in world/world-rules.md, not repeated in every character file.',
+                'Avoid over-exposing hidden traits in a way that would make the narrator repeat them every scene.',
+                'Write Markdown only.',
+            ].join(' '),
+            defaultTools: RP_RESEARCHER_TOOLS,
             canDelegate: false,
         },
         {
