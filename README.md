@@ -1,11 +1,20 @@
 # Another Coding Agent
 
-Another Coding Agent (ACA) is a local-first TypeScript CLI for running tool-using coding agents through NanoGPT-compatible chat models.
+**ACA is a local-first TypeScript CLI for tool-using coding agents.**
 
 ACA is built around a simple boundary: the human or host agent makes judgment calls, while ACA agents do bounded work in their own context windows. It supports direct CLI use, structured `aca invoke` calls for delegation, MCP serving, and bounded multi-model consultation.
 
 > **Status: public WIP / experimental.**
 > ACA is usable for local development and self-build experiments. The CLI contract, model profiles, and research workflows are still moving as the project matures.
+
+## Why It Exists
+
+ACA is an experiment in making agent work composable instead of monolithic:
+
+- **Invoke:** call ACA from another agent or script through a structured JSON contract.
+- **Serve:** expose ACA as an MCP server for hosts that can delegate work.
+- **Consult:** ask multiple bounded witness models for review without handing them an unbounded tool loop.
+- **Profile:** tune model behavior for different jobs, including coding, review, triage, and RP lore research.
 
 ## What Works Today
 
@@ -24,16 +33,6 @@ ACA is built around a simple boundary: the human or host agent makes judgment ca
 - Broad web/research workflows can still be token-heavy.
 - Some historical docs are development archives, not polished user guides.
 - Full repo lint currently has known pre-existing test-only `no-explicit-any` failures; see [Known issues](docs/known-issues.md).
-
-## What It Does
-
-- Runs model turns with tool calls, streaming, session persistence, and JSONL conversation logs.
-- Provides local tools for file I/O, shell execution, search, LSP queries, browser/web access, MediaWiki/Fandom fetching, and delegation.
-- Enforces safety guardrails: allowed/denied tools, per-tool and total tool-call caps, token/input estimates, tool-result byte caps, repeated-read limits, network policy, sandbox checks, and required-output validation.
-- Exposes `aca invoke` as a structured JSON contract for other agents or wrappers.
-- Exposes `aca serve` as an MCP server.
-- Provides `aca consult` for bounded witness review with no-tools triage and context-request style follow-up.
-- Includes an `rp-researcher` profile for Markdown lore compendium generation using bounded web/MediaWiki research and exact output paths.
 
 ## Requirements
 
@@ -148,16 +147,22 @@ Example:
 
 ## Documentation
 
-- [Docs index](docs/README.md)
-- [Roadmap](docs/roadmap.md)
-- [Changelog](docs/changelog.md)
-- [Publication checklist](docs/publication-checklist.md)
-- [Security](SECURITY.md)
-- [Implementation milestones](docs/steps/README.md)
-- [Spec index](docs/spec/README.md)
-- [Known issues](docs/known-issues.md)
+- [Docs index](docs/README.md): the best starting point after this README.
+- [Roadmap](docs/roadmap.md): current state, limits, and next work.
+- [Security](SECURITY.md): safety and reporting notes.
+- [Known issues](docs/known-issues.md): current caveats.
+- [Changelog](docs/changelog.md): release-facing summary plus development history.
 
-The `docs/handoff-*.md` and `docs/codex-per-file-results/` files are development history. They are kept for traceability, not as first-stop user documentation.
+Design/archive material is intentionally present because this is a WIP agent project. Start with the README and roadmap; use the architecture/spec docs when you want to understand how the system is being built.
+
+## Repository Map
+
+- `src/`: CLI, agent loop, tools, providers, MCP bridge, consult workflow, and safety layers.
+- `test/`: Vitest coverage for runtime behavior, providers, permissions, tools, consult, and integration wiring.
+- `docs/spec/`: architecture and protocol reference.
+- `docs/steps/`: milestone implementation plan/history.
+- `docs/handoff-*.md`: session handoffs kept as development archive.
+- `fundamentals.md`, `plan.md`, `goal*.md`: original design and project-state notes.
 
 ## License
 

@@ -1,5 +1,8 @@
 # ACA Development Workflow
 
+This is an internal development workflow, not the public user guide. Start with
+the root `README.md` for normal usage.
+
 Standard operating procedure for every milestone substep. Validated by 4-model consultation (MiniMax, Kimi, Qwen, Llama) on 2026-03-30.
 
 ## The Cycle
@@ -17,7 +20,7 @@ Standard operating procedure for every milestone substep. Validated by 4-model c
 
 ## When to Skip Consultation (Step 5)
 
-All 4 witnesses run through NanoGPT ($8/mo subscription) — no per-call cost. The only cost is ~2-3 minutes of wait time per consultation, so there's no reason to skip.
+Consultation spends model budget and wall-clock time. Use it when it adds review value, and keep witness prompts/tool access bounded.
 
 Skip **only** for purely mechanical changes:
 - File renames, moves, re-exports
