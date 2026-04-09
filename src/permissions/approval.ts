@@ -14,6 +14,7 @@
 import type { ApprovalClass } from '../tools/tool-registry.js';
 import type { ResolvedConfig } from '../config/schema.js';
 import type { CommandRiskAssessment } from '../tools/command-risk-analyzer.js';
+import type { NetworkPolicyResult } from './network-policy.js';
 import { matchPreauthRules } from './preauth.js';
 import type { SessionGrantStore } from './session-grants.js';
 
@@ -41,6 +42,8 @@ export interface ApprovalRequest {
     approvalClass: ApprovalClass;
     /** Pre-computed risk assessment for exec_command/open_session/session_io. */
     riskAssessment?: CommandRiskAssessment;
+    /** Pre-computed network-policy decision for shell/network-capable commands. */
+    networkPolicyResult?: NetworkPolicyResult | null;
 }
 
 export interface ApprovalOptions {
@@ -48,6 +51,8 @@ export interface ApprovalOptions {
     sessionGrants: SessionGrantStore;
     /** CLI --no-confirm flag: auto-approve 'confirm' (not 'confirm_always' or 'deny'). */
     noConfirm: boolean;
+    /** Effective default cwd for tools that inherit workspaceRoot when cwd is omitted. */
+    workspaceRoot?: string;
     /** Agent profile allowed tools. null = all tools allowed. */
     allowedTools?: string[] | null;
     /** true if sandbox check (checkZone) already failed for this call. */
@@ -84,9 +89,22 @@ function extractCommand(toolName: string, args: Record<string, unknown>): string
     return undefined;
 }
 
-/** Extract cwd from tool args. */
-function extractCwd(args: Record<string, unknown>): string | undefined {
-    return typeof args.cwd === 'string' ? args.cwd : undefined;
+/** Extract effective cwd from tool args. */
+function extractCwd(
+    toolName: string,
+    args: Record<string, unknown> | undefined,
+    workspaceRoot?: string,
+): string | undefined {
+    if (args && typeof args.cwd === 'string') {
+        return args.cwd;
+    }
+    if (
+        workspaceRoot
+        && (toolName === 'exec_command' || toolName === 'open_session')
+    ) {
+        return workspaceRoot;
+    }
+    return undefined;
 }
 
 /**
@@ -159,8 +177,8 @@ export function resolveApproval(
     request: ApprovalRequest,
     options: ApprovalOptions,
 ): ApprovalResult {
-    const { toolName, toolArgs, approvalClass, riskAssessment } = request;
-    const { config, sessionGrants, noConfirm, allowedTools, sandboxViolation } = options;
+    const { toolName, toolArgs, approvalClass, riskAssessment, networkPolicyResult } = request;
+    const { config, sessionGrants, noConfirm, workspaceRoot, allowedTools, sandboxViolation } = options;
 
     // Step 1: Profile check
     if (allowedTools !== undefined && allowedTools !== null) {
@@ -188,13 +206,24 @@ export function resolveApproval(
         }
     }
     const isHighRisk = riskAssessment?.tier === 'high';
+    if (networkPolicyResult?.decision === 'deny') {
+        return {
+            decision: 'deny',
+            reason: `network policy: ${networkPolicyResult.reason}`,
+            step: 4,
+        };
+    }
+    const isNetworkConfirm = networkPolicyResult?.decision === 'confirm';
 
     // Step 4: Class-level policy
     let decision = getBaseDecision(toolName, approvalClass, config);
+    if (isNetworkConfirm && decision !== 'deny' && decision !== 'confirm_always') {
+        decision = 'confirm_always';
+    }
 
     // Step 5: Pre-authorization match
     const command = extractCommand(toolName, toolArgs);
-    const cwd = extractCwd(toolArgs);
+    const cwd = extractCwd(toolName, toolArgs, workspaceRoot);
     const preauthRule = matchPreauthRules(config.permissions.preauth, {
         toolName,
         command,
@@ -218,7 +247,10 @@ export function resolveApproval(
     }
 
     // Step 6: Session grants — cannot bypass 'confirm_always' (destructive ops)
-    if (decision !== 'deny' && decision !== 'confirm_always'
+    const isDestructiveConfirmAlways =
+        CONFIRM_ALWAYS_TOOLS.has(toolName)
+        && config.permissions.toolOverrides[toolName] === undefined;
+    if (decision !== 'deny' && !isDestructiveConfirmAlways
         && sessionGrants.hasGrant(toolName, command)) {
         return { decision: 'allow', reason: 'session grant', step: 6 };
     }
@@ -234,7 +266,7 @@ export function resolveApproval(
         decision = 'allow';
     }
 
-    const reason = decisionReason(decision, approvalClass, isHighRisk);
+    const reason = decisionReason(decision, approvalClass, isHighRisk, isNetworkConfirm);
     return { decision, reason, step: 7 };
 }
 
@@ -242,6 +274,7 @@ function decisionReason(
     decision: ApprovalDecision,
     approvalClass: ApprovalClass,
     isHighRisk: boolean,
+    isNetworkConfirm: boolean,
 ): string {
     switch (decision) {
         case 'allow':
@@ -251,6 +284,9 @@ function decisionReason(
                 ? 'high-risk command requires confirmation'
                 : `${approvalClass} requires confirmation`;
         case 'confirm_always':
+            if (isNetworkConfirm) {
+                return 'network command requires confirmation (--no-confirm cannot override)';
+            }
             return 'destructive operation requires confirmation (--no-confirm cannot override)';
         case 'deny':
             return 'denied by policy';
@@ -277,8 +313,11 @@ export function formatApprovalPrompt(
     if (riskAssessment && riskAssessment.facets.length > 0) {
         lines.push(`  Risk: ${riskAssessment.facets.join(', ')}`);
     }
+    if (request.networkPolicyResult && request.networkPolicyResult.decision !== 'allow') {
+        lines.push(`  Network policy: ${request.networkPolicyResult.reason}`);
+    }
 
-    const cwd = extractCwd(request.toolArgs);
+    const cwd = extractCwd(request.toolName, request.toolArgs);
     if (cwd) {
         lines.push(`  Working directory: ${cwd}`);
     }

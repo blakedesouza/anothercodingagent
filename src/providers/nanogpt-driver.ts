@@ -86,23 +86,28 @@ export class NanoGptDriver implements ProviderDriver {
             const entry = this.catalog.getModel(model);
             if (entry) {
                 // Catalog provides runtime-discovered limits; static registry
-                // fills in behavioral details (toolReliability, specialFeatures, etc.)
+                // fills in behavioral details (toolReliability, specialFeatures, etc.).
+                // NanoGPT invocation intentionally forces ACA-managed tool
+                // emulation for every tool-enabled model, even if the upstream
+                // routed model advertises native tool calling.
                 const base = getModelCapabilitiesOrDefaults(model);
                 return {
                     ...base,
                     maxContext: entry.contextLength,
                     maxOutput: entry.maxOutputTokens,
                     supportsVision: entry.capabilities.vision,
-                    supportsTools: entry.capabilities.toolCalling
-                        ? (base.supportsTools !== 'none' ? base.supportsTools : 'native')
-                        : 'none',
+                    supportsTools: entry.capabilities.toolCalling ? 'emulated' : 'none',
                     costPerMillion: entry.pricing
                         ? { input: entry.pricing.input, output: entry.pricing.output }
                         : base.costPerMillion,
                 };
             }
         }
-        return getModelCapabilitiesOrDefaults(model);
+        const base = getModelCapabilitiesOrDefaults(model);
+        return {
+            ...base,
+            supportsTools: base.supportsTools === 'none' ? 'none' : 'emulated',
+        };
     }
 
     async *stream(request: ModelRequest): AsyncGenerator<StreamEvent> {
@@ -122,7 +127,9 @@ export class NanoGptDriver implements ProviderDriver {
         // in the upstream OpenAI-compatible request.
         const needsEmulation = !!request.tools && request.tools.length > 0;
 
-        const effectiveRequest = needsEmulation ? injectToolsIntoRequest(request) : request;
+        const effectiveRequest = needsEmulation
+            ? injectToolsIntoRequest({ ...request, responseFormat: undefined })
+            : request;
 
         if (needsEmulation) {
             yield* wrapStreamWithToolEmulation(this.rawStream(effectiveRequest));
@@ -224,9 +231,6 @@ export class NanoGptDriver implements ProviderDriver {
                 if (toolCalls) {
                     for (const tc of toolCalls) {
                         const fn = tc.function as Record<string, string> | undefined;
-                        // Pass `id` through so the turn-engine accumulator can
-                        // distinguish parallel tool calls that collide on `index`.
-                        // See ToolCallDeltaEvent docs for the gemma backend story.
                         const tcId = typeof tc.id === 'string' ? tc.id : undefined;
                         yield {
                             type: 'tool_call_delta' as const,
@@ -314,10 +318,18 @@ export class NanoGptDriver implements ProviderDriver {
         if (request.thinking !== undefined) {
             body.thinking = request.thinking;
         }
+        if (request.responseFormat !== undefined && this.supportsResponseFormat(request.model)) {
+            body.response_format = request.responseFormat;
+        }
 
         body.tool_choice = 'none';
 
         return body;
+    }
+
+    private supportsResponseFormat(model: string): boolean {
+        const entry = this.catalog?.getModel(model);
+        return entry?.capabilities.structuredOutput !== false;
     }
 
     private async mapHttpError(response: Response): Promise<StreamErrorEvent> {

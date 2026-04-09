@@ -14,6 +14,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,7 +22,7 @@ import { ToolRegistry } from '../../src/tools/tool-registry.js';
 import { readFileSpec, readFileImpl } from '../../src/tools/read-file.js';
 
 // --- Delegation ---
-import { AgentRegistry } from '../../src/delegation/agent-registry.js';
+import { AgentRegistry, DELEGATION_TOOL_NAMES } from '../../src/delegation/agent-registry.js';
 import {
     DelegationTracker,
     DEFAULT_DELEGATION_LIMITS,
@@ -127,7 +128,10 @@ describe('M7.15 CLI Wiring Integration', () => {
             rootSessionId: 'ses_TEST0000000000000000000' as SessionId,
             callerPreauths: [],
             callerAuthority: [],
-            callerTools: toolRegistry.list().map(t => t.spec.name),
+            callerTools: Array.from(new Set([
+                ...toolRegistry.list().map(t => t.spec.name),
+                ...DELEGATION_TOOL_NAMES,
+            ])),
         };
         toolRegistry.register(
             spawnAgentSpec,
@@ -136,8 +140,8 @@ describe('M7.15 CLI Wiring Integration', () => {
                     agentRegistry,
                     delegationTracker,
                     limits: DEFAULT_DELEGATION_LIMITS,
-                    createChildSession: () => {
-                        const child = sm.create(cwd);
+                    createChildSession: (parentSessionId, rootSessionId) => {
+                        const child = sm.create(cwd, {}, { parentSessionId, rootSessionId });
                         return child.manifest.sessionId;
                     },
                 },
@@ -211,6 +215,40 @@ describe('M7.15 CLI Wiring Integration', () => {
         spawnedAgentId = data.agentId;
         expect(delegationTracker.getAgent(spawnedAgentId)).toBeDefined();
         expect(delegationTracker.getActiveCount()).toBe(1);
+    });
+
+    it('T2b: spawned child session persists parent/root lineage', async () => {
+        const agent = delegationTracker.getAgent(spawnedAgentId);
+        expect(agent).toBeDefined();
+
+        const manifestPath = join(sessionsDir, agent!.childSessionId, 'manifest.json');
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as {
+            parentSessionId?: string;
+            rootSessionId?: string;
+        };
+
+        expect(manifest.parentSessionId).toBe('ses_TEST0000000000000000000');
+        expect(manifest.rootSessionId).toBe('ses_TEST0000000000000000000');
+    });
+
+    it('T2c: delegating profiles inherit delegation tools for depth-2 trees', async () => {
+        const tool = toolRegistry.lookup('spawn_agent');
+        expect(tool).toBeDefined();
+
+        const result = await tool!.impl(
+            {
+                agent_type: 'coder',
+                task: 'Coordinate a two-step fix',
+                label: 'test-coder',
+            },
+            { workspaceRoot: cwd, sessionId: 'ses_TEST0000000000000000000' as SessionId, isSubAgent: false, signal: AbortSignal.timeout(5000) },
+        );
+
+        expect(result.status).toBe('success');
+        const data = JSON.parse(result.data) as { tools: string[] };
+        expect(data.tools).toContain('spawn_agent');
+        expect(data.tools).toContain('message_agent');
+        expect(data.tools).toContain('await_agent');
     });
 
     it('T3: message_agent sends to spawned agent', async () => {

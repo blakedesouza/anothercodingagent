@@ -103,7 +103,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             const caps = driver.capabilities('claude-sonnet-4-20250514');
             expect(caps.maxContext).toBe(200_000);
             expect(caps.maxOutput).toBe(16_384);
-            expect(caps.supportsTools).toBe('native');
+            expect(caps.supportsTools).toBe('emulated');
             expect(caps.supportsStreaming).toBe(true);
             expect(caps.bytesPerToken).toBe(3.5);
         });
@@ -111,12 +111,12 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
         it('returns correct capabilities for GPT-4o', () => {
             const caps = driver.capabilities('gpt-4o');
             expect(caps.maxContext).toBe(128_000);
-            expect(caps.supportsTools).toBe('native');
+            expect(caps.supportsTools).toBe('emulated');
         });
 
         it('returns default capabilities for unknown model', () => {
             const caps = driver.capabilities('nonexistent-model');
-            expect(caps.supportsTools).toBe('native');
+            expect(caps.supportsTools).toBe('emulated');
             expect(caps.maxContext).toBe(32_000);
         });
     });
@@ -169,6 +169,19 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
                 temperature: 0.5,
                 topP: 0.95,
                 thinking: { type: 'enabled' },
+                responseFormat: {
+                    type: 'json_schema',
+                    json_schema: {
+                        name: 'answer',
+                        strict: true,
+                        schema: {
+                            type: 'object',
+                            properties: { answer: { type: 'string' } },
+                            required: ['answer'],
+                            additionalProperties: false,
+                        },
+                    },
+                },
             });
             await collectEvents(driver.stream(request));
 
@@ -179,6 +192,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             expect(body.temperature).toBe(0.5);
             expect(body.top_p).toBe(0.95);
             expect(body.thinking).toEqual({ type: 'enabled' });
+            expect(body.response_format).toEqual(request.responseFormat);
             expect(body.tool_choice).toBe('none');
             const messages = body.messages as Array<Record<string, unknown>>;
             expect(messages).toHaveLength(2);
@@ -190,7 +204,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
     // --- stream(): tool call response ---
 
     describe('stream() — tool call response', () => {
-        it('yields tool_call_delta events with correct name and arguments', async () => {
+        it('normalizes native tool_call deltas from NanoGPT', async () => {
             server.addToolCallResponse([
                 { id: 'call_001', name: 'read_file', arguments: { path: '/tmp/test.txt' } },
             ]);
@@ -199,58 +213,42 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
 
             const toolDeltas = events.filter(e => e.type === 'tool_call_delta');
             expect(toolDeltas.length).toBeGreaterThan(0);
-
-            // First delta should have the tool name
-            const nameEvent = toolDeltas.find(e =>
-                e.type === 'tool_call_delta' && e.name !== undefined,
-            );
+            const nameEvent = toolDeltas.find(e => e.type === 'tool_call_delta' && e.name !== undefined);
             expect(nameEvent).toBeDefined();
             if (nameEvent?.type === 'tool_call_delta') {
                 expect(nameEvent.name).toBe('read_file');
-                expect(nameEvent.index).toBe(0);
-            }
-
-            // Accumulate arguments from all deltas (may be split across chunks)
-            const accumulatedArgs = toolDeltas
-                .filter((e): e is Extract<StreamEvent, { type: 'tool_call_delta' }> =>
-                    e.type === 'tool_call_delta')
-                .map(e => e.arguments ?? '')
-                .join('');
-            const parsedArgs = JSON.parse(accumulatedArgs);
-            expect(parsedArgs.path).toBe('/tmp/test.txt');
-
-            // Should end with done
-            const done = events.find(e => e.type === 'done');
-            expect(done).toBeDefined();
-            if (done?.type === 'done') {
-                expect(done.finishReason).toBe('tool_calls');
             }
         });
 
-        it('reconstructs complete tool call from accumulated deltas', async () => {
+        it('passes through native tool calls even when ACA emulation is enabled', async () => {
             server.addToolCallResponse([
                 { id: 'call_002', name: 'write_file', arguments: { path: '/tmp/out.txt', content: 'hello' } },
             ]);
 
-            const events = await collectEvents(driver.stream(makeRequest()));
+            const events = await collectEvents(driver.stream(makeRequest({
+                tools: [{
+                    name: 'write_file',
+                    description: 'Write a file',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            path: { type: 'string' },
+                            content: { type: 'string' },
+                        },
+                        required: ['path', 'content'],
+                    },
+                }],
+            })));
 
-            // Accumulate tool call from deltas
-            const toolDeltas = events.filter(
-                (e): e is Extract<StreamEvent, { type: 'tool_call_delta' }> =>
-                    e.type === 'tool_call_delta',
-            );
-
-            let name = '';
-            let args = '';
-            for (const delta of toolDeltas) {
-                if (delta.name) name = delta.name;
-                if (delta.arguments) args += delta.arguments;
-            }
-
-            expect(name).toBe('write_file');
-            const parsedArgs = JSON.parse(args);
-            expect(parsedArgs.path).toBe('/tmp/out.txt');
-            expect(parsedArgs.content).toBe('hello');
+            const toolDeltas = events.filter(e => e.type === 'tool_call_delta');
+            expect(toolDeltas.length).toBeGreaterThan(0);
+            const argJson = toolDeltas
+                .filter((e): e is Extract<import('../../src/types/provider.js').StreamEvent, { type: 'tool_call_delta' }> =>
+                    e.type === 'tool_call_delta')
+                .map(e => e.arguments ?? '')
+                .join('');
+            const parsed = JSON.parse(argJson);
+            expect(parsed).toEqual({ path: '/tmp/out.txt', content: 'hello' });
         });
     });
 
@@ -511,6 +509,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             const body = server.receivedRequests[0].body as Record<string, unknown>;
             expect(body.tools).toBeUndefined();
             expect(body.tool_choice).toBe('none');
+            expect(body.response_format).toBeUndefined();
             const messages = body.messages as Array<Record<string, unknown>>;
             expect(messages[0].role).toBe('system');
             expect(messages[0].content).toContain('Available tools:');
@@ -522,6 +521,101 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
                 expect(toolDeltas[0].name).toBe('read_file');
                 expect(JSON.parse(toolDeltas[0].arguments ?? '{}')).toEqual({ path: '/tmp/test.txt' });
             }
+        });
+
+        it('converts pseudo wrapped tool text into tool_call_delta events through the driver', async () => {
+            server.addTextResponse('<tool_call>{"name":"read_file","arguments":{"path":"/tmp/pseudo.txt"}}</tool_call>');
+
+            const request = makeRequest({
+                tools: [{
+                    name: 'read_file',
+                    description: 'Read a file from disk',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            path: { type: 'string', description: 'File path' },
+                        },
+                        required: ['path'],
+                    },
+                }],
+            });
+
+            const events = await collectEvents(driver.stream(request));
+            const toolDeltas = events.filter((e): e is Extract<StreamEvent, { type: 'tool_call_delta' }> => e.type === 'tool_call_delta');
+            expect(toolDeltas).toHaveLength(1);
+            expect(toolDeltas[0].name).toBe('read_file');
+            expect(JSON.parse(toolDeltas[0].arguments ?? '{}')).toEqual({ path: '/tmp/pseudo.txt' });
+        });
+
+        it('converts invoke/parameter pseudo tool text into tool_call_delta events through the driver', async () => {
+            server.addTextResponse([
+                '<minimax:tool_call>',
+                '<invoke name="write_file">',
+                '<parameter name="path">/tmp/out.txt</parameter>',
+                '<parameter name="content">hello</parameter>',
+                '</invoke>',
+                '</minimax:tool_call>',
+            ].join('\n'));
+
+            const request = makeRequest({
+                tools: [{
+                    name: 'write_file',
+                    description: 'Write a file to disk',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            path: { type: 'string', description: 'File path' },
+                            content: { type: 'string', description: 'File content' },
+                        },
+                        required: ['path', 'content'],
+                    },
+                }],
+            });
+
+            const events = await collectEvents(driver.stream(request));
+            const toolDeltas = events.filter((e): e is Extract<StreamEvent, { type: 'tool_call_delta' }> => e.type === 'tool_call_delta');
+            expect(toolDeltas).toHaveLength(1);
+            expect(toolDeltas[0].name).toBe('write_file');
+            expect(JSON.parse(toolDeltas[0].arguments ?? '{}')).toEqual({
+                path: '/tmp/out.txt',
+                content: 'hello',
+            });
+        });
+
+        it('strips response_format when ACA tool emulation is active', async () => {
+            server.addTextResponse('{"tool_calls":[{"name":"read_file","arguments":{"path":"/tmp/test.txt"}}]}');
+
+            await collectEvents(driver.stream(makeRequest({
+                tools: [{
+                    name: 'read_file',
+                    description: 'Read a file from disk',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            path: { type: 'string', description: 'File path' },
+                        },
+                        required: ['path'],
+                    },
+                }],
+                responseFormat: {
+                    type: 'json_schema',
+                    json_schema: {
+                        name: 'not_tool_calls',
+                        strict: true,
+                        schema: {
+                            type: 'object',
+                            properties: { markdown: { type: 'string' } },
+                            required: ['markdown'],
+                            additionalProperties: false,
+                        },
+                    },
+                },
+            })));
+
+            const body = server.receivedRequests[0].body as Record<string, unknown>;
+            expect(body.tools).toBeUndefined();
+            expect(body.tool_choice).toBe('none');
+            expect(body.response_format).toBeUndefined();
         });
     });
 });
@@ -607,8 +701,8 @@ describe('M11.2 — Driver + ModelCatalog Integration', () => {
             expect(caps.maxContext).toBe(200_000);
             expect(caps.maxOutput).toBe(64_000);
             expect(caps.supportsVision).toBe(true);
-            // Static-registry behavioral fields preserved
-            expect(caps.supportsTools).toBe('native');
+            // Tool support reflects NanoGPT's intentional forced emulation layer
+            expect(caps.supportsTools).toBe('emulated');
             expect(caps.supportsStreaming).toBe(true);
             expect(caps.bytesPerToken).toBe(3.5);
         });
@@ -626,7 +720,7 @@ describe('M11.2 — Driver + ModelCatalog Integration', () => {
             const caps = driver.capabilities('claude-sonnet-4-20250514');
             expect(caps.maxContext).toBe(200_000);
             expect(caps.maxOutput).toBe(16_384);
-            expect(caps.supportsTools).toBe('native');
+            expect(caps.supportsTools).toBe('emulated');
         });
 
         it('falls back to UNKNOWN_MODEL_DEFAULTS when no catalog and unknown model', () => {
@@ -639,7 +733,7 @@ describe('M11.2 — Driver + ModelCatalog Integration', () => {
             const caps = driver.capabilities('nonexistent-model-xyz');
             expect(caps.maxContext).toBe(32_000);
             expect(caps.maxOutput).toBe(8192);
-            expect(caps.supportsTools).toBe('native');
+            expect(caps.supportsTools).toBe('emulated');
         });
 
         it('merges catalog pricing into costPerMillion when available', () => {
@@ -696,6 +790,29 @@ describe('M11.2 — Driver + ModelCatalog Integration', () => {
 
             const caps = driver.capabilities('no-tools-model');
             expect(caps.supportsTools).toBe('none');
+        });
+
+        it('omits response_format when live catalog says structured output is unsupported', async () => {
+            const entry = makeCatalogEntry({
+                id: 'moonshotai/kimi-k2.5',
+                capabilities: { vision: false, toolCalling: true, reasoning: false, structuredOutput: false },
+            });
+            const catalog = makeMockCatalog(new Map([['moonshotai/kimi-k2.5', entry]]));
+            const driver = new NanoGptDriver({
+                apiKey: 'test-key',
+                baseUrl: server.baseUrl,
+                catalog,
+            });
+
+            server.addTextResponse('OK');
+            await collectEvents(driver.stream(makeRequest({
+                model: 'moonshotai/kimi-k2.5',
+                responseFormat: { type: 'json_object' },
+            })));
+
+            const body = server.receivedRequests[0].body as Record<string, unknown>;
+            expect(body.response_format).toBeUndefined();
+            expect(body.tool_choice).toBe('none');
         });
 
         it('preserves emulated tool support from static registry', () => {

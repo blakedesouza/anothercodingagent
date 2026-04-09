@@ -264,9 +264,12 @@ export class SqliteStore {
                 .prepare(
                     `SELECT COALESCE(SUM(json_extract(payload, '$.cost_usd')), 0) AS total
                      FROM events
+                     JOIN sessions ON sessions.session_id = events.session_id
                      WHERE event_type = 'llm.response'
-                       AND session_id != ?
-                       AND timestamp >= ?`,
+                       AND events.session_id != ?
+                       AND events.timestamp >= ?
+                       AND sessions.ended_at IS NOT NULL
+                       AND sessions.status = 'ended'`,
                 )
                 .get(excludeSessionId, todayPrefix) as { total: number } | undefined;
             return row?.total ?? 0;
@@ -360,6 +363,25 @@ export class SqliteStore {
                 FROM errors er
                 JOIN events e ON er.event_id = e.event_id
                 WHERE e.timestamp >= ?
+            `).get(sinceIso) as { count: number };
+            return row.count;
+        } catch (err) {
+            this.warn(`SQLite query failed: ${(err as Error).message}`);
+            return 0;
+        }
+    }
+
+    /**
+     * Get failed tool call count since a date.
+     */
+    getToolErrorCountSince(sinceIso: string): number {
+        if (!this.db) return 0;
+        try {
+            const row = this.db.prepare(`
+                SELECT COUNT(*) AS count
+                FROM tool_calls tc
+                JOIN events e ON tc.event_id = e.event_id
+                WHERE tc.status = 'error' AND e.timestamp >= ?
             `).get(sinceIso) as { count: number };
             return row.count;
         } catch (err) {

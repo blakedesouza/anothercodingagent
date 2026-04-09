@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     assemblePrompt,
+    preparePrompt,
     buildContextBlock,
     buildToolDefinitions,
     buildConversationMessages,
@@ -31,6 +32,27 @@ function makeAssistantMessage(text: string, seq: number): MessageItem {
         seq,
         role: 'assistant',
         parts: [{ type: 'text', text }],
+        timestamp: new Date().toISOString(),
+    };
+}
+
+function makeAssistantToolCall(
+    toolName: string,
+    args: Record<string, unknown>,
+    seq: number,
+    toolCallId?: string,
+): MessageItem {
+    return {
+        kind: 'message',
+        id: `item_${seq}` as ItemId,
+        seq,
+        role: 'assistant',
+        parts: [{
+            type: 'tool_call',
+            toolCallId: (toolCallId ?? `tc_${seq}`) as ToolCallId,
+            toolName,
+            arguments: args,
+        }],
         timestamp: new Date().toISOString(),
     };
 }
@@ -117,6 +139,17 @@ describe('assemblePrompt', () => {
             expect(ctxContent).toContain('Shell: bash');
         });
 
+        it('includes additional system messages ahead of the context block', () => {
+            const result = assemblePrompt(baseOptions({
+                additionalSystemMessages: [{ role: 'system', content: 'Use simpler tool plans.' }],
+            }));
+
+            expect(result.messages).toHaveLength(3);
+            expect(result.messages[0].role).toBe('system');
+            expect(result.messages[1]).toEqual({ role: 'system', content: 'Use simpler tool plans.' });
+            expect(result.messages[2].role).toBe('system');
+        });
+
         it('includes tools when provided', () => {
             const tools = [makeTool('read_file', 'Read a file'), makeTool('write_file', 'Write a file')];
             const result = assemblePrompt(baseOptions({ tools }));
@@ -151,6 +184,30 @@ describe('assemblePrompt', () => {
             for (let i = 0; i < convMsgs.length; i++) {
                 expect(convMsgs[i].role).toBe(i % 2 === 0 ? 'user' : 'assistant');
             }
+        });
+
+        it('uses visible history so covered items are replaced by summaries', () => {
+            const items: ConversationItem[] = [
+                makeUserMessage('old question', 1),
+                makeAssistantMessage('old answer', 2),
+                {
+                    kind: 'summary',
+                    id: 'item_3' as ItemId,
+                    seq: 3,
+                    text: 'Summary of the old exchange',
+                    coversSeq: { start: 1, end: 2 },
+                    timestamp: new Date().toISOString(),
+                },
+                makeUserMessage('current question', 4),
+            ];
+
+            const result = assemblePrompt(baseOptions({ items }));
+            const contents = result.messages.map((message) => String(message.content));
+
+            expect(contents.some((content) => content.includes('old question'))).toBe(false);
+            expect(contents.some((content) => content.includes('old answer'))).toBe(false);
+            expect(contents.some((content) => content.includes('[Summary of earlier conversation]'))).toBe(true);
+            expect(contents.some((content) => content.includes('current question'))).toBe(true);
         });
     });
 
@@ -385,6 +442,57 @@ describe('assemblePrompt', () => {
             const result = assemblePrompt(baseOptions());
             expect(result.maxTokens).toBe(4096);
             expect(result.temperature).toBe(0.7);
+        });
+    });
+
+    describe('live compression integration', () => {
+        it('tight context limit activates emergency compression and digesting', () => {
+            const items: ConversationItem[] = [
+                makeUserMessage('old question 1', 1),
+                makeAssistantMessage('old answer 1', 2),
+                makeUserMessage('old question 2', 3),
+                makeAssistantMessage('old answer 2', 4),
+                makeUserMessage('please inspect big.ts', 5),
+                makeAssistantToolCall('read_file', { path: '/repo/big.ts', line_start: 1, line_end: 400 }, 6, 'tc_big'),
+                makeToolResult(
+                    'read_file',
+                    JSON.stringify({ totalLines: 400, content: 'x'.repeat(4000) }),
+                    7,
+                    'tc_big',
+                ),
+            ];
+
+            const prepared = preparePrompt(baseOptions({
+                tools: [makeTool('read_file', 'Read a file from disk. Includes verbose details and examples.')],
+                items,
+                userInstructions: 'Always preserve formatting.',
+                durableTaskState: { goal: 'Fix prompt wiring', openLoops: ['run tests'] },
+                projectSnapshot: {
+                    root: '/repo',
+                    stack: ['TypeScript', 'Vitest'],
+                    git: { branch: 'main', status: 'dirty', staged: false },
+                    ignorePaths: [],
+                    indexStatus: 'ready',
+                },
+                workingSet: [{ path: 'src/main.ts', role: 'editing' }],
+                contextLimit: 1400,
+                reservedOutputTokens: 200,
+            }));
+
+            expect(prepared.contextStats.compressionTier).toBe('emergency');
+            expect(String(prepared.request.messages[1].content)).not.toContain('--- Instructions ---');
+            expect(String(prepared.request.messages[1].content)).not.toContain('--- Task State ---');
+            expect(prepared.request.tools?.[0]?.description).toBe('');
+            expect(
+                prepared.request.messages.some(
+                    (message) => message.role === 'user' && String(message.content).includes('old question 1'),
+                ),
+            ).toBe(false);
+
+            const toolMessage = prepared.request.messages.find((message) => message.role === 'tool');
+            expect(toolMessage).toBeDefined();
+            const parsed = JSON.parse(toolMessage!.content as string);
+            expect(parsed.data).toContain('[content omitted');
         });
     });
 });
@@ -682,6 +790,12 @@ describe('buildInvokeSystemMessages', () => {
         // The exact stall text from the M10.2 Kimi session — used as a negative
         // example so the model recognizes the anti-pattern verbatim.
         expect(content).toContain('Let me make the modifications');
+        expect(content).toContain('your FIRST assistant message must include at least one tool call');
+        expect(content).toContain('must be immediately followed by tool calls in the SAME assistant message');
+        expect(content).toContain('If a tool result changes your next step');
+        expect(content).toContain("I'll research this across multiple sources");
+        expect(content).toContain("I'll start by reading the local reference files and querying the wiki API in parallel.");
+        expect(content).toContain('The category came back empty; I need to try subcategories and direct page fetches.');
         expect(content).not.toContain('exec_command');
         expect(content).not.toContain('edit_file');
     });

@@ -80,7 +80,7 @@ export function buildSummary(store: SqliteStore, sinceIso: string, period: strin
     const sessions = store.getSessionsSince(sinceIso);
     const agg = store.getAggregateSince(sinceIso);
     const topTools = store.getTopToolsSince(sinceIso, 5);
-    const errorCount = store.getErrorCountSince(sinceIso);
+    const errorCount = store.getToolErrorCountSince(sinceIso);
     const toolCallCount = store.getToolCallCountSince(sinceIso);
     const errorRate = toolCallCount > 0 ? (errorCount / toolCallCount) * 100 : 0;
 

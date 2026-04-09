@@ -6,6 +6,7 @@ import { AnthropicDriver } from '../../src/providers/anthropic-driver.js';
 import { OpenAiDriver } from '../../src/providers/openai-driver.js';
 import { NanoGptDriver } from '../../src/providers/nanogpt-driver.js';
 import type { ModelRequest, StreamEvent } from '../../src/types/provider.js';
+import { DEFAULT_API_TIMEOUT_MS } from '../../src/config/schema.js';
 
 // --- Helpers ---
 
@@ -142,6 +143,11 @@ describe('OpenAiDriver — extension checking', () => {
             expect((first.value as { type: 'error'; error: { code: string } }).error.code).not.toBe('llm.unsupported_feature');
         }
     });
+
+    it('uses the project default idle timeout when no timeout override is provided', () => {
+        const driver = new OpenAiDriver({ apiKey: 'test-key' }) as unknown as { timeout: number };
+        expect(driver.timeout).toBe(DEFAULT_API_TIMEOUT_MS);
+    });
 });
 
 // --- NanoGptDriver extension tests ---
@@ -203,5 +209,12 @@ describe('NanoGptDriver — extension checking', () => {
                 (e as { type: 'error'; error: { code: string } }).error.code === 'llm.unsupported_feature',
         );
         expect(unsupportedErrors).toHaveLength(0);
+    });
+});
+
+describe('AnthropicDriver — timeout defaults', () => {
+    it('uses the project default idle timeout when no timeout override is provided', () => {
+        const driver = new AnthropicDriver({ apiKey: 'test-key' }) as unknown as { timeout: number };
+        expect(driver.timeout).toBe(DEFAULT_API_TIMEOUT_MS);
     });
 });

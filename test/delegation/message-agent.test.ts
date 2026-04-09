@@ -18,7 +18,7 @@ import type { SpawnAgentDeps, SpawnCallerContext } from '../../src/delegation/sp
 import { AgentRegistry } from '../../src/delegation/agent-registry.js';
 import { ToolRegistry } from '../../src/tools/tool-registry.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from '../../src/tools/tool-registry.js';
-import type { AgentIdentity } from '../../src/types/agent.js';
+import type { AgentIdentity, ApprovalRequest } from '../../src/types/agent.js';
 import type { AgentId, SessionId } from '../../src/types/ids.js';
 
 // --- Test helpers ---
@@ -162,6 +162,49 @@ describe('message_agent', () => {
             expect(dequeued).toBe('Please focus on function X');
         });
 
+        it('resolves $spawn_agent to the latest child for the current session', async () => {
+            const agentId = await spawnTestAgent(tracker, agentRegistry);
+            const deps: MessageAgentDeps = { delegationTracker: tracker };
+            const impl = createMessageAgentImpl(deps);
+
+            const result = await impl(
+                { agent_id: '$spawn_agent', message: 'Please focus on function X' },
+                stubToolContext,
+            );
+
+            expect(result.status).toBe('success');
+            const data = parseOutput(result);
+            expect(data.agentId).toBe(agentId);
+            expect(tracker.dequeueMessage(agentId)).toBe('Please focus on function X');
+        });
+
+        it('resolves a spawned child label for the current session', async () => {
+            const spawnDeps: SpawnAgentDeps = {
+                agentRegistry,
+                delegationTracker: tracker,
+                limits: DEFAULT_DELEGATION_LIMITS,
+                createChildSession: createMockChildSession,
+            };
+            const spawnImpl = createSpawnAgentImpl(spawnDeps, makeCallerContext());
+            const spawned = await spawnImpl(
+                { agent_type: 'general', task: 'test task', label: 'child_agent' },
+                stubToolContext,
+            );
+            const agentId = parseOutput(spawned).agentId as string;
+            const deps: MessageAgentDeps = { delegationTracker: tracker };
+            const impl = createMessageAgentImpl(deps);
+
+            const result = await impl(
+                { agent_id: 'child_agent', message: 'Please focus on function X' },
+                stubToolContext,
+            );
+
+            expect(result.status).toBe('success');
+            const data = parseOutput(result);
+            expect(data.agentId).toBe(agentId);
+            expect(tracker.dequeueMessage(agentId)).toBe('Please focus on function X');
+        });
+
         it('multiple messages are queued in order', async () => {
             const agentId = await spawnTestAgent(tracker, agentRegistry);
             const deps: MessageAgentDeps = { delegationTracker: tracker };
@@ -174,6 +217,34 @@ describe('message_agent', () => {
             expect(tracker.dequeueMessage(agentId)).toBe('first');
             expect(tracker.dequeueMessage(agentId)).toBe('second');
             expect(tracker.dequeueMessage(agentId)).toBe('third');
+            expect(tracker.dequeueMessage(agentId)).toBeUndefined();
+        });
+
+        it('message_agent resolves a pending approval request instead of queueing another message', async () => {
+            const agentId = await spawnTestAgent(tracker, agentRegistry);
+            let resolvedAnswer = '';
+            const request: ApprovalRequest = {
+                type: 'approval_required',
+                toolCall: { tool: 'ask_user', args: { question: 'Which DB?' } },
+                reason: 'Which DB?',
+                childLineage: [{ agentId, depth: 1, label: 'test-agent' }],
+                resolve: (answer: string) => { resolvedAnswer = answer; },
+            };
+            tracker.setPendingApproval(agentId, request);
+
+            const deps: MessageAgentDeps = { delegationTracker: tracker };
+            const impl = createMessageAgentImpl(deps);
+
+            const result = await impl(
+                { agent_id: agentId, message: 'PostgreSQL' },
+                stubToolContext,
+            );
+
+            expect(result.status).toBe('success');
+            const data = parseOutput(result);
+            expect(data.resolvedPendingApproval).toBe(true);
+            expect(resolvedAnswer).toBe('PostgreSQL');
+            expect(tracker.getAgent(agentId)?.pendingApproval).toBeNull();
             expect(tracker.dequeueMessage(agentId)).toBeUndefined();
         });
     });

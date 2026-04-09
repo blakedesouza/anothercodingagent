@@ -262,7 +262,7 @@ describe('M11.8 Model Catalog Wiring', () => {
         const result = AgentRegistry.resolve(registry);
         const agentRegistry = result.registry;
 
-        // Coder profile should have all tools minus delegation + user-facing
+        // Coder profile should have all tools minus user-facing
         const coder = agentRegistry.getProfile('coder');
         expect(coder).toBeDefined();
         expect(coder!.defaultTools).toContain('read_file');
@@ -270,7 +270,9 @@ describe('M11.8 Model Catalog Wiring', () => {
         expect(coder!.defaultTools).toContain('exec_command');
         expect(coder!.defaultTools).toContain('search_semantic');
         expect(coder!.defaultTools).toContain('browser_navigate');
-        expect(coder!.defaultTools).not.toContain('spawn_agent');
+        expect(coder!.defaultTools).toContain('spawn_agent');
+        expect(coder!.defaultTools).toContain('message_agent');
+        expect(coder!.defaultTools).toContain('await_agent');
         expect(coder!.defaultTools).not.toContain('ask_user');
 
         // Witness profile should have non-mutating tools

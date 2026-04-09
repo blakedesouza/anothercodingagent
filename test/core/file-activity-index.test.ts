@@ -198,6 +198,25 @@ describe('FileActivityIndex', () => {
             // 10 (from read) + 30 (from edit) = 40, no decay because file was touched
             expect(index.getEntry('a.ts')?.score).toBe(40);
         });
+
+        it('normalizes absolute search results and relative tool args to one workspace file key', () => {
+            index = new FileActivityIndex(undefined, '/repo');
+
+            const searchTurn = makeToolTurn('search_text', { root: '/repo/src', pattern: 'foo' }, JSON.stringify({
+                matches: [
+                    { file: '/repo/src/a.ts', line: 1, content: 'foo' },
+                    { file: '/repo/src/a.ts', line: 2, content: 'foo again' },
+                ],
+                truncated: false,
+            }));
+            index.processTurn(searchTurn);
+
+            const readTurn = makeToolTurn('read_file', { path: 'src/a.ts' }, 'contents');
+            index.processTurn(readTurn);
+
+            expect(index.getEntry('src/a.ts')?.score).toBe(15);
+            expect(index.getEntry('/repo/src/a.ts')).toBeUndefined();
+        });
     });
 
     describe('decay', () => {

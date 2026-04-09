@@ -51,7 +51,9 @@ describe('M1.3 — Session Manager', () => {
             expect(manifest.status).toBe('active');
             expect(manifest.turnCount).toBe(0);
             expect(manifest.lastActivityTimestamp).toBeTruthy();
-            expect(manifest.configSnapshot).toEqual({});
+            expect(manifest.configSnapshot).toEqual({
+                workspaceRoot: '/home/user/project',
+            });
             expect(manifest.durableTaskState).toBeNull();
             expect(manifest.calibration).toBeNull();
 
@@ -69,6 +71,38 @@ describe('M1.3 — Session Manager', () => {
             expect(projection.steps).toHaveLength(0);
             expect(projection.currentTurn).toBeNull();
             expect(projection.sequenceGenerator.value()).toBe(0);
+        });
+
+        it('preserves caller configSnapshot fields and adds workspaceRoot', () => {
+            const projection = manager.create('/home/user/project', {
+                model: 'qwen/qwen3-coder-next',
+                provider: 'nanogpt',
+            });
+
+            expect(projection.manifest.configSnapshot).toEqual({
+                model: 'qwen/qwen3-coder-next',
+                provider: 'nanogpt',
+                workspaceRoot: '/home/user/project',
+            });
+        });
+
+        it('persists optional parent/root session lineage in the manifest', () => {
+            const projection = manager.create(
+                '/home/user/project',
+                { mode: 'sub-agent' },
+                {
+                    parentSessionId: 'ses_PARENT0000000000000000000' as SessionId,
+                    rootSessionId: 'ses_ROOT000000000000000000000' as SessionId,
+                },
+            );
+
+            expect(projection.manifest.parentSessionId).toBe('ses_PARENT0000000000000000000');
+            expect(projection.manifest.rootSessionId).toBe('ses_ROOT000000000000000000000');
+
+            const manifestPath = join(projection.sessionDir, 'manifest.json');
+            const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+            expect(manifest.parentSessionId).toBe('ses_PARENT0000000000000000000');
+            expect(manifest.rootSessionId).toBe('ses_ROOT000000000000000000000');
         });
     });
 
@@ -118,6 +152,38 @@ describe('M1.3 — Session Manager', () => {
 
             // No warnings
             expect(loaded.warnings).toHaveLength(0);
+        });
+
+        it('coalesces duplicate turn records and prefers the latest status', () => {
+            const projection = manager.create('/home/user/project');
+            const sessionId = projection.manifest.sessionId;
+
+            const { turn } = createTurn(sessionId, 1, {
+                userMessage: 'Hello',
+                assistantMessage: 'Hi there',
+            });
+
+            const activeTurn = {
+                ...turn,
+                status: 'active' as const,
+                outcome: undefined,
+                completedAt: undefined,
+                steps: [],
+            };
+            const completedTurn = {
+                ...turn,
+                status: 'completed' as const,
+            };
+
+            projection.writer.writeTurn(activeTurn);
+            projection.writer.writeTurn(completedTurn);
+
+            const loaded = manager.load(sessionId);
+
+            expect(loaded.turns).toHaveLength(1);
+            expect(loaded.turns[0].id).toBe(turn.id);
+            expect(loaded.turns[0].status).toBe('completed');
+            expect(loaded.currentTurn).toBeNull();
         });
     });
 

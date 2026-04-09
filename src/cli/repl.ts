@@ -11,6 +11,7 @@ import type { SlashCommandContext } from './commands.js';
 import type { SecretScrubber } from '../permissions/secret-scrubber.js';
 import type { CostTracker } from '../observability/cost-tracker.js';
 import type { Renderer } from '../rendering/renderer.js';
+import type { OutputChannel } from '../rendering/output-channel.js';
 import type { ProviderRegistry } from '../providers/provider-registry.js';
 import type { NetworkPolicy } from '../permissions/network-policy.js';
 import type { ResolvedConfig } from '../config/schema.js';
@@ -19,11 +20,21 @@ import type { Indexer } from '../indexing/indexer.js';
 import type { CheckpointManager } from '../checkpointing/checkpoint-manager.js';
 import type { CapabilityHealthMap } from '../core/capability-health.js';
 import type { MetricsAccumulator } from '../observability/telemetry.js';
+import {
+    applyRuntimeTurnState,
+    buildRuntimePromptContext,
+} from '../core/runtime-turn-context.js';
+import { summarizeHistoryBeforeTurn } from '../core/pre-turn-summarization.js';
+import { TurnRenderer } from '../rendering/turn-renderer.js';
+import type { EventSink } from '../core/event-sink.js';
+import { bindRuntimeObservability } from '../observability/runtime-events.js';
+import { refreshIndexAfterTurn } from '../indexing/runtime-refresh.js';
 
 export interface ReplOptions {
     projection: SessionProjection;
     sessionManager: SessionManager;
     provider: ProviderDriver;
+    providerName: string;
     toolRegistry: ToolRegistry;
     model: string;
     verbose: boolean;
@@ -34,6 +45,7 @@ export interface ReplOptions {
     scrubber?: SecretScrubber;
     costTracker?: CostTracker;
     renderer?: Renderer;
+    outputChannel?: OutputChannel;
     providerRegistry?: ProviderRegistry;
     networkPolicy?: NetworkPolicy;
     resolvedConfig?: ResolvedConfig;
@@ -41,12 +53,15 @@ export interface ReplOptions {
     checkpointManager?: CheckpointManager;
     healthMap?: CapabilityHealthMap;
     metricsAccumulator?: MetricsAccumulator;
+    eventSinks?: EventSink[];
+    sessionGrants?: SessionGrantStore;
 }
 
 export class Repl {
     private readonly projection: SessionProjection;
     private readonly sessionManager: SessionManager;
     private readonly provider: ProviderDriver;
+    private readonly providerName: string;
     private readonly toolRegistry: ToolRegistry;
     private readonly model: string;
     private readonly verbose: boolean;
@@ -56,6 +71,7 @@ export class Repl {
     private readonly scrubber?: SecretScrubber;
     private readonly costTracker?: CostTracker;
     private readonly rendererInstance?: Renderer;
+    private readonly outputChannel?: OutputChannel;
     private readonly providerRegistry?: ProviderRegistry;
     private readonly networkPolicy?: NetworkPolicy;
     private readonly resolvedConfig?: ResolvedConfig;
@@ -63,7 +79,8 @@ export class Repl {
     private readonly checkpointManager?: CheckpointManager;
     private readonly healthMap?: CapabilityHealthMap;
     private readonly metricsAccumulator?: MetricsAccumulator;
-    private readonly sessionGrants = new SessionGrantStore();
+    private readonly eventSinks: EventSink[];
+    private readonly sessionGrants: SessionGrantStore;
     private rl: ReadlineInterface | null = null;
     private turnCount = 0;
     private totalInputTokens = 0;
@@ -79,6 +96,7 @@ export class Repl {
         this.projection = options.projection;
         this.sessionManager = options.sessionManager;
         this.provider = options.provider;
+        this.providerName = options.providerName;
         this.toolRegistry = options.toolRegistry;
         this.model = options.model;
         this.verbose = options.verbose;
@@ -88,6 +106,7 @@ export class Repl {
         this.scrubber = options.scrubber;
         this.costTracker = options.costTracker;
         this.rendererInstance = options.renderer;
+        this.outputChannel = options.outputChannel;
         this.providerRegistry = options.providerRegistry;
         this.networkPolicy = options.networkPolicy;
         this.resolvedConfig = options.resolvedConfig;
@@ -95,6 +114,10 @@ export class Repl {
         this.checkpointManager = options.checkpointManager;
         this.healthMap = options.healthMap;
         this.metricsAccumulator = options.metricsAccumulator;
+        this.eventSinks = options.eventSinks ?? [];
+        this.sessionGrants = options.sessionGrants ?? new SessionGrantStore();
+        this.items = [...options.projection.items];
+        this.turnCount = options.projection.manifest.turnCount ?? 0;
     }
 
     async run(inputStream?: NodeJS.ReadableStream): Promise<void> {
@@ -148,6 +171,19 @@ export class Repl {
 
     private async executeTurn(userInput: string): Promise<void> {
         this.activeTurn = true;
+        await summarizeHistoryBeforeTurn({
+            historyItems: this.items,
+            pendingUserInput: userInput,
+            workspaceRoot: this.workspaceRoot,
+            shell: process.env.SHELL,
+            manifest: this.projection.manifest,
+            writer: this.projection.writer,
+            sequenceGenerator: this.projection.sequenceGenerator,
+            provider: this.provider,
+            model: this.model,
+            tools: this.toolRegistry.list(),
+            healthMap: this.healthMap,
+        });
         const engine = new TurnEngine(
             this.provider,
             this.toolRegistry,
@@ -162,17 +198,48 @@ export class Repl {
             this.metricsAccumulator,
         );
         this.currentEngine = engine;
+        const turnRenderer = this.rendererInstance && this.outputChannel
+            ? new TurnRenderer({
+                output: this.outputChannel,
+                renderer: this.rendererInstance,
+                verbose: this.verbose,
+            })
+            : undefined;
+        turnRenderer?.bind(engine);
+        const runtimeEventBinding = this.eventSinks.length > 0
+            ? bindRuntimeObservability({
+                engine,
+                sessionId: this.projection.manifest.sessionId,
+                agentId: 'aca',
+                sinks: this.eventSinks,
+            })
+            : undefined;
+
+        const promptContext = buildRuntimePromptContext(
+            this.workspaceRoot,
+            this.projection.manifest,
+            this.healthMap,
+        );
 
         const config: TurnEngineConfig = {
             sessionId: this.projection.manifest.sessionId,
             model: this.model,
-            provider: 'nanogpt',
+            provider: this.providerName,
             interactive: true,
             autoConfirm: false,
             isSubAgent: false,
             workspaceRoot: this.workspaceRoot,
+            shell: process.env.SHELL,
+            projectSnapshot: promptContext.projectSnapshot,
+            workingSet: promptContext.workingSet,
+            durableTaskState: promptContext.durableTaskState,
+            capabilities: promptContext.capabilities,
             onTextDelta: (text: string) => {
-                this.stdout.write(text);
+                if (turnRenderer) {
+                    turnRenderer.onTextDelta(text);
+                } else {
+                    this.stdout.write(text);
+                }
             },
             promptUser: async (question: string, choices?: string[]): Promise<string> => {
                 return this.promptUser(question, choices);
@@ -186,6 +253,9 @@ export class Repl {
             const result = await engine.executeTurn(config, userInput, this.items);
             this.items.push(...result.items);
             this.turnCount++;
+            await applyRuntimeTurnState(this.projection.manifest, result.items, this.workspaceRoot);
+            await refreshIndexAfterTurn(this.indexer, result.items);
+            await turnRenderer?.renderAssistantMirror(result.items);
 
             // Accumulate token usage
             for (const step of result.steps) {
@@ -199,7 +269,11 @@ export class Repl {
             this.sessionManager.saveManifest(this.projection);
 
             // Ensure newline after streamed output
-            this.stdout.write('\n');
+            if (this.outputChannel) {
+                this.outputChannel.stdout('\n');
+            } else {
+                this.stdout.write('\n');
+            }
 
             if (this.verbose) {
                 this.writeStderr(
@@ -210,6 +284,8 @@ export class Repl {
             const msg = err instanceof Error ? err.message : String(err);
             this.writeStderr(`Error: ${msg}\n`);
         } finally {
+            runtimeEventBinding?.dispose();
+            turnRenderer?.dispose();
             this.activeTurn = false;
             this.currentEngine = null;
         }
@@ -269,10 +345,15 @@ export class Repl {
             indexer: this.indexer,
             checkpointManager: this.checkpointManager,
             promptUser: (question: string) => this.promptUser(question),
+            outputChannel: this.outputChannel,
         };
     }
 
     private writeStderr(text: string): void {
+        if (this.outputChannel) {
+            this.outputChannel.stderr(text);
+            return;
+        }
         this.stderr.write(text);
     }
 

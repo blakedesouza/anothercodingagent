@@ -110,6 +110,7 @@ export interface IndexResult {
 }
 
 export type WarnFn = (message: string) => void;
+export type ProgressFn = (current: number, total: number) => void;
 
 // --- Gitignore parsing ---
 
@@ -381,6 +382,7 @@ export class Indexer {
     private readonly embedding: EmbeddingModel | null;
     private readonly config: IndexerConfig;
     private readonly warn: WarnFn;
+    private progress?: ProgressFn;
     private _indexing = false;
     private _ready = false;
     private _buildPromise: Promise<IndexResult> | null = null;
@@ -412,6 +414,14 @@ export class Indexer {
 
     get indexing(): boolean { return this._indexing; }
     get ready(): boolean { return this._ready; }
+
+    setProgressReporter(progress?: ProgressFn): void {
+        this.progress = progress;
+    }
+
+    estimateFileCount(): number {
+        return collectFiles(this.rootDir, this.config).length;
+    }
 
     /**
      * Run a full index build. For large projects (> BACKGROUND_THRESHOLD files),
@@ -455,25 +465,31 @@ export class Indexer {
         };
 
         try {
-            if (!this.store.isOpen()) {
-                if (!this.store.open()) {
-                    result.warnings.push('Failed to open index store');
-                    return result;
-                }
+            if (!this.ensureStoreOpen(result)) {
+                return result;
             }
 
+            let collectionCapped = false;
             const files = collectFiles(this.rootDir, this.config, (msg) => {
+                if (msg.includes('maxFiles limit reached')) {
+                    collectionCapped = true;
+                }
                 result.warnings.push(msg);
                 this.warn(msg);
             });
+            if (!collectionCapped) {
+                this.reconcileDeletedFiles(files);
+            }
 
             if (files.length >= this.config.maxFiles) {
                 result.warnings.push(
                     `File collection capped at ${this.config.maxFiles} files`,
                 );
             }
+            this.progress?.(0, files.length);
 
-            for (const relPath of files) {
+            for (let i = 0; i < files.length; i++) {
+                const relPath = files[i];
                 const fileResult = await this.indexFile(relPath);
                 if (fileResult.status === 'indexed') {
                     result.filesIndexed++;
@@ -481,6 +497,7 @@ export class Indexer {
                     result.filesSkipped++;
                 }
                 result.embeddingFailures += fileResult.embeddingFailures;
+                this.progress?.(i + 1, files.length);
             }
 
             // Gather totals from store
@@ -541,12 +558,33 @@ export class Indexer {
         };
 
         try {
+            if (!this.ensureStoreOpen(result)) {
+                return result;
+            }
+
+            if (filePaths) {
+                for (const relPath of filePaths) {
+                    if (!existsSync(join(this.rootDir, relPath))) {
+                        this.store.deleteFile(relPath);
+                    }
+                }
+            }
+
+            let collectionCapped = false;
             const files = filePaths ?? collectFiles(this.rootDir, this.config, (msg) => {
+                if (msg.includes('maxFiles limit reached')) {
+                    collectionCapped = true;
+                }
                 result.warnings.push(msg);
                 this.warn(msg);
             });
+            if (!filePaths && !collectionCapped) {
+                this.reconcileDeletedFiles(files);
+            }
+            this.progress?.(0, files.length);
 
-            for (const relPath of files) {
+            for (let i = 0; i < files.length; i++) {
+                const relPath = files[i];
                 const fileResult = await this.indexFile(relPath);
                 if (fileResult.status === 'indexed') {
                     result.filesIndexed++;
@@ -554,6 +592,7 @@ export class Indexer {
                     result.filesSkipped++;
                 }
                 result.embeddingFailures += fileResult.embeddingFailures;
+                this.progress?.(i + 1, files.length);
             }
 
             const stats = this.store.getStats();
@@ -576,6 +615,11 @@ export class Indexer {
      */
     async indexFile(relPath: string): Promise<{ status: 'indexed' | 'skipped' | 'error'; embeddingFailures: number }> {
         const fullPath = join(this.rootDir, relPath);
+
+        if (!existsSync(fullPath)) {
+            this.store.deleteFile(relPath);
+            return { status: 'indexed', embeddingFailures: 0 };
+        }
 
         // Read file
         let buf: Buffer;
@@ -690,6 +734,26 @@ export class Indexer {
         this.store.reindexFile(fileRecord, chunkRecords, symbolRecords);
 
         return { status: 'indexed', embeddingFailures: fileEmbeddingFailures };
+    }
+
+    private ensureStoreOpen(result: IndexResult): boolean {
+        if (this.store.isOpen()) {
+            return true;
+        }
+        if (!this.store.open()) {
+            result.warnings.push('Failed to open index store');
+            return false;
+        }
+        return true;
+    }
+
+    private reconcileDeletedFiles(currentFiles: readonly string[]): void {
+        const current = new Set(currentFiles);
+        for (const file of this.store.getAllFiles()) {
+            if (!current.has(file.path)) {
+                this.store.deleteFile(file.path);
+            }
+        }
     }
 }
 

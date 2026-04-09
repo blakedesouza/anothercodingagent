@@ -161,6 +161,22 @@
       "bytesPerToken": 2.5
     },
     {
+      "id": "zai-org/glm-5",
+      "aliases": ["glm-5"],
+      "maxContext": 200000,
+      "maxOutput": 128000,
+      "supportsTools": "native",
+      "supportsVision": false,
+      "supportsStreaming": true,
+      "supportsPrefill": false,
+      "supportsEmbedding": false,
+      "embeddingModels": [],
+      "toolReliability": "native",
+      "costPerMillion": { "input": 0.3, "output": 2.55 },
+      "specialFeatures": ["glm-reasoning"],
+      "bytesPerToken": 3
+    },
+    {
       "id": "moonshot-v1-8k",
       "aliases": ["kimi"],
       "maxContext": 8192,

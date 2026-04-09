@@ -93,6 +93,8 @@ describe('Renderer', () => {
         it('classifies web tools', () => {
             expect(classifyTool('web_fetch')).toBe('web');
             expect(classifyTool('web_search')).toBe('web');
+            expect(classifyTool('fetch_url')).toBe('web');
+            expect(classifyTool('lookup_docs')).toBe('web');
         });
 
         it('classifies LSP tools', () => {
@@ -102,6 +104,7 @@ describe('Renderer', () => {
         it('classifies delegation tools', () => {
             expect(classifyTool('spawn_agent')).toBe('delegation');
             expect(classifyTool('message_agent')).toBe('delegation');
+            expect(classifyTool('await_agent')).toBe('delegation');
         });
 
         it('defaults unknown tools to file', () => {
@@ -113,9 +116,9 @@ describe('Renderer', () => {
         const cases: Array<{ toolName: string; category: ToolCategory; ansiCode: string; label: string }> = [
             { toolName: 'read_file', category: 'file', ansiCode: '\x1b[34m', label: 'file tools → blue' },
             { toolName: 'exec_command', category: 'shell', ansiCode: '\x1b[33m', label: 'shell tools → yellow' },
-            { toolName: 'web_fetch', category: 'web', ansiCode: '\x1b[35m', label: 'web tools → magenta' },
+            { toolName: 'fetch_url', category: 'web', ansiCode: '\x1b[35m', label: 'web tools → magenta' },
             { toolName: 'lsp_query', category: 'lsp', ansiCode: '\x1b[36m', label: 'LSP tools → cyan' },
-            { toolName: 'spawn_agent', category: 'delegation', ansiCode: '\x1b[32m', label: 'delegation tools → green' },
+            { toolName: 'await_agent', category: 'delegation', ansiCode: '\x1b[32m', label: 'delegation tools → green' },
             { toolName: 'read_file', category: 'file', ansiCode: '\x1b[31m', label: 'error display → red (on failure)' },
         ];
 

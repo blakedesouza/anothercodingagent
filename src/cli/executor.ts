@@ -4,9 +4,11 @@
  * Implements the callee side of the universal capability contract (Block 1, Block 10).
  * All output is structured JSON on stdout. stderr is reserved for catastrophic failures only.
  */
-
-
 // --- Contract versions ---
+
+import type { ModelResponseFormat, RequestMessage } from '../types/provider.js';
+import { statSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
 
 export const CONTRACT_VERSION = '1.0.0';
 export const SCHEMA_VERSION = '1.1.0';
@@ -45,13 +47,20 @@ export interface InvokeRequest {
 }
 
 export interface InvokeContext extends Record<string, unknown> {
+    cwd?: string;
     model?: string;
     profile?: string;
     temperature?: number;
     top_p?: number;
     topP?: number;
     thinking?: 'enabled' | 'disabled' | { type?: 'enabled' | 'disabled' };
+    response_format?: ModelResponseFormat;
+    responseFormat?: ModelResponseFormat;
+    system_messages?: InvokeSystemMessage[];
+    systemMessages?: InvokeSystemMessage[];
 }
+
+export type InvokeSystemMessage = Pick<RequestMessage, 'role' | 'content'> & { role: 'system'; content: string };
 
 export interface InvokeConstraints {
     max_steps?: number;
@@ -198,6 +207,10 @@ export function buildDescriptor(toolNames: string[]): CapabilityDescriptor {
                     description: 'Contextual information for the task',
                     properties: {
                         model: { type: 'string', description: 'Model override for this invocation' },
+                        cwd: {
+                            type: 'string',
+                            description: 'Workspace root override for this invocation. Relative paths resolve from the current shell working directory; absolute paths are used as-is.',
+                        },
                         profile: {
                             type: 'string',
                             description: 'Built-in agent profile to apply. Use rp-researcher for RP lore/anime/manga/VN research and Markdown compendium writing.',
@@ -214,6 +227,22 @@ export function buildDescriptor(toolNames: string[]): CapabilityDescriptor {
                                 },
                             ],
                             description: 'Provider thinking mode override when supported',
+                        },
+                        response_format: {
+                            type: 'object',
+                            description: 'OpenAI-compatible structured-output response_format override for providers that support it',
+                        },
+                        system_messages: {
+                            type: 'array',
+                            description: 'Optional explicit system messages to use instead of ACA invoke defaults. Intended for internal bounded workflows such as no-tools consult passes.',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    role: { type: 'string', enum: ['system'] },
+                                    content: { type: 'string' },
+                                },
+                                required: ['role', 'content'],
+                            },
                         },
                     },
                 },
@@ -447,6 +476,42 @@ export function parseInvokeRequest(raw: string): { request: InvokeRequest } | { 
             deadline: typeof obj.deadline === 'number' && Number.isFinite(obj.deadline) ? obj.deadline : undefined,
         },
     };
+}
+
+export function resolveInvokeWorkspaceRoot(
+    launchCwd: string,
+    context: InvokeContext | undefined,
+): { workspaceRoot: string } | { error: InvokeResponse; exitCode: number } {
+    const rawCwd = typeof context?.cwd === 'string' ? context.cwd.trim() : '';
+    if (!rawCwd) {
+        return { workspaceRoot: launchCwd };
+    }
+
+    const workspaceRoot = isAbsolute(rawCwd) ? resolve(rawCwd) : resolve(launchCwd, rawCwd);
+    try {
+        const stat = statSync(workspaceRoot);
+        if (!stat.isDirectory()) {
+            return {
+                error: buildErrorResponse(
+                    'protocol.invalid_context_cwd',
+                    `context.cwd must point to an existing directory: ${workspaceRoot}`,
+                    false,
+                ),
+                exitCode: EXIT_PROTOCOL,
+            };
+        }
+    } catch {
+        return {
+            error: buildErrorResponse(
+                'protocol.invalid_context_cwd',
+                `context.cwd must point to an existing directory: ${workspaceRoot}`,
+                false,
+            ),
+            exitCode: EXIT_PROTOCOL,
+        };
+    }
+
+    return { workspaceRoot };
 }
 
 function parseConstraints(raw: unknown): InvokeConstraints | undefined {

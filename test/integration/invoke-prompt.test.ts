@@ -120,7 +120,7 @@ describe('Invoke Prompt Assembly Integration', () => {
         expect(allContent).not.toContain('You are a helpful coding assistant.');
     });
 
-    it('TurnEngine falls back to default when systemMessages not set', async () => {
+    it('TurnEngine falls back to the ACA prompt assembly default when systemMessages not set', async () => {
         const { driver, capturedRequests } = createCapturingDriver();
 
         const engine = new TurnEngine(
@@ -147,7 +147,8 @@ describe('Invoke Prompt Assembly Integration', () => {
         const request = capturedRequests[0];
         const systemMsg = request.messages[0];
         const content = systemMsg.content as string;
-        expect(content).toBe('You are a helpful coding assistant.');
+        expect(content).toContain('You are ACA (Another Coding Agent)');
+        expect(content).toContain('Instruction precedence');
     });
 
     it('invoke system prompt includes all tool names', () => {

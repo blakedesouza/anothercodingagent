@@ -240,6 +240,51 @@ describe('ToolRunner', () => {
         expect(result.error!.message).toContain('Disk on fire');
     });
 
+    it('blocks approved-only shell network commands until network approval is present', async () => {
+        const impl = vi.fn(async () => makeOutput());
+        registry.register(
+            makeSpec({
+                name: 'exec_command',
+                approvalClass: 'external-effect',
+                idempotent: false,
+                timeoutCategory: 'shell',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        command: { type: 'string' },
+                    },
+                    required: ['command'],
+                    additionalProperties: false,
+                },
+            }),
+            impl,
+        );
+
+        const networkRunner = new ToolRunner(registry, {
+            mode: 'approved-only',
+            allowDomains: [],
+            denyDomains: [],
+            allowHttp: false,
+        });
+
+        const blocked = await networkRunner.execute(
+            'exec_command',
+            { command: 'curl https://example.com' },
+            baseContext,
+        );
+        expect(blocked.status).toBe('error');
+        expect(blocked.error!.code).toBe('network.confirm_required');
+        expect(impl).not.toHaveBeenCalled();
+
+        const approved = await networkRunner.execute(
+            'exec_command',
+            { command: 'curl https://example.com' },
+            { ...baseContext, networkApproved: true },
+        );
+        expect(approved.status).toBe('success');
+        expect(impl).toHaveBeenCalledTimes(1);
+    });
+
     // M10.1c: tool.crash on a mutating tool must report mutationState='indeterminate'
     // so the TurnEngine's safety check (the only remaining fatal tool-layer check)
     // terminates the turn instead of letting the model continue against a possibly

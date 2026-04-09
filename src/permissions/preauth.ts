@@ -7,6 +7,7 @@
  */
 
 import type { PreauthRule } from '../config/schema.js';
+import { isAbsolute, relative, resolve } from 'node:path';
 
 export interface PreauthMatchInput {
     toolName: string;
@@ -42,13 +43,20 @@ export function matchPreauthRules(
             }
         }
 
-        // Check cwdPattern if specified (prefix match on resolved path)
+        // Check cwdPattern if specified (directory-boundary match on resolved path)
         if (rule.match.cwdPattern !== undefined) {
             if (input.cwd === undefined) continue;
-            if (!input.cwd.startsWith(rule.match.cwdPattern)) continue;
+            if (!matchesCwdPattern(input.cwd, rule.match.cwdPattern)) continue;
         }
 
         return rule;
     }
     return null;
+}
+
+function matchesCwdPattern(inputCwd: string, cwdPattern: string): boolean {
+    const resolvedInput = resolve(inputCwd);
+    const resolvedPattern = resolve(cwdPattern);
+    const rel = relative(resolvedPattern, resolvedInput);
+    return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
 }

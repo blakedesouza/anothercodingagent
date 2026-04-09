@@ -98,6 +98,17 @@ describe('Spinner — 1s delay', () => {
     });
 });
 
+describe('StatusLine', () => {
+    it('stop before start emits no output', () => {
+        const { output, err } = makeOutput({});
+        const status = new StatusLine({ output });
+
+        status.stop();
+
+        expect(err()).toBe('');
+    });
+});
+
 // ---------------------------------------------------------------------------
 // Spinner — braille frame cycling
 // ---------------------------------------------------------------------------
@@ -442,6 +453,19 @@ describe('ProgressBar — visual format', () => {
         const out = err();
         expect(out).toContain('5/5');
         expect(out).not.toContain('\r');
+    });
+
+    it('clear() removes an active TTY bar without logging completion', () => {
+        const { output, err } = makeOutput({ stderrTTY: true });
+        const bar = new ProgressBar({ output });
+
+        bar.start('files', 5);
+        bar.update(2);
+        bar.clear();
+
+        const out = err();
+        expect(out).toContain('\r\x1b[K');
+        expect(out).not.toContain('5/5');
     });
 });
 

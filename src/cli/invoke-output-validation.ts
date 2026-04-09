@@ -1,5 +1,6 @@
 import { existsSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
+import type { ConversationItem } from '../types/conversation.js';
 
 function isWithinDirectory(parent: string, child: string): boolean {
     const rel = relative(parent, child);
@@ -28,4 +29,71 @@ export function validateRequiredOutputPaths(workspaceRoot: string, paths: readon
         }
     }
     return missingOrEmpty;
+}
+
+export function buildRequiredOutputRepairTask(paths: readonly string[]): string {
+    const normalized = paths.map(path => path.trim()).filter(Boolean);
+    const quotedPaths = normalized.map(path => `"${path}"`).join(', ');
+    return [
+        `Required output file(s) are still missing or empty: ${quotedPaths}.`,
+        'Continue from the existing context.',
+        'Do not restate your plan, summarize progress, or say what you need to try next.',
+        'Use tools immediately: inspect only what is still needed, create any missing parent directories, and write the required files now.',
+        'Do not quote literal pseudo-tool markup such as <tool_call>, <invoke>, or function-call JSON. Your next assistant message must contain real tool calls or the actual written output path(s) being satisfied.',
+        'If a source lookup failed earlier, either correct the next tool call or finish from the evidence already gathered. Do not stop because one lookup missed.',
+        'Prefer the evidence already gathered. Only do additional reads/fetches if a specific missing detail blocks writing.',
+        'When every required output path exists and is non-empty, stop.',
+    ].join(' ');
+}
+
+export interface ProfileCompletionIssue {
+    code: string;
+    message: string;
+}
+
+export function buildProfileCompletionRepairTask(
+    issue: ProfileCompletionIssue,
+    requiredOutputPaths: readonly string[] | undefined,
+): string {
+    const normalizedPaths = (requiredOutputPaths ?? [])
+        .map(path => path.trim())
+        .filter(Boolean);
+    const quotedPaths = normalizedPaths.map(path => `"${path}"`).join(', ');
+    return [
+        `Your previous response was invalid: ${issue.message}.`,
+        'Continue from the existing context.',
+        'Do not restate your plan, summarize progress, or say what you will do next.',
+        'Your next assistant message must contain actual tool calls, not narration.',
+        'Do not quote literal pseudo-tool markup such as <tool_call>, <invoke>, or function-call JSON.',
+        'Use only the sources needed for the assigned task, then write the required output.',
+        normalizedPaths.length > 0
+            ? `The required output file(s) are: ${quotedPaths}.`
+            : 'Complete the assigned output in this retry.',
+        'If the output is not ready yet, make the next tool calls in that same assistant message.',
+        'When the required output exists and is non-empty, stop.',
+    ].join(' ');
+}
+
+export function countHardRejectedToolCalls(items: readonly ConversationItem[]): number {
+    return items.filter((item) =>
+        item.kind === 'tool_result'
+        && item.output.status === 'error'
+        && item.output.error?.code === 'tool.max_tool_calls',
+    ).length;
+}
+
+export function validateProfileCompletion(
+    profileName: string | undefined,
+    acceptedToolCalls: number,
+    resultText: string,
+): ProfileCompletionIssue | null {
+    if (profileName !== 'rp-researcher' || acceptedToolCalls > 0) return null;
+    const compact = resultText.replace(/\s+/g, ' ').trim();
+    const looksLikePlanOnly = /^(?:i['’]?ll|i will|let me|first[, ]+i['’]?ll|i(?: am|'m) going to)\b/i.test(compact);
+    return {
+        code: 'turn.profile_validation_failed',
+        message: looksLikePlanOnly
+            ? 'rp-researcher run ended without any accepted tool calls; plan-only or intention-only research text is not a valid completion'
+            : 'rp-researcher run ended without any accepted tool calls; RP research/write tasks must inspect sources or local files before completion',
+    };
 }

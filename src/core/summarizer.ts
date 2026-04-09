@@ -12,7 +12,8 @@ import type {
     TextPart,
     ToolCallPart,
 } from '../types/conversation.js';
-import type { DurableTaskState } from './durable-task-state.js';
+import type { DurableTaskState, DurableStatePatch } from './durable-task-state.js';
+import { normalizeDurableStatePatch } from './durable-task-state.js';
 import type { ItemId } from '../types/ids.js';
 import { generateId } from '../types/ids.js';
 import type { ProviderDriver, StreamEvent, ModelRequest } from '../types/provider.js';
@@ -160,6 +161,8 @@ export interface SummarizeChunkResult {
     usedFallback: boolean;
     /** Estimated tokens of the original items. */
     originalTokens: number;
+    /** Optional durable-state update proposed by the summarizer. */
+    durableStatePatch?: DurableStatePatch;
 }
 
 /**
@@ -196,6 +199,7 @@ export async function summarizeChunk(
 
     let summaryText: string;
     let pinnedFacts: string[] | undefined;
+    let durableStatePatch: DurableStatePatch | undefined;
     let usedFallback = true;
 
     const shouldUseLlm = provider != null && model != null && !exceedsCostCeiling(originalTokens);
@@ -214,6 +218,7 @@ export async function summarizeChunk(
             const parsed = parseSummarizationResponse(text);
             summaryText = parsed.summaryText;
             pinnedFacts = parsed.pinnedFacts.length > 0 ? parsed.pinnedFacts : undefined;
+            durableStatePatch = parsed.durableStatePatch;
             usedFallback = false;
         } catch {
             // LLM call failed — fall back to deterministic
@@ -233,7 +238,7 @@ export async function summarizeChunk(
         timestamp: new Date().toISOString(),
     };
 
-    return { summary, usedFallback, originalTokens };
+    return { summary, usedFallback, originalTokens, durableStatePatch };
 }
 
 // --- Chunking ---
@@ -394,7 +399,7 @@ async function collectStreamText(
 interface SummarizationResponse {
     summaryText: string;
     pinnedFacts: string[];
-    durableStatePatch?: Record<string, unknown>;
+    durableStatePatch?: DurableStatePatch;
 }
 
 /** Parse a JSON response from the summarization LLM call. */
@@ -413,10 +418,7 @@ function parseSummarizationResponse(text: string): SummarizationResponse {
             pinnedFacts: Array.isArray(parsed.pinnedFacts)
                 ? (parsed.pinnedFacts as unknown[]).filter((f): f is string => typeof f === 'string')
                 : [],
-            durableStatePatch: typeof parsed.durableStatePatch === 'object'
-                && parsed.durableStatePatch !== null
-                ? parsed.durableStatePatch as Record<string, unknown>
-                : undefined,
+            durableStatePatch: normalizeDurableStatePatch(parsed.durableStatePatch),
         };
     } catch {
         return { summaryText: text.trim(), pinnedFacts: [] };

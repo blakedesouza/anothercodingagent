@@ -56,15 +56,7 @@ export class EmbeddingModel {
             // Dynamic import: avoids loading WASM at module level,
             // consistent with SyntaxHighlighter's lazy-load pattern.
             const { pipeline, env } = await import('@huggingface/transformers');
-
-            if (env.cacheDir && env.cacheDir !== this.cacheDir) {
-                console.warn(
-                    `[EmbeddingModel] cacheDir already set to ${env.cacheDir}, ` +
-                    `ignoring requested ${this.cacheDir}`,
-                );
-            } else {
-                env.cacheDir = this.cacheDir;
-            }
+            env.cacheDir = this.cacheDir;
 
             this.extractor = await pipeline('feature-extraction', this.modelId, {
                 dtype: 'fp32',
@@ -72,8 +64,6 @@ export class EmbeddingModel {
             this._available = true;
             return true;
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.warn(`[EmbeddingModel] Initialization failed: ${msg}`);
             this._available = false;
             return false;
         }

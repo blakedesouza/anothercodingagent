@@ -350,16 +350,31 @@ describe('computeDigest', () => {
     it('read_file: contains file path, line range, total lines, omission notice', () => {
         const data = 'line1\nline2\nline3\nline4\nline5';
         const tr = makeToolResult('read_file', data, 1, 'call_1');
-        const digest = computeDigest(tr, { file_path: '/src/main.ts', start_line: 10, end_line: 14 });
+        const digest = computeDigest(tr, { path: '/src/main.ts', line_start: 10, line_end: 14 });
         expect(digest).toContain('/src/main.ts');
         expect(digest).toContain('lines 10-14');
         expect(digest).toContain('5 lines total');
         expect(digest).toContain('[content omitted — use read_file to re-read]');
     });
 
+    it('read_file digest prefers structured totalLines metadata from live tool output', () => {
+        const data = JSON.stringify({
+            content: 'line1\nline2\nline3',
+            encoding: 'utf-8',
+            lineCount: 3,
+            byteCount: 17,
+            totalLines: 42,
+            totalBytes: 420,
+            nextStartLine: 4,
+        });
+        const tr = makeToolResult('read_file', data, 1, 'call_1');
+        const digest = computeDigest(tr, { path: '/src/main.ts', line_start: 1, line_end: 3 });
+        expect(digest).toContain('42 lines total');
+    });
+
     it('read_file with no line range args → "all lines"', () => {
         const tr = makeToolResult('read_file', 'content\nhere', 1, 'call_1');
-        const digest = computeDigest(tr, { file_path: '/test.ts' });
+        const digest = computeDigest(tr, { path: '/test.ts' });
         expect(digest).toContain('all lines');
     });
 
@@ -389,9 +404,18 @@ describe('computeDigest', () => {
     });
 
     it('search_text: contains query, match count, top 3 paths', () => {
-        const data = 'src/a.ts\nsrc/b.ts\nsrc/c.ts\nsrc/d.ts\nsrc/e.ts';
+        const data = JSON.stringify({
+            matches: [
+                { file: 'src/a.ts', line: 1, content: 'TODO: a' },
+                { file: 'src/b.ts', line: 2, content: 'TODO: b' },
+                { file: 'src/c.ts', line: 3, content: 'TODO: c' },
+                { file: 'src/d.ts', line: 4, content: 'TODO: d' },
+                { file: 'src/e.ts', line: 5, content: 'TODO: e' },
+            ],
+            truncated: false,
+        });
         const tr = makeToolResult('search_text', data, 1, 'call_1');
-        const digest = computeDigest(tr, { query: 'TODO' });
+        const digest = computeDigest(tr, { pattern: 'TODO' });
         expect(digest).toContain('"TODO"');
         expect(digest).toContain('5 matches');
         expect(digest).toContain('src/a.ts');
@@ -401,7 +425,13 @@ describe('computeDigest', () => {
     });
 
     it('find_paths: contains pattern, match count, top 3 paths', () => {
-        const data = 'lib/foo.js\nlib/bar.js';
+        const data = JSON.stringify({
+            matches: [
+                { path: 'lib/foo.js', kind: 'file', size: 100, mtime: 1 },
+                { path: 'lib/bar.js', kind: 'file', size: 120, mtime: 2 },
+            ],
+            truncated: false,
+        });
         const tr = makeToolResult('find_paths', data, 1, 'call_1');
         const digest = computeDigest(tr, { pattern: '*.js' });
         expect(digest).toContain('"*.js"');
@@ -411,11 +441,29 @@ describe('computeDigest', () => {
     });
 
     it('lsp_query: contains operation, target, result count, first result', () => {
-        const data = 'src/main.ts:10 — function run()\nsrc/main.ts:25 — function stop()';
+        const data = JSON.stringify({
+            kind: 'references',
+            locations: [
+                {
+                    uri: 'file:///workspace/src/main.ts',
+                    startLine: 10,
+                    startCharacter: 1,
+                    endLine: 10,
+                    endCharacter: 14,
+                },
+                {
+                    uri: 'file:///workspace/src/main.ts',
+                    startLine: 25,
+                    startCharacter: 1,
+                    endLine: 25,
+                    endCharacter: 15,
+                },
+            ],
+        });
         const tr = makeToolResult('lsp_query', data, 1, 'call_1');
-        const digest = computeDigest(tr, { operation: 'references', target: 'run' });
+        const digest = computeDigest(tr, { operation: 'references', file: 'src/main.ts' });
         expect(digest).toContain('references');
-        expect(digest).toContain('run');
+        expect(digest).toContain('src/main.ts');
         expect(digest).toContain('2 results');
         expect(digest).toContain('First:');
     });
@@ -1004,6 +1052,42 @@ describe('assembleContext', () => {
         expect(result.warning).toBe('emergency_compression');
         // Items are still included (current turn always present)
         expect(result.includedItems.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('emergency tier keeps digesting current-turn tool results until the chain fits the budget', () => {
+        const items: ConversationItem[] = [makeUserMsg('do work', 1)];
+        let seq = 2;
+        for (let i = 0; i < 4; i++) {
+            const callId = `call_${i}`;
+            items.push(makeAssistantMsg('', seq++, [{
+                toolCallId: callId,
+                toolName: 'exec_command',
+                arguments: { command: `echo ${i}` },
+            }]));
+            items.push(makeToolResult(
+                'exec_command',
+                JSON.stringify({
+                    exit_code: 0,
+                    stdout: 'x'.repeat(120),
+                    stderr: '',
+                    duration_ms: 1,
+                }),
+                seq++,
+                callId,
+            ));
+        }
+
+        const result = assembleContext({
+            contextLimit: 1200,
+            reservedOutputTokens: 200,
+            items,
+            alwaysPinnedTokens: 120,
+            conditionalPinnedTokens: 80,
+        });
+
+        expect(result.tier).toBe('emergency');
+        expect(result.digestedItemCount).toBeGreaterThan(0);
+        expect(result.estimatedTokens).toBeLessThanOrEqual(result.safeInputBudget);
     });
 
     it('medium tier caps at 6 completed turns even when budget allows more', () => {

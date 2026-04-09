@@ -14,12 +14,20 @@ import type {
     ModelRequest,
     ModelCapabilities,
 } from '../../src/types/provider.js';
-import type { SessionId, WorkspaceId } from '../../src/types/ids.js';
+import type { ItemId, SessionId, WorkspaceId } from '../../src/types/ids.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { PassThrough, Writable } from 'node:stream';
+import { OutputChannel } from '../../src/rendering/output-channel.js';
+import { Renderer } from '../../src/rendering/renderer.js';
+import type { TerminalCapabilities } from '../../src/rendering/terminal-capabilities.js';
+import { writeFileSpec, writeFileImpl } from '../../src/tools/write-file.js';
+import { IndexStore } from '../../src/indexing/index-store.js';
+import { Indexer } from '../../src/indexing/indexer.js';
+import type { AcaEvent } from '../../src/types/events.js';
 
 // --- Helpers ---
 
@@ -87,6 +95,7 @@ function createProjection(dir: string): SessionProjection {
         lastActivityTimestamp: new Date().toISOString(),
         configSnapshot: { model: 'mock-model' },
         durableTaskState: null,
+        fileActivityIndex: null,
         calibration: null,
     };
 
@@ -131,6 +140,15 @@ function createInputLines(lines: string[]): PassThrough {
     return input;
 }
 
+function makeRenderCapabilities(): TerminalCapabilities {
+    return {
+        stdout: { isTTY: true, colorDepth: 24, columns: 80 },
+        stderr: { isTTY: true, colorDepth: 24, columns: 80 },
+        rows: 24,
+        unicode: true,
+    };
+}
+
 function makeReplOptions(
     dir: string,
     provider: ProviderDriver,
@@ -146,6 +164,7 @@ function makeReplOptions(
         projection,
         sessionManager,
         provider,
+        providerName: 'nanogpt',
         toolRegistry,
         model: 'mock-model',
         verbose: false,
@@ -393,6 +412,322 @@ describe('REPL', () => {
         expect(stderrText).toContain('Turns:    2');
         expect(stderrText).toContain('30 in');
         expect(stderrText).toContain('15 out');
+    });
+
+    it('resume path preserves prior items and turn count in the next interactive turn', async () => {
+        const dir = tmpDir();
+        let capturedRequest: ModelRequest | null = null;
+        const provider: ProviderDriver = {
+            capabilities: () => makeMockCapabilities(),
+            async *stream(request: ModelRequest) {
+                capturedRequest = request;
+                yield { type: 'text_delta' as const, text: 'continued' };
+                yield {
+                    type: 'done' as const,
+                    finishReason: 'stop',
+                    usage: { inputTokens: 5, outputTokens: 2 },
+                };
+            },
+            validate: () => ({ ok: true as const, value: undefined }),
+        };
+        const input = createInputLines(['next turn', '/status']);
+        const projection = createProjection(dir);
+        projection.items = [
+            {
+                kind: 'message',
+                id: 'itm_prev1' as ItemId,
+                seq: 1,
+                role: 'user',
+                parts: [{ type: 'text', text: 'previous turn' }],
+                timestamp: '2026-01-01T00:00:00Z',
+            },
+        ];
+        projection.manifest.turnCount = 5;
+        const sessionManager = new SessionManager(dir);
+        const toolRegistry = new ToolRegistry();
+        const stderr = collectStream();
+        const repl = new Repl({
+            projection,
+            sessionManager,
+            provider,
+            providerName: 'nanogpt',
+            toolRegistry,
+            model: 'mock-model',
+            verbose: false,
+            workspaceRoot: dir,
+            output: collectStream().stream,
+            stderrOutput: stderr.stream,
+        });
+
+        await repl.run(input);
+
+        expect(capturedRequest).not.toBeNull();
+        const userContents = capturedRequest!.messages
+            .filter((msg) => msg.role === 'user')
+            .map((msg) => String(msg.content));
+        expect(userContents).toContain('previous turn');
+        expect(userContents).toContain('next turn');
+        expect(stderr.data()).toContain('Turns:    6');
+    });
+
+    it('pre-turn summarization writes a summary before the next user message under context pressure', async () => {
+        const dir = tmpDir();
+        let capturedRequest: ModelRequest | null = null;
+        const provider: ProviderDriver = {
+            capabilities: () => ({
+                ...makeMockCapabilities(),
+                maxContext: 1800,
+                maxOutput: 256,
+            }),
+            async *stream(request: ModelRequest) {
+                capturedRequest = request;
+                yield { type: 'text_delta' as const, text: 'continued' };
+                yield {
+                    type: 'done' as const,
+                    finishReason: 'stop',
+                    usage: { inputTokens: 5, outputTokens: 2 },
+                };
+            },
+            validate: () => ({ ok: true as const, value: undefined }),
+        };
+        const input = createInputLines(['next turn']);
+        const projection = createProjection(dir);
+        projection.items = [];
+        for (let i = 0; i < 9; i++) {
+            projection.items.push({
+                kind: 'message',
+                id: `itm_prev_u_${i}` as ItemId,
+                seq: i * 2 + 1,
+                role: 'user',
+                parts: [{ type: 'text', text: `previous question ${i} ${'x'.repeat(180)}` }],
+                timestamp: '2026-01-01T00:00:00Z',
+            });
+            projection.items.push({
+                kind: 'message',
+                id: `itm_prev_a_${i}` as ItemId,
+                seq: i * 2 + 2,
+                role: 'assistant',
+                parts: [{ type: 'text', text: `previous answer ${i} ${'x'.repeat(180)}` }],
+                timestamp: '2026-01-01T00:00:00Z',
+            });
+        }
+        projection.sequenceGenerator = new SequenceGenerator(18);
+        const sessionManager = new SessionManager(dir);
+        const toolRegistry = new ToolRegistry();
+        const repl = new Repl({
+            projection,
+            sessionManager,
+            provider,
+            providerName: 'nanogpt',
+            toolRegistry,
+            model: 'mock-model',
+            verbose: false,
+            workspaceRoot: dir,
+            output: collectStream().stream,
+            stderrOutput: collectStream().stream,
+        });
+
+        await repl.run(input);
+
+        expect(capturedRequest).not.toBeNull();
+        const contents = capturedRequest!.messages.map((message) => String(message.content));
+        expect(contents.some((content) => content.includes('[Summary of earlier conversation]'))).toBe(true);
+        expect(contents.some((content) => content.includes('previous question 0'))).toBe(false);
+    });
+
+    it('renders live tool status and diff output when output channel + renderer are configured', async () => {
+        const dir = tmpDir();
+        const provider = createMockProvider([
+            [
+                { type: 'tool_call_delta', index: 0, name: 'write_file', arguments: JSON.stringify({ path: 'note.txt', content: 'hello\n', mode: 'create' }) },
+                { type: 'done', finishReason: 'tool_calls', usage: { inputTokens: 5, outputTokens: 3 } },
+            ],
+            textResponse('done'),
+        ]);
+        const projection = createProjection(dir);
+        const sessionManager = new SessionManager(dir);
+        const toolRegistry = new ToolRegistry();
+        toolRegistry.register(writeFileSpec, writeFileImpl);
+        const stdout = collectStream();
+        const stderr = collectStream();
+        const outputChannel = new OutputChannel({
+            capabilities: makeRenderCapabilities(),
+            mode: 'interactive',
+            stdoutStream: stdout.stream,
+            stderrStream: stderr.stream,
+        });
+        const renderer = new Renderer({ output: outputChannel });
+        const repl = new Repl({
+            projection,
+            sessionManager,
+            provider,
+            providerName: 'nanogpt',
+            toolRegistry,
+            model: 'mock-model',
+            verbose: false,
+            workspaceRoot: dir,
+            output: stdout.stream,
+            stderrOutput: stderr.stream,
+            renderer,
+            outputChannel,
+        });
+
+        await repl.run(createInputLines(['write a note']));
+
+        expect(stdout.data()).toContain('done');
+        const stderrText = stderr.data();
+        expect(stderrText).toContain('write_file');
+        expect(stderrText).toContain('Created note.txt (1 line)');
+    });
+
+    it('refreshes the project index after a mutating tool turn', async () => {
+        const dir = tmpDir();
+        const provider = createMockProvider([
+            [
+                {
+                    type: 'tool_call_delta',
+                    index: 0,
+                    name: 'write_file',
+                    arguments: JSON.stringify({
+                        path: 'note.ts',
+                        content: 'export const note = "hello";\n',
+                        mode: 'create',
+                    }),
+                },
+                { type: 'done', finishReason: 'tool_calls', usage: { inputTokens: 5, outputTokens: 3 } },
+            ],
+            textResponse('done'),
+        ]);
+        const projection = createProjection(dir);
+        const sessionManager = new SessionManager(dir);
+        const toolRegistry = new ToolRegistry();
+        toolRegistry.register(writeFileSpec, writeFileImpl);
+        const indexStore = new IndexStore(join(dir, 'index.db'));
+        indexStore.open();
+        const indexer = new Indexer(dir, indexStore, null);
+        const repl = new Repl({
+            projection,
+            sessionManager,
+            provider,
+            providerName: 'nanogpt',
+            toolRegistry,
+            model: 'mock-model',
+            verbose: false,
+            workspaceRoot: dir,
+            output: collectStream().stream,
+            stderrOutput: collectStream().stream,
+            indexer,
+        });
+
+        await repl.run(createInputLines(['create the note']));
+
+        expect(indexer.ready).toBe(true);
+        expect(indexStore.getFile('note.ts')).not.toBeNull();
+        indexStore.close();
+    });
+
+    it('/reindex renders progress and completion through the output channel', async () => {
+        const dir = tmpDir();
+        writeFileSync(join(dir, 'app.ts'), 'export const value = 1;\n');
+        const provider = createMockProvider([]);
+        const projection = createProjection(dir);
+        const sessionManager = new SessionManager(dir);
+        const toolRegistry = new ToolRegistry();
+        const stdout = collectStream();
+        const stderr = collectStream();
+        const outputChannel = new OutputChannel({
+            capabilities: makeRenderCapabilities(),
+            mode: 'interactive',
+            stdoutStream: stdout.stream,
+            stderrStream: stderr.stream,
+        });
+        const renderer = new Renderer({ output: outputChannel });
+        const indexStore = new IndexStore(join(dir, 'index.db'));
+        indexStore.open();
+        const indexer = new Indexer(dir, indexStore, null);
+        const repl = new Repl({
+            projection,
+            sessionManager,
+            provider,
+            providerName: 'nanogpt',
+            toolRegistry,
+            model: 'mock-model',
+            verbose: false,
+            workspaceRoot: dir,
+            output: stdout.stream,
+            stderrOutput: stderr.stream,
+            renderer,
+            outputChannel,
+            indexer,
+        });
+
+        await repl.run(createInputLines(['/reindex']));
+
+        const stderrText = stderr.data();
+        expect(stderrText).toContain('files indexed');
+        expect(stderrText).toContain('[reindex] Complete: 1 files indexed, 0 skipped');
+        indexStore.close();
+    });
+
+    it('emits runtime observability events through configured sinks', async () => {
+        const dir = tmpDir();
+        const provider = createMockProvider([textResponse('done')]);
+        const projection = createProjection(dir);
+        const sessionManager = new SessionManager(dir);
+        const toolRegistry = new ToolRegistry();
+        const events: AcaEvent[] = [];
+        const repl = new Repl({
+            projection,
+            sessionManager,
+            provider,
+            providerName: 'nanogpt',
+            toolRegistry,
+            model: 'mock-model',
+            verbose: false,
+            workspaceRoot: dir,
+            output: collectStream().stream,
+            stderrOutput: collectStream().stream,
+            eventSinks: [{
+                emit(event) {
+                    events.push(event);
+                },
+            }],
+        });
+
+        await repl.run(createInputLines(['hello']));
+
+        const eventTypes = events.map((event) => event.event_type);
+        expect(eventTypes).toContain('turn.started');
+        expect(eventTypes).toContain('context.assembled');
+        expect(eventTypes).toContain('llm.request');
+        expect(eventTypes).toContain('llm.response');
+        expect(eventTypes).toContain('turn.ended');
+    });
+
+    it('uses the configured provider name in persisted step records', async () => {
+        const dir = tmpDir();
+        const provider = createMockProvider([textResponse('ok')]);
+        const projection = createProjection(dir);
+        const sessionManager = new SessionManager(dir);
+        const toolRegistry = new ToolRegistry();
+        const repl = new Repl({
+            projection,
+            sessionManager,
+            provider,
+            providerName: 'openai',
+            toolRegistry,
+            model: 'gpt-4o',
+            verbose: false,
+            workspaceRoot: dir,
+            output: collectStream().stream,
+            stderrOutput: collectStream().stream,
+        });
+
+        await repl.run(createInputLines(['hello']));
+
+        const log = readFileSync(join(projection.sessionDir, 'conversation.jsonl'), 'utf-8');
+        expect(log).toContain('"recordType":"step"');
+        expect(log).toContain('"provider":"openai"');
     });
 });
 

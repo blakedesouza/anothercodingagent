@@ -384,7 +384,10 @@ describe('Trust Boundary', () => {
             trustedWorkspaces: { [trustedWs]: 'trusted' },
         });
         const projPath = await setupProjectConfig(
-            { model: { default: 'trusted-model' } },
+            {
+                model: { default: 'trusted-model' },
+                sandbox: { extraTrustedRoots: ['/tmp/trusted-extra-root'] },
+            },
             trustedWs,
         );
 
@@ -396,6 +399,31 @@ describe('Trust Boundary', () => {
         });
 
         expect(result.config.model.default).toBe('trusted-model');
+        expect(result.config.sandbox.extraTrustedRoots).toEqual(['/tmp/trusted-extra-root']);
+    });
+
+    it('trusted workspace lookup normalizes workspaceRoot before matching trust map', async () => {
+        const trustedWs = join(testDir, 'trusted-ws-normalized');
+        await mkdir(trustedWs, { recursive: true });
+
+        const userPath = await setupUserConfig({
+            trustedWorkspaces: { [trustedWs]: 'trusted' },
+        });
+        const projPath = await setupProjectConfig(
+            {
+                sandbox: { extraTrustedRoots: ['/tmp/trusted-normalized-root'] },
+            },
+            trustedWs,
+        );
+
+        const result = await loadConfig({
+            workspaceRoot: join(trustedWs, '.'),
+            userConfigPath: userPath,
+            projectConfigPath: projPath,
+            env: {},
+        });
+
+        expect(result.config.sandbox.extraTrustedRoots).toEqual(['/tmp/trusted-normalized-root']);
     });
 
     it('SEC-1 regression: malicious project cannot disable scrubbing', async () => {
@@ -703,7 +731,11 @@ describe('Secrets Loading', () => {
         await writeFile(secretsPath, JSON.stringify({ nanogpt: 'file-key' }));
         await chmod(secretsPath, 0o600);
 
-        const result = await loadSecrets({}, secretsPath);
+        const result = await loadSecrets(
+            {},
+            secretsPath,
+            join(secretsDir, 'nonexistent-api-keys'),
+        );
 
         expect(result.secrets.nanogpt).toBe('file-key');
         expect(result.warnings).toEqual([]);
@@ -716,9 +748,28 @@ describe('Secrets Loading', () => {
         await writeFile(secretsPath, JSON.stringify({ nanogpt: 'file-key' }));
         await chmod(secretsPath, 0o644);
 
-        const result = await loadSecrets({}, secretsPath);
+        const result = await loadSecrets(
+            {},
+            secretsPath,
+            join(secretsDir, 'nonexistent-api-keys'),
+        );
 
         expect(result.secrets.nanogpt).toBeUndefined();
+        expect(result.warnings.some(w => w.includes('permissions') && w.includes('0600'))).toBe(true);
+    });
+
+    it('bad-permission secrets.json still falls back to api_keys', async () => {
+        const secretsDir = join(testDir, 'bad-secrets-with-api-keys');
+        await mkdir(secretsDir, { recursive: true });
+        const secretsPath = join(secretsDir, 'secrets.json');
+        const apiKeysPath = join(secretsDir, '.api_keys');
+        await writeFile(secretsPath, JSON.stringify({ nanogpt: 'file-key' }));
+        await chmod(secretsPath, 0o644);
+        await writeFile(apiKeysPath, 'export NANOGPT_API_KEY="fallback-key"\n');
+
+        const result = await loadSecrets({}, secretsPath, apiKeysPath);
+
+        expect(result.secrets.nanogpt).toBe('fallback-key');
         expect(result.warnings.some(w => w.includes('permissions') && w.includes('0600'))).toBe(true);
     });
 

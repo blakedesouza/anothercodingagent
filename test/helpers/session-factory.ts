@@ -131,7 +131,7 @@ export function createStep(
         contextStats: {
             tokenCount: 100,
             tokenLimit: 128000,
-            compressionTier: 'none',
+            compressionTier: 'full',
             systemPromptFingerprint: 'mock-fingerprint',
         },
         tokenUsage: {

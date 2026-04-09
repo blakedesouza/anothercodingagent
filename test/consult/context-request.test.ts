@@ -85,13 +85,21 @@ describe('consult context requests', () => {
         const contextPrompt = buildContextRequestPrompt('Review the code.');
         const finalPrompt = buildFinalizationPrompt('Review the code.', '{"needs_context":[]}', []);
 
-        for (const prompt of [contextPrompt, finalPrompt]) {
-            expect(prompt).toContain('Tools are disabled in this pass');
-            expect(prompt).toContain('<invoke>');
-            expect(prompt).toContain('<parameter>');
-            expect(prompt).toContain('<minimax:tool_call>');
-            expect(prompt).toContain('needs_context');
-        }
+        expect(contextPrompt).toContain('Tools are disabled in this pass');
+        expect(contextPrompt).toContain('<invoke>');
+        expect(contextPrompt).toContain('<parameter>');
+        expect(contextPrompt).toContain('<minimax:tool_call>');
+        expect(contextPrompt).toContain('needs_context');
+        expect(contextPrompt).toContain('Assume you know nothing beyond the prompt text and any ACA-appended evidence');
+        expect(contextPrompt).toContain('Missing snippets, ENOENT paths, or omitted files are not evidence');
+
+        expect(finalPrompt).toContain('Tools are disabled in this pass');
+        expect(finalPrompt).toContain('<invoke>');
+        expect(finalPrompt).toContain('<parameter>');
+        expect(finalPrompt).toContain('<minimax:tool_call>');
+        expect(finalPrompt).toContain('Do not rely on remembered, hidden, or inferred repo contents');
+        expect(finalPrompt).toContain('If a fulfilled snippet shows ERROR, ENOENT, or empty content');
+        expect(finalPrompt).toContain('Do not claim a file, feature, or configuration is missing unless a provided snippet explicitly establishes that fact');
     });
 
     it('builds generic no-tools finalization retry prompts', () => {
@@ -105,6 +113,7 @@ describe('consult context requests', () => {
         expect(prompt).toContain('Invalid Previous Finalization');
         expect(prompt).toContain('Tools are disabled in this pass');
         expect(prompt).toContain('Produce the final findings now');
+        expect(prompt).toContain('custom JSON object or unsupported schema');
         expect(prompt).toContain('Do not request more context');
         expect(prompt).toContain('Do not emit XML, function-call, tool-call, invoke, or parameter markup');
         expect(prompt).toContain('Do not return needs_context JSON or file-result JSON');
@@ -120,6 +129,7 @@ describe('consult context requests', () => {
 
         expect(prompt).toContain('Invalid Previous Context Request');
         expect(prompt).toContain('return only the needs_context JSON object');
+        expect(prompt).toContain('custom JSON object or unsupported schema');
         expect(prompt).toContain('Do not emit XML, function-call, tool-call, invoke, parameter, arg_key, arg_value, read_file, [TOOL_CALL], or "tool_calls" markup');
     });
 
@@ -140,6 +150,7 @@ describe('consult context requests', () => {
     it('detects context-request and tool-result JSON envelopes', () => {
         expect(containsProtocolEnvelopeJson('{"needs_context":[]}')).toBe(true);
         expect(containsProtocolEnvelopeJson('{"status":"success","data":{"files":[{"path":"src/index.ts","text":"code"}]}}')).toBe(true);
+        expect(containsProtocolEnvelopeJson('{"status":"success","data":{"read":[{"path":"src/index.ts"}]}}')).toBe(true);
         expect(containsProtocolEnvelopeJson('{"status":"error","error":{"code":"tool.not_allowed"}}')).toBe(true);
         expect(containsProtocolEnvelopeJson('{"status":"success","summary":"no files"}')).toBe(false);
         expect(containsProtocolEnvelopeJson('Plain Markdown findings')).toBe(false);
@@ -157,7 +168,11 @@ describe('consult context requests', () => {
         expect(prompt).toContain('Request at most 4 snippets');
         expect(prompt).toContain('at most 80 lines');
         expect(prompt).toContain('ACA will read accepted snippets directly from disk');
+        expect(prompt).toContain('If the task asks for a concrete repo fact that is not already shown verbatim');
+        expect(prompt).toContain('Do not return an empty needs_context list unless the prompt already contains enough quoted evidence');
         expect(prompt).toContain('Do not summarize findings or quote code yourself');
+        expect(prompt).toContain('Avoid shotgun guesses across unrelated ecosystems or fallback docs');
+        expect(prompt).toContain('Missing or ENOENT snippets are not positive evidence');
         expect(prompt).toContain('<minimax:tool_call>');
     });
 

@@ -12,8 +12,8 @@ import type { ToolRegistry } from '../tools/tool-registry.js';
 
 // --- Built-in profile definitions ---
 
-/** Delegation tools — excluded from all non-general profiles to prevent recursive spawning. */
-const DELEGATION_TOOLS = new Set(['spawn_agent', 'message_agent', 'await_agent']);
+/** Built-in delegation tools. Delegating profiles include these even if the runtime registers them later. */
+export const DELEGATION_TOOL_NAMES = ['spawn_agent', 'message_agent', 'await_agent'] as const;
 
 /** User-facing tools — only meaningful in interactive parent context, not sub-agents. */
 const USER_FACING_TOOLS = new Set(['ask_user', 'confirm_action']);
@@ -91,21 +91,32 @@ const GENERAL_APPROVAL_CLASSES = new Set(['read-only', 'workspace-write']);
  * Includes all tools with read-only or workspace-write approval class.
  */
 function resolveGeneralTools(toolRegistry: ToolRegistry): string[] {
-    return toolRegistry.list()
+    const resolved = new Set(
+        toolRegistry.list()
         .filter(t => GENERAL_APPROVAL_CLASSES.has(t.spec.approvalClass))
         .map(t => t.spec.name)
-        .sort();
+    );
+    for (const toolName of DELEGATION_TOOL_NAMES) {
+        resolved.add(toolName);
+    }
+    return [...resolved].sort();
 }
 
 /**
- * Compute the coder profile's tool list: all registered tools except delegation and user-facing.
+ * Compute the coder profile's tool list: all registered tools except user-facing.
+ * Coder is a delegating profile, so it retains the built-in delegation tools.
  * Safety comes from the sandbox (workspace boundaries) and deadline, not tool restrictions.
  */
 function resolveCoderTools(toolRegistry: ToolRegistry): string[] {
-    return toolRegistry.list()
-        .filter(t => !DELEGATION_TOOLS.has(t.spec.name) && !USER_FACING_TOOLS.has(t.spec.name))
-        .map(t => t.spec.name)
-        .sort();
+    const resolved = new Set(
+        toolRegistry.list()
+            .filter(t => !USER_FACING_TOOLS.has(t.spec.name))
+            .map(t => t.spec.name),
+    );
+    for (const toolName of DELEGATION_TOOL_NAMES) {
+        resolved.add(toolName);
+    }
+    return [...resolved].sort();
 }
 
 function buildBuiltInProfiles(toolRegistry: ToolRegistry): AgentProfile[] {
@@ -126,21 +137,32 @@ function buildBuiltInProfiles(toolRegistry: ToolRegistry): AgentProfile[] {
             name: 'rp-researcher',
             systemPrompt: [
                 'You are an RP lore research writer for the caller-selected project directory.',
-                'Research anime, manga, VN, and related canon with web_search first, then fetch_url for promising sources.',
-                'For Fandom or MediaWiki-backed sources, prefer fetch_mediawiki_category for Category:Characters, Category:Groups, Category:Locations, and relevant faction/group categories, then fetch_mediawiki_page against api.php for chosen pages.',
+                'When web_search is configured and available, use it for broad discovery first; if web_search is unavailable or unconfigured in this run, do not keep retrying it and pivot immediately to direct source fetches.',
+                'For Fandom or MediaWiki-backed sources, prefer fetch_mediawiki_page and fetch_mediawiki_category against api.php over fetch_url. Use fetch_url only when you specifically need a non-MediaWiki page or rendered HTML that the MediaWiki API will not provide.',
+                'When calling fetch_mediawiki_category, pass numeric limits such as limit: 25 or limit: 50, not quoted strings, and only probe category names you have evidence for.',
                 'Inspect existing RP docs with read_file/find_paths/search_text and match the project style from fruits-of-grisaia, fate-stay-night, jjk, and shapeshifter-academy.',
-                'Write grounded Markdown lore docs, not exhaustive wiki dumps.',
+                'Write grounded, in-depth Markdown lore docs, not shallow roster summaries or exhaustive wiki dumps.',
                 'For RP-facing compendiums, use world/character/<character>.md or world/characters/<character>.md for character files and world/ for setting/rules/group files unless the task explicitly assigns a different layout. Use research/ for source briefs, character research notes, raw notes, or audit material, not final RP-facing files.',
                 'Use make_directory/write_file only for exact output paths assigned by the orchestrator.',
-                'Use a dynamic multi-pass workflow for broad compendiums: discovery pass for categories/candidate pages, orchestrator planning pass to group pages into research batches, bounded research passes for exact page batches, then a separate write-only pass with exact output paths.',
+                'Use a dynamic sequential workflow for broad compendiums: discovery pass for categories/candidate pages and exact output paths, then one deep research/write invocation per character or world file.',
                 'Discovery passes should enumerate candidate characters, groups, locations, episodes, and setting topics first; do not write final docs during discovery.',
-                'Research passes should fetch only the exact pages assigned for that batch and return a compact source brief; do not continue expanding the search frontier after the assigned batch is covered.',
+                'For discovery passes, stop once you have enough source-grounded evidence to name the important files, candidate pages, and exact output paths. Do not spend the whole run chasing every linked character or terminology page in the franchise.',
+                'On RP discovery or write tasks, your FIRST assistant message must include actual tool calls. A text-only first message is an invalid completion.',
+                'For discovery or source-brief tasks, do not end with "I\'ll research", "let me start", or any other plan-only/intention-only text. Use the research/style tools first, then return a source-grounded Markdown brief with concrete source notes, candidate files, and exact output paths.',
+                'Do not output sentences like "I\'ll start by reading the local reference files..." unless that same assistant message also contains the corresponding tool calls.',
+                'If the assigned file still does not exist, do not output interim status text like "need to try subcategories" or "let me also fetch...". Make the next tool calls in that same assistant message or write the file.',
+                'If a tool comes back unavailable, unconfigured, or validation-failed, switch to the next viable source/tool path instead of burning steps on near-identical retries.',
+                'If the task says not to write files yet, still complete the research pass with tools and return the sourced Markdown brief directly; do not stop at a promise to research later.',
+                'For character work, research one assigned character deeply and write exactly that character Markdown file in the same invocation; do not produce a compact whole-series source brief first.',
+                'Use middle-ground depth ceilings for character files: up to 16-20 KB for main characters, 8-12 KB for side characters, and 4-8 KB for minor/supporting characters unless the task overrides the ceiling. These are ceilings, not floors: do not pad sparse characters when canon material does not support that length.',
+                'Keep Relationships compact: include only important dynamics, usually 3-6 entries for side characters or up to 8 for main characters, and write 1-2 sentences per relationship. Put complex group dynamics in world/trinity-seven.md, world/groups.md, or an equivalent world file instead of expanding every character file.',
+                'For world work, research one assigned world topic deeply and write exactly that assigned world Markdown file in the same invocation.',
+                'Do not collapse character groups into one file when members are individually important; the orchestrator should give each important character a dedicated agent and output path.',
                 'When the cast or file plan is unknown, discover the cast/topic list first from series-level sources, then propose or use exact Markdown output paths; do not collapse character groups into one file when members are individually important.',
-                'Do not spend the whole tool budget on unbounded exploration. If context is incomplete after the assigned source batch, write the compact brief with explicit uncertainty instead of continuing to fetch.',
-                'When writing multiple assigned files, call write_file for those files in parallel in the same tool-use message when possible.',
-                'For GLM-5 runs, use direct bounded execution: make one source batch, then finalize from available evidence instead of repeatedly expanding the search frontier.',
+                'Do not spend the whole tool budget on unbounded exploration across the franchise; stay on the assigned character or world topic and write the file once that target is covered.',
+                'For GLM-5 local high-trust runs, larger bounded budgets are acceptable, but the task must still have an exact assigned output path and required-output validation.',
                 'Do not create per-character instructions.md files unless explicitly assigned.',
-                'Do not include Japanese script or unnecessary Japanese terminology by default; use English or already-common romanized names unless the task explicitly asks for original-language text.',
+                'Do not include Japanese script or unnecessary Japanese terminology by default; use English or already-common romanized names. Only include original-language text when it is part of an ability/skill/magic name that cannot be disambiguated cleanly in English, or when the task explicitly asks for original-language text.',
                 'Do not invent mandatory sections like "RP Use", "RP Notes", "Knowledge and Secrets", "Spoiler Notes", or "Current Status". Use simple headings only when they fit the specific character or topic.',
                 'Put broad setting and narrator constraints in world/world-rules.md, not repeated in every character file.',
                 'Avoid over-exposing hidden traits in a way that would make the narrator repeat them every scene.',

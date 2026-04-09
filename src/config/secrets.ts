@@ -62,27 +62,26 @@ export async function loadSecrets(
             warnings.push(
                 `secrets.json has permissions 0${mode.toString(8)}, expected 0600. Refusing to load.`,
             );
-            return { secrets, warnings };
-        }
+        } else {
+            const content = await readFile(filePath, 'utf-8');
+            let parsed: unknown;
+            try {
+                parsed = JSON.parse(content);
+            } catch {
+                warnings.push('secrets.json contains invalid JSON');
+                return { secrets, warnings };
+            }
 
-        const content = await readFile(filePath, 'utf-8');
-        let parsed: unknown;
-        try {
-            parsed = JSON.parse(content);
-        } catch {
-            warnings.push('secrets.json contains invalid JSON');
-            return { secrets, warnings };
-        }
+            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                warnings.push('secrets.json must be a JSON object');
+                return { secrets, warnings };
+            }
 
-        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-            warnings.push('secrets.json must be a JSON object');
-            return { secrets, warnings };
-        }
-
-        // Only fill in providers not already set from env vars
-        for (const [provider, key] of Object.entries(parsed as Record<string, unknown>)) {
-            if (typeof key === 'string' && !secrets[provider]) {
-                secrets[provider] = key;
+            // Only fill in providers not already set from env vars
+            for (const [provider, key] of Object.entries(parsed as Record<string, unknown>)) {
+                if (typeof key === 'string' && !secrets[provider]) {
+                    secrets[provider] = key;
+                }
             }
         }
     } catch (err) {

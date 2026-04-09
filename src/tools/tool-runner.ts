@@ -117,7 +117,7 @@ export class ToolRunner {
         }
 
         // 3. Network policy check for shell tools
-        const networkDenied = this.checkNetworkPolicy(toolName, args);
+        const networkDenied = this.checkNetworkPolicy(toolName, args, context);
         if (networkDenied) return networkDenied;
 
         // 4. Set up timeout + retry logic
@@ -155,6 +155,7 @@ export class ToolRunner {
     private checkNetworkPolicy(
         toolName: string,
         args: Record<string, unknown>,
+        context: Omit<ToolContext, 'signal'>,
     ): ToolOutput | null {
         if (!this.networkPolicy) return null;
 
@@ -170,6 +171,9 @@ export class ToolRunner {
         const result = evaluateShellNetworkAccess(command, this.networkPolicy);
         if (result && result.decision === 'deny') {
             return errorOutput('network.denied', result.reason, { facet: result.facet });
+        }
+        if (result && result.decision === 'confirm' && !context.networkApproved) {
+            return errorOutput('network.confirm_required', result.reason, { facet: result.facet });
         }
 
         return null;

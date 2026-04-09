@@ -17,9 +17,11 @@ import type {
     RequestMessage,
     StreamEvent,
     ToolDefinition,
+    ModelResponseFormat,
 } from '../types/provider.js';
 import type { ToolContext } from '../tools/tool-registry.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
+import type { RegisteredTool } from '../tools/tool-registry.js';
 import { ToolRunner } from '../tools/tool-runner.js';
 import type { ConversationWriter } from './conversation-writer.js';
 import type { SequenceGenerator } from '../types/sequence.js';
@@ -38,11 +40,22 @@ import {
 } from '../permissions/approval.js';
 import { analyzeCommand } from '../tools/command-risk-analyzer.js';
 import type { CommandRiskAssessment } from '../tools/command-risk-analyzer.js';
+import { evaluateShellNetworkAccess } from '../permissions/network-policy.js';
 import type { CapabilityHealthMap } from './capability-health.js';
 import type { CheckpointManager, CheckpointMetadata } from '../checkpointing/checkpoint-manager.js';
 import type { MetricsAccumulator } from '../observability/telemetry.js';
 import { EventEmitter } from 'node:events';
+import { readFile, stat } from 'node:fs/promises';
 import { estimateRequestTokens } from './token-estimator.js';
+import { preparePrompt } from './prompt-assembly.js';
+import type {
+    CapabilityHealth,
+    DurableTaskSummary,
+    PromptAssemblyStats,
+    WorkingSetEntry,
+} from './prompt-assembly.js';
+import type { ProjectSnapshot } from './project-awareness.js';
+import { resolveToolPath } from '../tools/workspace-sandbox.js';
 
 // --- Error codes that trigger model fallback (provider-level failures only) ---
 // TODO(M5.x): Add retry-before-fallback logic. Per spec, fallback occurs "after retry
@@ -50,6 +63,7 @@ import { estimateRequestTokens } from './token-estimator.js';
 // no retries. Retry-within-provider logic is deferred to a future substep.
 const FALLBACK_TRIGGER_CODES = new Set([
     'llm.rate_limit',
+    'llm.rate_limited',
     'llm.server_error',
     'llm.timeout',
 ]);
@@ -159,8 +173,24 @@ export interface TurnEngineConfig {
     topP?: number;
     /** Optional provider-specific thinking mode override. */
     thinking?: { type: 'enabled' | 'disabled' };
+    /** Optional provider structured-output response format. */
+    responseFormat?: ModelResponseFormat;
     /** Custom system messages for invoke/delegation mode (replaces default "You are a helpful coding assistant."). */
     systemMessages?: RequestMessage[];
+    /** Optional shell name for prompt context assembly. */
+    shell?: string;
+    /** Optional project snapshot for prompt context assembly. */
+    projectSnapshot?: ProjectSnapshot;
+    /** Optional working set for prompt context assembly. */
+    workingSet?: WorkingSetEntry[];
+    /** Optional durable task summary for prompt context assembly. */
+    durableTaskState?: DurableTaskSummary;
+    /** Optional capability health entries for prompt context assembly. */
+    capabilities?: CapabilityHealth[];
+    /** Optional repo/user instruction text for prompt context assembly. */
+    userInstructions?: string;
+    /** Optional active errors to pin into prompt context. */
+    activeErrors?: string[];
 }
 
 // --- Turn result ---
@@ -173,9 +203,82 @@ export interface TurnResult {
     lastError?: { code: string; message: string };
 }
 
+export interface MutationRenderPreview {
+    filePath: string;
+    oldContent: string;
+    newContent: string;
+    isNewFile: boolean;
+}
+
+export interface TurnStartedEvent {
+    turnId: TurnId;
+    turnNumber: number;
+    inputPreview: string;
+}
+
+export interface TurnEndedEvent {
+    turnId: TurnId;
+    turnNumber: number;
+    outcome: TurnOutcome;
+    stepCount: number;
+    tokensIn: number;
+    tokensOut: number;
+    durationMs: number;
+}
+
+export interface ContextAssembledEvent {
+    turnNumber: number;
+    estimatedTokens: number;
+    tokenBudget: number;
+    compressionTier: 'full' | 'medium' | 'aggressive' | 'emergency';
+    itemCount: number;
+}
+
+export interface LlmRequestEvent {
+    turnNumber: number;
+    model: string;
+    provider: string;
+    estimatedInputTokens: number;
+    toolCount: number;
+}
+
+export interface LlmResponseEvent {
+    turnNumber: number;
+    model: string;
+    provider: string;
+    tokensIn: number;
+    tokensOut: number;
+    latencyMs: number;
+    finishReason: string;
+    costUsd: number | null;
+}
+
+export interface RuntimeErrorEvent {
+    turnNumber: number;
+    code: string;
+    message: string;
+    context?: Record<string, unknown>;
+}
+
+export interface ToolStartedEvent {
+    toolCallId: ToolCallId;
+    toolName: string;
+    arguments: Record<string, unknown>;
+}
+
+export interface ToolCompletedEvent {
+    toolCallId: ToolCallId;
+    toolName: string;
+    arguments: Record<string, unknown>;
+    output: ToolOutput;
+    durationMs: number;
+    renderPreview?: MutationRenderPreview;
+}
+
 // --- Max tool calls per message ---
 
 const MAX_TOOL_CALLS_PER_MESSAGE = 10;
+const MAX_RENDER_PREVIEW_BYTES = 256 * 1024;
 
 function positiveIntegerLimit(value: number | undefined): number | undefined {
     if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
@@ -194,6 +297,12 @@ function positiveIntegerLimitMap(value: Record<string, number> | undefined): Map
 
 function mapToRecord(map: Map<string, number>): Record<string, number> {
     return Object.fromEntries([...map.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+function deriveTurnNumber(existingItems: readonly ConversationItem[]): number {
+    return existingItems.filter(
+        (item) => item.kind === 'message' && item.role === 'user',
+    ).length + 1;
 }
 
 interface ReadRange {
@@ -223,6 +332,73 @@ function rangesOverlap(a: ReadRange, b: ReadRange): boolean {
 
 function dataBytes(data: string): number {
     return Buffer.byteLength(data, 'utf8');
+}
+
+interface PendingMutationPreview {
+    filePath: string;
+    absolutePath: string;
+    oldContent: string;
+    isNewFile: boolean;
+}
+
+async function captureMutationPreviewBaseline(
+    part: ToolCallPart,
+    config: TurnEngineConfig,
+): Promise<PendingMutationPreview | null> {
+    if ((part.toolName !== 'write_file' && part.toolName !== 'edit_file') || typeof part.arguments.path !== 'string') {
+        return null;
+    }
+
+    const filePath = part.arguments.path;
+    const absolutePath = resolveToolPath(filePath, { workspaceRoot: config.workspaceRoot });
+
+    try {
+        const fileStat = await stat(absolutePath);
+        if (!fileStat.isFile() || fileStat.size > MAX_RENDER_PREVIEW_BYTES) {
+            return null;
+        }
+        const oldContent = await readFile(absolutePath, 'utf8');
+        return {
+            filePath,
+            absolutePath,
+            oldContent,
+            isNewFile: false,
+        };
+    } catch (err: unknown) {
+        const nodeErr = err as NodeJS.ErrnoException;
+        if (nodeErr.code === 'ENOENT') {
+            return {
+                filePath,
+                absolutePath,
+                oldContent: '',
+                isNewFile: true,
+            };
+        }
+        return null;
+    }
+}
+
+async function finalizeMutationPreview(
+    pending: PendingMutationPreview | null,
+    output: ToolOutput,
+): Promise<MutationRenderPreview | undefined> {
+    if (!pending || output.status !== 'success') return undefined;
+
+    try {
+        const fileStat = await stat(pending.absolutePath);
+        if (!fileStat.isFile() || fileStat.size > MAX_RENDER_PREVIEW_BYTES) {
+            return undefined;
+        }
+        const newContent = await readFile(pending.absolutePath, 'utf8');
+        return {
+            filePath: pending.filePath,
+            oldContent: pending.oldContent,
+            newContent,
+            isNewFile: pending.isNewFile,
+        };
+    } catch {
+        return undefined;
+    }
 }
 
 function truncateUtf8(text: string, maxBytes: number): string {
@@ -346,7 +522,8 @@ export class TurnEngine extends EventEmitter {
         const repeatedReadLimit = positiveIntegerLimit(config.maxRepeatedReadCalls);
 
         const turnId = generateId('turn') as TurnId;
-        const turnNumber = 1; // Caller should provide, but for now we derive from existing state
+        const turnNumber = deriveTurnNumber(existingItems);
+        const turnStartMs = Date.now();
         const items: ConversationItem[] = [];
         const steps: StepRecord[] = [];
         let consecutiveToolSteps = 0;
@@ -369,6 +546,11 @@ export class TurnEngine extends EventEmitter {
             startedAt: new Date().toISOString(),
         };
         this.writer.writeTurn(turn);
+        this.emit('turn.started', {
+            turnId,
+            turnNumber,
+            inputPreview: userInput.slice(0, 200),
+        } satisfies TurnStartedEvent);
 
         // --- Phase 2: AppendUserMessage ---
         this.transitionTo(Phase.AppendUserMessage);
@@ -403,15 +585,15 @@ export class TurnEngine extends EventEmitter {
             // --- Phase 3: AssembleContext ---
             this.transitionTo(Phase.AssembleContext);
             const allItems = [...existingItems, ...items];
-            const messages = this.assembleMessages(allItems, config.systemMessages);
+            const useCustomSystemMessages = !!(config.systemMessages && config.systemMessages.length > 0);
             const remainingToolCalls = toolCallLimit === undefined
                 ? undefined
                 : Math.max(0, toolCallLimit - totalAcceptedToolCalls);
             const toolResultByteBudgetExhausted = toolResultByteLimit !== undefined
                 && totalToolResultBytes >= toolResultByteLimit;
-            const toolDefs = remainingToolCalls === 0 || toolResultByteBudgetExhausted
+            const availableTools = remainingToolCalls === 0 || toolResultByteBudgetExhausted
                 ? []
-                : this.assembleToolDefinitions(config.allowedTools);
+                : this.getAvailableTools(config.allowedTools);
 
             // --- Phase 4: CreateStep ---
             this.transitionTo(Phase.CreateStep);
@@ -420,18 +602,74 @@ export class TurnEngine extends EventEmitter {
 
             // --- Phase 5: CallLLM ---
             this.transitionTo(Phase.CallLLM);
-            let request: ModelRequest = {
-                model: activeModel,
-                messages,
-                tools: toolDefs.length > 0 ? toolDefs : undefined,
-                maxTokens: 4096,
-                temperature: config.temperature ?? 0.7,
-                topP: config.topP,
-                thinking: config.thinking,
-            };
             const resolvedForRequest = resolveModel(activeModel);
-            const requestCaps = resolvedForRequest ? getModelCapabilities(resolvedForRequest) : undefined;
+            const requestCaps = resolvedForRequest
+                ? getModelCapabilities(resolvedForRequest)
+                : activeDriver.capabilities(activeModel);
+            const maxRequestOutputTokens = Math.min(4096, requestCaps?.maxOutput ?? 4096);
+            let promptAssemblyStats: PromptAssemblyStats = {
+                compressionTier: 'full',
+                estimatedTokens: 0,
+                droppedItemCount: 0,
+                digestedItemCount: 0,
+                instructionSummaryIncluded: true,
+                durableTaskStateIncluded: true,
+            };
+            let request: ModelRequest = useCustomSystemMessages
+                ? {
+                    model: activeModel,
+                    messages: this.assembleMessages(allItems, config.systemMessages),
+                    tools: availableTools.length > 0
+                        ? availableTools.map((tool) => ({
+                            name: tool.spec.name,
+                            description: tool.spec.description,
+                            parameters: tool.spec.inputSchema,
+                        }))
+                        : undefined,
+                    maxTokens: maxRequestOutputTokens,
+                    temperature: config.temperature ?? 0.7,
+                    topP: config.topP,
+                    thinking: config.thinking,
+                    responseFormat: config.responseFormat,
+                }
+                : (() => {
+                    const preparedPrompt = preparePrompt({
+                        model: activeModel,
+                        maxTokens: maxRequestOutputTokens,
+                        temperature: config.temperature ?? 0.7,
+                        tools: availableTools,
+                        items: allItems,
+                        cwd: config.workspaceRoot,
+                        shell: config.shell,
+                        projectSnapshot: config.projectSnapshot,
+                        workingSet: config.workingSet,
+                        capabilities: config.capabilities,
+                        durableTaskState: config.durableTaskState,
+                        userInstructions: config.userInstructions,
+                        activeErrors: config.activeErrors,
+                        additionalSystemMessages: this.confusionSystemMessageInjected
+                            ? [{ role: 'system', content: CONFUSION_SYSTEM_MESSAGE }]
+                            : undefined,
+                        scrub: this.scrubber ? ((text: string) => this.scrubber!.scrub(text)) : undefined,
+                        contextLimit: requestCaps?.maxContext,
+                        reservedOutputTokens: maxRequestOutputTokens,
+                        bytesPerToken: requestCaps?.bytesPerToken,
+                    });
+                    promptAssemblyStats = preparedPrompt.contextStats;
+                    return {
+                        ...preparedPrompt.request,
+                        topP: config.topP,
+                        thinking: config.thinking,
+                        responseFormat: config.responseFormat,
+                    };
+                })();
             let estimatedInputTokens = estimateRequestTokens(request, requestCaps?.bytesPerToken);
+            if (promptAssemblyStats.estimatedTokens === 0) {
+                promptAssemblyStats = {
+                    ...promptAssemblyStats,
+                    estimatedTokens: estimatedInputTokens,
+                };
+            }
             let guardrail: string | undefined = toolResultByteBudgetExhausted
                 ? 'tool_result_byte_budget_exhausted_tools_hidden'
                 : undefined;
@@ -439,8 +677,20 @@ export class TurnEngine extends EventEmitter {
             if (inputTokenLimit !== undefined && estimatedInputTokens > inputTokenLimit && request.tools) {
                 request = { ...request, tools: undefined };
                 estimatedInputTokens = estimateRequestTokens(request, requestCaps?.bytesPerToken);
+                promptAssemblyStats = {
+                    ...promptAssemblyStats,
+                    estimatedTokens: estimatedInputTokens,
+                };
                 guardrail = 'max_input_tokens_tools_hidden';
             }
+
+            this.emit('context.assembled', {
+                turnNumber,
+                estimatedTokens: estimatedInputTokens,
+                tokenBudget: promptAssemblyStats.safeInputBudget ?? requestCaps?.maxContext ?? estimatedInputTokens,
+                compressionTier: promptAssemblyStats.compressionTier,
+                itemCount: allItems.length,
+            } satisfies ContextAssembledEvent);
 
             const stepSafetyStats: StepSafetyStats = {
                 estimatedInputTokens,
@@ -459,12 +709,19 @@ export class TurnEngine extends EventEmitter {
                 const step = this.recordStep(
                     stepId, turnId, stepNumber, config, inputSeqs, items,
                     'input_guard', { inputTokens: 0, outputTokens: 0 },
-                    activeModel, activeProvider, stepSafetyStats,
+                    activeModel, activeProvider, stepSafetyStats, promptAssemblyStats, requestCaps?.maxContext,
                 );
                 steps.push(step);
                 this.writer.writeStep(step);
                 break;
             }
+            this.emit('llm.request', {
+                turnNumber,
+                model: activeModel,
+                provider: activeProvider,
+                estimatedInputTokens,
+                toolCount: request.tools?.length ?? 0,
+            } satisfies LlmRequestEvent);
 
             const streamEvents: StreamEvent[] = [];
             let streamError: StreamEvent | null = null;
@@ -494,6 +751,16 @@ export class TurnEngine extends EventEmitter {
             if (streamError && streamError.type === 'error') {
                 // Record LLM error for telemetry
                 this.metricsAccumulator?.recordError(streamError.error.code);
+                this.emit('runtime.error', {
+                    turnNumber,
+                    code: streamError.error.code,
+                    message: streamError.error.message,
+                    context: {
+                        model: activeModel,
+                        provider: activeProvider,
+                        step: stepNumber,
+                    },
+                } satisfies RuntimeErrorEvent);
 
                 // Attempt model fallback for provider-level errors
                 if (
@@ -566,13 +833,46 @@ export class TurnEngine extends EventEmitter {
                     tokenUsage.inputTokens, tokenUsage.outputTokens, costUsd, llmLatencyMs,
                 );
             }
+            this.emit('llm.response', {
+                turnNumber,
+                model: activeModel,
+                provider: activeProvider,
+                tokensIn: tokenUsage.inputTokens,
+                tokensOut: tokenUsage.outputTokens,
+                latencyMs: llmLatencyMs,
+                finishReason,
+                costUsd,
+            } satisfies LlmResponseEvent);
+
+            if (assistantParts.length === 0) {
+                const message = 'Model returned an empty response';
+                this.metricsAccumulator?.recordError('llm.malformed');
+                this.emit('runtime.error', {
+                    turnNumber,
+                    code: 'llm.malformed',
+                    message,
+                    context: {
+                        model: activeModel,
+                        provider: activeProvider,
+                        step: stepNumber,
+                    },
+                } satisfies RuntimeErrorEvent);
+                lastError = { code: 'llm.malformed', message };
+                outcome = 'aborted';
+                const step = this.recordStep(
+                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats, promptAssemblyStats, requestCaps?.maxContext,
+                );
+                steps.push(step);
+                this.writer.writeStep(step);
+                break;
+            }
 
             if (this.costTracker) {
                 const budgetResult = this.costTracker.recordCost(costUsd);
                 if (budgetResult.status === 'exceeded') {
                     outcome = 'budget_exceeded';
                     const step = this.recordStep(
-                        stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats,
+                        stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats, promptAssemblyStats, requestCaps?.maxContext,
                     );
                     steps.push(step);
                     this.writer.writeStep(step);
@@ -583,7 +883,7 @@ export class TurnEngine extends EventEmitter {
             if (tokenLimit !== undefined && totalTurnTokens > tokenLimit) {
                 outcome = 'budget_exceeded';
                 const step = this.recordStep(
-                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats,
+                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats, promptAssemblyStats, requestCaps?.maxContext,
                 );
                 steps.push(step);
                 this.writer.writeStep(step);
@@ -595,7 +895,7 @@ export class TurnEngine extends EventEmitter {
                 outcome = 'assistant_final';
                 // Record the step before yielding
                 const step = this.recordStep(
-                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats,
+                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats, promptAssemblyStats, requestCaps?.maxContext,
                 );
                 steps.push(step);
                 this.writer.writeStep(step);
@@ -606,7 +906,7 @@ export class TurnEngine extends EventEmitter {
             if (stepNumber >= stepLimit) {
                 outcome = 'max_steps';
                 const step = this.recordStep(
-                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats,
+                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats, promptAssemblyStats, requestCaps?.maxContext,
                 );
                 steps.push(step);
                 this.writer.writeStep(step);
@@ -618,7 +918,7 @@ export class TurnEngine extends EventEmitter {
             if (consecutiveToolSteps >= consecutiveToolLimit) {
                 outcome = 'max_consecutive_tools';
                 const step = this.recordStep(
-                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats,
+                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats, promptAssemblyStats, requestCaps?.maxContext,
                 );
                 steps.push(step);
                 this.writer.writeStep(step);
@@ -768,6 +1068,7 @@ export class TurnEngine extends EventEmitter {
                 if (this.interrupted) break;
 
                 let output: ToolOutput;
+                let renderPreview: MutationRenderPreview | undefined;
                 if (toolResultByteLimit !== undefined && totalToolResultBytes >= toolResultByteLimit) {
                     output = errorOutput(
                         'tool.max_tool_result_bytes',
@@ -778,10 +1079,11 @@ export class TurnEngine extends EventEmitter {
                     output = errorOutput(errorCode ?? 'tool.not_found', error!);
                 } else {
                     // Approval flow: resolve permission before executing
-                    const approvalDenied = await this.resolveToolApproval(part, config);
-                    if (approvalDenied) {
-                        output = approvalDenied;
+                    const approval = await this.resolveToolApproval(part, config);
+                    if (approval.denied) {
+                        output = approval.denied;
                     } else {
+                        const pendingRenderPreview = await captureMutationPreviewBaseline(part, config);
                         // Checkpoint hook: before first workspace-mutating tool in the turn
                         const registered = this.toolRegistry.lookup(part.toolName);
                         if (
@@ -804,11 +1106,30 @@ export class TurnEngine extends EventEmitter {
                             turnHasExternalEffects = true;
                         }
 
+                        this.emit('tool.started', {
+                            toolCallId: part.toolCallId,
+                            toolName: part.toolName,
+                            arguments: part.arguments,
+                        } satisfies ToolStartedEvent);
+                        const toolStartMs = Date.now();
                         output = await this.toolRunner.execute(
                             part.toolName,
                             part.arguments,
-                            toolContext,
+                            {
+                                ...toolContext,
+                                networkApproved: approval.networkApproved,
+                            },
                         );
+                        const durationMs = Date.now() - toolStartMs;
+                        renderPreview = await finalizeMutationPreview(pendingRenderPreview, output);
+                        this.emit('tool.completed', {
+                            toolCallId: part.toolCallId,
+                            toolName: part.toolName,
+                            arguments: part.arguments,
+                            output,
+                            durationMs,
+                            ...(renderPreview ? { renderPreview } : {}),
+                        } satisfies ToolCompletedEvent);
 
                         // Record tool call for telemetry
                         this.metricsAccumulator?.recordToolCall(part.toolName);
@@ -915,17 +1236,21 @@ export class TurnEngine extends EventEmitter {
             stepSafetyStats.cumulativeToolResultBytes = totalToolResultBytes;
 
             // --- Confusion tracking ---
-            // Count ALL results for session total (no early break).
-            // Non-confusion results (success OR non-confusion errors like execution
-            // failures) reset the consecutive counter — the model demonstrated it
-            // can make valid tool calls, breaking the "invalid" chain.
+            // Count confusion per assistant attempt, not per parallel tool inside
+            // the same attempt. A single batched message with several malformed
+            // calls should feed back as one failed attempt so the model can repair
+            // the batch on the next step. Successful results still reset the chain.
             let confusionYield = false;
             let confusionThresholdIndex = -1;
+            const stepConfusionIndices: number[] = [];
+            let stepHasResettingResult = false;
             for (let i = 0; i < toolResults.length; i++) {
                 const result = toolResults[i];
-                const isConfusion = result.output.status === 'error'
-                    && result.output.error != null
-                    && CONFUSION_ERROR_CODES.has(result.output.error.code);
+                const errorCode = result.output.status === 'error'
+                    ? result.output.error?.code
+                    : undefined;
+                const isConfusion = errorCode !== undefined && CONFUSION_ERROR_CODES.has(errorCode);
+                const isNeutralDeferred = errorCode === 'tool.deferred';
 
                 // Record tool errors for telemetry
                 if (result.output.status === 'error' && result.output.error) {
@@ -933,13 +1258,24 @@ export class TurnEngine extends EventEmitter {
                 }
 
                 if (isConfusion) {
-                    consecutiveConfusionCount++;
-                    this.sessionConfusionCount++;
-                    if (consecutiveConfusionCount >= CONFUSION_CONSECUTIVE_THRESHOLD && confusionThresholdIndex === -1) {
-                        confusionThresholdIndex = i;
-                    }
-                } else {
-                    consecutiveConfusionCount = 0;
+                    stepConfusionIndices.push(i);
+                    continue;
+                }
+
+                // A deferred overflow call is not evidence that the model recovered;
+                // it just needs another step. Leave the confusion chain unchanged.
+                if (!isNeutralDeferred) {
+                    stepHasResettingResult = true;
+                }
+            }
+
+            if (stepHasResettingResult) {
+                consecutiveConfusionCount = 0;
+            } else if (stepConfusionIndices.length > 0) {
+                consecutiveConfusionCount++;
+                this.sessionConfusionCount++;
+                if (consecutiveConfusionCount >= CONFUSION_CONSECUTIVE_THRESHOLD) {
+                    confusionThresholdIndex = stepConfusionIndices[stepConfusionIndices.length - 1];
                 }
             }
 
@@ -967,9 +1303,9 @@ export class TurnEngine extends EventEmitter {
             }
 
             // Record step
-            const step = this.recordStep(
-                stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats,
-            );
+                const step = this.recordStep(
+                    stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats, promptAssemblyStats, requestCaps?.maxContext,
+                );
             steps.push(step);
             this.writer.writeStep(step);
 
@@ -1050,6 +1386,15 @@ export class TurnEngine extends EventEmitter {
 
         // Write completed turn record
         this.writer.writeTurn(completedTurn);
+        this.emit('turn.ended', {
+            turnId,
+            turnNumber,
+            outcome: completedTurn.outcome!,
+            stepCount: steps.length,
+            tokensIn: steps.reduce((sum, step) => sum + step.tokenUsage.inputTokens, 0),
+            tokensOut: steps.reduce((sum, step) => sum + step.tokenUsage.outputTokens, 0),
+            durationMs: Date.now() - turnStartMs,
+        } satisfies TurnEndedEvent);
 
         return {
             turn: completedTurn,
@@ -1147,7 +1492,7 @@ export class TurnEngine extends EventEmitter {
         return messages;
     }
 
-    private assembleToolDefinitions(allowedTools?: string[] | null): ToolDefinition[] {
+    private getAvailableTools(allowedTools?: string[] | null): RegisteredTool[] {
         const tools = this.toolRegistry.list();
 
         // Refresh masked tools based on capability health
@@ -1167,12 +1512,15 @@ export class TurnEngine extends EventEmitter {
             .filter(tool => {
                 if (allowedTools === undefined || allowedTools === null) return true;
                 return allowedTools.includes(tool.spec.name);
-            })
-            .map(tool => ({
-                name: tool.spec.name,
-                description: tool.spec.description,
-                parameters: tool.spec.inputSchema,
-            }));
+            });
+    }
+
+    private assembleToolDefinitions(allowedTools?: string[] | null): ToolDefinition[] {
+        return this.getAvailableTools(allowedTools).map(tool => ({
+            name: tool.spec.name,
+            description: tool.spec.description,
+            parameters: tool.spec.inputSchema,
+        }));
     }
 
     private normalizeStreamEvents(events: StreamEvent[]): {
@@ -1284,6 +1632,8 @@ export class TurnEngine extends EventEmitter {
         modelOverride?: string,
         providerOverride?: string,
         safetyStats?: StepSafetyStats,
+        promptStats?: PromptAssemblyStats,
+        tokenLimit?: number,
     ): StepRecord {
         const outputSeqs = items
             .filter(i => !inputSeqs.includes(i.seq))
@@ -1299,10 +1649,10 @@ export class TurnEngine extends EventEmitter {
             outputItemSeqs: outputSeqs,
             finishReason,
             contextStats: {
-                tokenCount: tokenUsage.inputTokens + tokenUsage.outputTokens,
-                tokenLimit: 128_000, // Placeholder for v1
-                compressionTier: 'none',
-                systemPromptFingerprint: 'v1',
+                tokenCount: promptStats?.estimatedTokens ?? (tokenUsage.inputTokens + tokenUsage.outputTokens),
+                tokenLimit: tokenLimit ?? 128_000,
+                compressionTier: promptStats?.compressionTier ?? 'full',
+                systemPromptFingerprint: 'prompt-assembly-v1',
             },
             tokenUsage,
             ...(safetyStats ? { safetyStats } : {}),
@@ -1312,21 +1662,44 @@ export class TurnEngine extends EventEmitter {
 
     /**
      * Resolve approval for a tool call before execution.
-     * Returns a ToolOutput error if denied, or null if approved.
+     * Returns a ToolOutput error if denied, or approval metadata if approved.
      */
     private async resolveToolApproval(
         part: ToolCallPart,
         config: TurnEngineConfig,
-    ): Promise<ToolOutput | null> {
+    ): Promise<{ denied: ToolOutput | null; networkApproved: boolean }> {
         // Enforce allowedTools constraint even without full approval flow
         if (config.allowedTools !== undefined && config.allowedTools !== null) {
             if (!config.allowedTools.includes(part.toolName)) {
                 return {
+                    denied: {
+                        status: 'error',
+                        data: '',
+                        error: {
+                            code: 'tool.permission',
+                            message: `Denied: not permitted by allowed_tools constraint`,
+                            retryable: false,
+                        },
+                        truncated: false,
+                        bytesReturned: 0,
+                        bytesOmitted: 0,
+                        retryable: false,
+                        timedOut: false,
+                        mutationState: 'none',
+                    },
+                    networkApproved: false,
+                };
+            }
+        }
+
+        if (matchingAuthorityDecision(part, config, 'deny')) {
+            return {
+                denied: {
                     status: 'error',
                     data: '',
                     error: {
                         code: 'tool.permission',
-                        message: `Denied: not permitted by allowed_tools constraint`,
+                        message: 'Denied: matched invoke authority deny rule',
                         retryable: false,
                     },
                     truncated: false,
@@ -1335,79 +1708,86 @@ export class TurnEngine extends EventEmitter {
                     retryable: false,
                     timedOut: false,
                     mutationState: 'none',
-                };
-            }
-        }
-
-        if (matchingAuthorityDecision(part, config, 'deny')) {
-            return {
-                status: 'error',
-                data: '',
-                error: {
-                    code: 'tool.permission',
-                    message: 'Denied: matched invoke authority deny rule',
-                    retryable: false,
                 },
-                truncated: false,
-                bytesReturned: 0,
-                bytesOmitted: 0,
-                retryable: false,
-                timedOut: false,
-                mutationState: 'none',
+                networkApproved: false,
             };
         }
 
         // Full approval flow requires config + session grants
-        if (!config.resolvedConfig || !config.sessionGrants) return null;
+        if (!config.resolvedConfig || !config.sessionGrants) {
+            return { denied: null, networkApproved: false };
+        }
 
         const registered = this.toolRegistry.lookup(part.toolName);
-        if (!registered) return null; // Already handled by validation
+        if (!registered) return { denied: null, networkApproved: false }; // Already handled by validation
 
         // Compute risk assessment for exec/session tools
         let riskAssessment: CommandRiskAssessment | undefined;
-        if (EXEC_TOOLS.has(part.toolName)) {
-            const command = part.toolName === 'session_io'
+        const command = EXEC_TOOLS.has(part.toolName)
+            ? (part.toolName === 'session_io'
                 ? (typeof part.arguments.stdin === 'string' ? part.arguments.stdin : '')
-                : (typeof part.arguments.command === 'string' ? part.arguments.command : '');
-            const cwd = typeof part.arguments.cwd === 'string'
-                ? part.arguments.cwd
-                : config.workspaceRoot;
+                : (typeof part.arguments.command === 'string' ? part.arguments.command : ''))
+            : '';
+        if (EXEC_TOOLS.has(part.toolName)) {
             if (command) {
-                riskAssessment = analyzeCommand(command, cwd, undefined, config.workspaceRoot);
+                // session_io targets a long-lived shell whose cwd may have changed
+                // arbitrarily since spawn; treating stdin as if it still runs in
+                // ACA's workspaceRoot can silently under-classify relative
+                // destructive commands. Use conservative unknown-context analysis.
+                const cwd = part.toolName === 'session_io'
+                    ? '/'
+                    : (typeof part.arguments.cwd === 'string' ? part.arguments.cwd : config.workspaceRoot);
+                const workspaceRoot = part.toolName === 'session_io'
+                    ? undefined
+                    : config.workspaceRoot;
+                riskAssessment = analyzeCommand(command, cwd, undefined, workspaceRoot);
             }
         }
+        const networkPolicyResult = command
+            ? evaluateShellNetworkAccess(command, config.resolvedConfig.network)
+            : null;
 
         const request: ApprovalRequest = {
             toolName: part.toolName,
             toolArgs: part.arguments,
             approvalClass: registered.spec.approvalClass,
             riskAssessment,
+            networkPolicyResult,
         };
 
         const result = resolveApproval(request, {
             config: config.resolvedConfig,
             sessionGrants: config.sessionGrants,
             noConfirm: config.autoConfirm,
+            workspaceRoot: config.workspaceRoot,
             allowedTools: config.allowedTools,
         });
 
-        if (result.decision === 'allow') return null;
+        if (result.decision === 'allow') {
+            return {
+                denied: null,
+                networkApproved: networkPolicyResult?.decision === 'confirm',
+            };
+        }
 
         if (result.decision === 'deny') {
             return {
-                status: 'error',
-                data: '',
-                error: {
-                    code: 'tool.permission',
-                    message: `Denied: ${result.reason}`,
+                denied: {
+                    status: 'error',
+                    data: '',
+                    error: {
+                        code: 'tool.permission',
+                        message: `Denied: ${result.reason}`,
+                        retryable: false,
+                    },
+                    truncated: false,
+                    bytesReturned: 0,
+                    bytesOmitted: 0,
                     retryable: false,
+                    timedOut: false,
+                    mutationState: 'none',
                 },
-                truncated: false,
-                bytesReturned: 0,
-                bytesOmitted: 0,
-                retryable: false,
-                timedOut: false,
-                mutationState: 'none',
+                networkApproved: false,
             };
         }
 
@@ -1415,18 +1795,60 @@ export class TurnEngine extends EventEmitter {
             result.decision === 'confirm' &&
             matchingAuthorityDecision(part, config, 'approve')
         ) {
-            return null;
+            return { denied: null, networkApproved: false };
         }
 
         // confirm or confirm_always — prompt user
         // Check promptUser only (not interactive) so one-shot mode with TTY can prompt
         if (!config.promptUser) {
             return {
+                denied: {
+                    status: 'error',
+                    data: '',
+                    error: {
+                        code: 'tool.permission',
+                        message: `Requires confirmation but no interactive prompt available: ${result.reason}`,
+                        retryable: false,
+                    },
+                    truncated: false,
+                    bytesReturned: 0,
+                    bytesOmitted: 0,
+                    retryable: false,
+                    timedOut: false,
+                    mutationState: 'none',
+                },
+                networkApproved: false,
+            };
+        }
+
+        const prompt = formatApprovalPrompt(request, riskAssessment);
+        const response = await config.promptUser(prompt);
+        const parsed = parseApprovalResponse(response);
+
+        if (parsed.choice === 'approve') {
+            return {
+                denied: null,
+                networkApproved: networkPolicyResult?.decision === 'confirm',
+            };
+        }
+        if (parsed.choice === 'always') {
+            // Extract command for exec tools session grant
+            const commandPattern = command || undefined;
+            config.sessionGrants.addGrant(part.toolName, commandPattern);
+            return {
+                denied: null,
+                networkApproved: networkPolicyResult?.decision === 'confirm',
+            };
+        }
+
+        // deny or edit (edit not yet supported — treat as deny)
+        return {
+            denied: {
                 status: 'error',
                 data: '',
                 error: {
                     code: 'tool.permission',
-                    message: `Requires confirmation but no interactive prompt available: ${result.reason}`,
+                    message: 'User denied the operation',
                     retryable: false,
                 },
                 truncated: false,
@@ -1435,40 +1857,8 @@ export class TurnEngine extends EventEmitter {
                 retryable: false,
                 timedOut: false,
                 mutationState: 'none',
-            };
-        }
-
-        const prompt = formatApprovalPrompt(request, riskAssessment);
-        const response = await config.promptUser(prompt);
-        const parsed = parseApprovalResponse(response);
-
-        if (parsed.choice === 'approve') return null;
-        if (parsed.choice === 'always') {
-            // Extract command for exec tools session grant
-            const command = EXEC_TOOLS.has(part.toolName)
-                ? (part.toolName === 'session_io'
-                    ? (typeof part.arguments.stdin === 'string' ? part.arguments.stdin : undefined)
-                    : (typeof part.arguments.command === 'string' ? part.arguments.command : undefined))
-                : undefined;
-            config.sessionGrants.addGrant(part.toolName, command);
-            return null;
-        }
-
-        // deny or edit (edit not yet supported — treat as deny)
-        return {
-            status: 'error',
-            data: '',
-            error: {
-                code: 'tool.permission',
-                message: 'User denied the operation',
-                retryable: false,
             },
-            truncated: false,
-            bytesReturned: 0,
-            bytesOmitted: 0,
-            retryable: false,
-            timedOut: false,
-            mutationState: 'none',
+            networkApproved: false,
         };
     }
 }

@@ -56,8 +56,21 @@ export interface ModelRequest {
     temperature: number;
     topP?: number;
     thinking?: { type: 'enabled' | 'disabled' };
+    responseFormat?: ModelResponseFormat;
     extensions?: ExtensionRequest[];
 }
+
+export type ModelResponseFormat =
+    | { type: 'text' }
+    | { type: 'json_object' }
+    | {
+        type: 'json_schema';
+        json_schema: {
+            name: string;
+            strict?: boolean;
+            schema: Record<string, unknown>;
+        };
+    };
 
 export interface RequestMessage {
     role: 'system' | 'user' | 'assistant' | 'tool';

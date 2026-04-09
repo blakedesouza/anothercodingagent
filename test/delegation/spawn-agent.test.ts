@@ -25,6 +25,7 @@ import {
     validateAuthorityNarrowing,
 } from '../../src/delegation/spawn-agent.js';
 import type {
+    AuthorityRule,
     SpawnAgentDeps,
     SpawnCallerContext,
     DelegationLimits,
@@ -126,7 +127,7 @@ function makeCallerContext(overrides?: Partial<SpawnCallerContext>): SpawnCaller
         rootSessionId: ROOT_SESSION_ID,
         callerPreauths: [],
         callerAuthority: [],
-        callerTools: ['read_file', 'write_file', 'edit_file', 'find_paths', 'search_text', 'exec_command', 'lsp_query', 'spawn_agent'],
+        callerTools: ['read_file', 'write_file', 'edit_file', 'find_paths', 'search_text', 'exec_command', 'lsp_query', 'spawn_agent', 'message_agent', 'await_agent'],
         ...overrides,
     };
 }
@@ -270,6 +271,24 @@ describe('spawn_agent', () => {
             const data = parseOutput(result);
             const tools = data.tools as string[];
             expect(tools).toEqual(['read_file', 'write_file']);
+        });
+
+        it('spawn with explicit empty allowed_tools → child gets no tools', async () => {
+            const toolReg = buildTestToolRegistry();
+            const { registry } = AgentRegistry.resolve(toolReg);
+            const deps = makeDeps(registry);
+            const callerCtx = makeCallerContext();
+            const impl = createSpawnAgentImpl(deps, callerCtx);
+
+            const result = await impl(
+                { agent_type: 'coder', task: 'limited task', allowed_tools: [] },
+                stubToolContext,
+            );
+
+            expect(result.status).toBe('success');
+            const data = parseOutput(result);
+            const tools = data.tools as string[];
+            expect(tools).toEqual([]);
         });
 
         it('spawn with widening allowed_tools → rejected (narrowing only)', async () => {
@@ -468,7 +487,7 @@ describe('spawn_agent', () => {
             const { registry } = AgentRegistry.resolve(toolReg);
             const deps = makeDeps(registry);
 
-            const parentAuthority: PreauthRule[] = [
+            const parentAuthority: AuthorityRule[] = [
                 { id: 'auth-1', tool: 'exec_command', match: { commandRegex: '^npm' }, decision: 'allow', scope: 'session' },
                 { id: 'auth-2', tool: 'write_file', match: {}, decision: 'allow', scope: 'session' },
             ];
@@ -495,7 +514,7 @@ describe('spawn_agent', () => {
             const { registry } = AgentRegistry.resolve(toolReg);
             const deps = makeDeps(registry);
 
-            const parentAuthority: PreauthRule[] = [
+            const parentAuthority: AuthorityRule[] = [
                 { id: 'auth-1', tool: 'exec_command', match: { commandRegex: '^npm test$' }, decision: 'allow', scope: 'session' },
             ];
             const callerCtx = makeCallerContext({ callerAuthority: parentAuthority });
@@ -523,7 +542,7 @@ describe('spawn_agent', () => {
             const { registry } = AgentRegistry.resolve(toolReg);
             const deps = makeDeps(registry);
 
-            const parentAuthority: PreauthRule[] = [
+            const parentAuthority: AuthorityRule[] = [
                 { id: 'auth-1', tool: 'exec_command', match: {}, decision: 'allow', scope: 'session' },
             ];
             const callerCtx = makeCallerContext({ callerAuthority: parentAuthority });
@@ -570,10 +589,10 @@ describe('spawn_agent', () => {
             expect(result.status).toBe('success');
             const data = parseOutput(result);
             // Resolved tools must be intersection of coder profile ∩ caller's tools
-            // Coder: read_file, write_file, edit_file, find_paths, search_text, exec_command, lsp_query
+            // Coder: read_file, write_file, edit_file, find_paths, search_text, exec_command, lsp_query, spawn_agent, message_agent, await_agent
             // Caller: read_file, spawn_agent
-            // Intersection: read_file only (spawn_agent not in coder profile)
-            expect(data.tools).toEqual(['read_file']);
+            // Intersection: read_file, spawn_agent
+            expect(data.tools).toEqual(['read_file', 'spawn_agent']);
         });
     });
 
@@ -641,10 +660,15 @@ describe('DelegationTracker', () => {
         const promise = new Promise<void>(r => { resolve = r; });
         tracker.registerAgent({
             identity,
+            parentSessionId: ROOT_SESSION_ID,
             childSessionId: 'ses_test_00000000000000000001' as SessionId,
             status: 'active',
             tools: ['read_file'],
             preAuthorizedPatterns: [],
+            authority: [],
+            profileName: 'general',
+            task: 'test',
+            context: '',
             phase: 'booting',
             activeTool: null,
             lastEventAt: new Date().toISOString(),
@@ -715,18 +739,18 @@ describe('validatePreauthNarrowing', () => {
 
 describe('validateAuthorityNarrowing', () => {
     it('returns empty for structurally matching rule', () => {
-        const parent: PreauthRule[] = [
+        const parent: AuthorityRule[] = [
             { id: 'p1', tool: 'exec_command', match: { commandRegex: '^npm' }, decision: 'allow', scope: 'session' },
         ];
-        const override: PreauthRule[] = [
+        const override: AuthorityRule[] = [
             { id: 'o1', tool: 'exec_command', match: { commandRegex: '^npm' }, decision: 'allow', scope: 'session' },
         ];
         expect(validateAuthorityNarrowing(parent, override)).toEqual([]);
     });
 
     it('returns rejected for widening (no parent authority)', () => {
-        const parent: PreauthRule[] = [];
-        const override: PreauthRule[] = [
+        const parent: AuthorityRule[] = [];
+        const override: AuthorityRule[] = [
             { id: 'o1', tool: 'exec_command', match: {}, decision: 'allow', scope: 'session' },
         ];
         const rejected = validateAuthorityNarrowing(parent, override);
@@ -734,10 +758,10 @@ describe('validateAuthorityNarrowing', () => {
     });
 
     it('returns rejected when match pattern differs', () => {
-        const parent: PreauthRule[] = [
+        const parent: AuthorityRule[] = [
             { id: 'p1', tool: 'exec_command', match: { commandRegex: '^npm test$' }, decision: 'allow', scope: 'session' },
         ];
-        const override: PreauthRule[] = [
+        const override: AuthorityRule[] = [
             { id: 'o1', tool: 'exec_command', match: {}, decision: 'allow', scope: 'session' },
         ];
         const rejected = validateAuthorityNarrowing(parent, override);

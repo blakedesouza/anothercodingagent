@@ -51,6 +51,18 @@ describe('M11.1 — StaticCatalog', () => {
         expect(gpt?.capabilities.reasoning).toBe(false);
     });
 
+    it('includes glm-5 static fallback metadata', () => {
+        const catalog = new StaticCatalog();
+        const glm = catalog.getModel('zai-org/glm-5');
+        expect(glm).not.toBeNull();
+        expect(glm!.contextLength).toBe(200_000);
+        expect(glm!.maxOutputTokens).toBe(128_000);
+        expect(glm!.capabilities.toolCalling).toBe(true);
+        expect(glm!.capabilities.reasoning).toBe(true);
+        expect(glm!.capabilities.structuredOutput).toBe(true);
+        expect(glm!.pricing).toEqual({ input: 0.3, output: 2.55 });
+    });
+
     it('maps toolCalling=false for models with supportsTools=none', () => {
         const catalog = new StaticCatalog();
         const dsr = catalog.getModel('deepseek-reasoner');
@@ -160,6 +172,22 @@ describe('M11.1 — NanoGptCatalog', () => {
                     'Authorization': 'Bearer my-secret-key',
                 }),
             }),
+        );
+    });
+
+    it('defaults to the same endpoint family as subscription chat completions', async () => {
+        mockFetch.mockResolvedValueOnce(makeNanoGptResponse([]));
+
+        const catalog = new NanoGptCatalog({
+            apiKey: 'my-secret-key',
+            fetchFn: mockFetch,
+        });
+
+        await catalog.fetch();
+
+        expect(mockFetch).toHaveBeenCalledWith(
+            'https://nano-gpt.com/api/subscription/v1/models?detailed=true',
+            expect.any(Object),
         );
     });
 

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 
 // --- Types ---
@@ -77,7 +77,7 @@ const STACK_MARKERS: ReadonlyArray<{ file: string; stack: string }> = [
 
 /**
  * Walk up from `startDir` looking for project root markers.
- * Returns the first directory containing `.git/` (strongest).
+ * Returns the first directory that is a usable git work tree root (strongest).
  * Falls back to first directory containing a language root file.
  * Returns null if nothing found (filesystem root reached).
  */
@@ -86,8 +86,8 @@ export function detectRoot(startDir: string): string | null {
     let fallback: string | null = null;
 
     while (true) {
-        // .git/ is the strongest marker — return immediately
-        if (isDirectory(join(dir, '.git'))) {
+        // A usable git root is the strongest marker — return immediately.
+        if (isUsableGitRoot(dir)) {
             return dir;
         }
 
@@ -243,9 +243,10 @@ export function renderProjectContext(snapshot: ProjectSnapshot): string {
 
 // --- Helpers ---
 
-function isDirectory(path: string): boolean {
+function isUsableGitRoot(dir: string): boolean {
+    if (!existsSync(join(dir, '.git'))) return false;
     try {
-        return statSync(path).isDirectory();
+        return resolve(gitExec(dir, ['rev-parse', '--show-toplevel']).trim()) === resolve(dir);
     } catch {
         return false;
     }

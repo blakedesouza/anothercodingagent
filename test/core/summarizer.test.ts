@@ -473,6 +473,38 @@ describe('Summarizer', () => {
             expect(result.usedFallback).toBe(false);
             expect(result.summary.text).toBe('LLM-generated summary of the conversation');
             expect(result.summary.pinnedFacts).toEqual(['fact1', 'fact2']);
+            expect(result.durableStatePatch).toEqual({});
+        });
+
+        it('surfaces normalized durableStatePatch from the summarizer response', async () => {
+            const allItems: ConversationItem[] = [];
+            for (let i = 0; i < 5; i++) {
+                allItems.push(...makeSimpleTurn(textOfTokens(200), textOfTokens(200)));
+            }
+
+            const mockProvider = createMockProvider({
+                summaryText: 'summary',
+                pinnedFacts: [],
+                durableStatePatch: {
+                    goal: 'ship auth fix',
+                    confirmedFactsAdd: ['tests are green'],
+                    openLoopsUpdate: [{ id: 'loop_1', status: 'done' }],
+                },
+            });
+
+            const result = await summarizeChunk({
+                chunkItems: allItems,
+                allItems,
+                provider: mockProvider,
+                model: 'test-model',
+                nextSeq: 51,
+            });
+
+            expect(result.durableStatePatch).toEqual({
+                goal: 'ship auth fix',
+                confirmedFactsAdd: ['tests are green'],
+                openLoopsUpdate: [{ id: 'loop_1', status: 'done' }],
+            });
         });
 
         it('falls back to deterministic on LLM error', async () => {

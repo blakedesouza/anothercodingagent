@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
 import { loadSecrets } from '../../src/config/secrets.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
-const SRC_INDEX = join(ROOT, 'src', 'index.ts');
+const DIST_INDEX = join(ROOT, 'dist', 'index.js');
+const execFileAsync = promisify(execFile);
 
 /** Isolated HOME for test sessions — prevents polluting user's real ~/.aca/ */
 const TEST_HOME = mkdtempSync(join(tmpdir(), 'aca-test-home-'));
@@ -16,6 +18,13 @@ let hasApiKey = false;
 let apiKeyEnv: Record<string, string> = {};
 
 beforeAll(async () => {
+    if (!existsSync(DIST_INDEX)) {
+        execFileSync('npm', ['run', 'build'], {
+            cwd: ROOT,
+            encoding: 'utf-8',
+            timeout: 60_000,
+        });
+    }
     const result = await loadSecrets();
     const key = result.secrets.nanogpt;
     if (key && key.trim() !== '') {
@@ -29,14 +38,13 @@ afterAll(() => {
 });
 
 /**
- * Helper: run `npx tsx src/index.ts <args>` with the real API key and return results.
- * Uses tsx (dev mode) to avoid needing a fresh build.
+ * Helper: run `node dist/index.js <args>` with the built standalone CLI.
  * HOME is set to an isolated temp dir to prevent polluting user sessions.
  */
-function runAca(
+async function runAca(
     args: string[],
     options?: { env?: Record<string, string>; timeout?: number },
-): { stdout: string; stderr: string; exitCode: number } {
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     const env = {
         ...process.env,
         NODE_NO_WARNINGS: '1',
@@ -45,39 +53,39 @@ function runAca(
         ...(options?.env ?? {}),
     };
     try {
-        const stdout = execFileSync('npx', ['tsx', SRC_INDEX, ...args], {
+        const { stdout, stderr } = await execFileAsync('node', [DIST_INDEX, ...args], {
             cwd: ROOT,
             encoding: 'utf-8',
             timeout: options?.timeout ?? 60_000,
             env,
         });
-        return { stdout, stderr: '', exitCode: 0 };
+        return { stdout, stderr, exitCode: 0 };
     } catch (err: unknown) {
-        const e = err as { stdout?: string; stderr?: string; status?: number };
+        const e = err as { stdout?: string; stderr?: string; code?: number | string };
         return {
             stdout: e.stdout ?? '',
             stderr: e.stderr ?? '',
-            exitCode: e.status ?? 1,
+            exitCode: typeof e.code === 'number' ? e.code : 1,
         };
     }
 }
 
 describe('M8.2 — First Real Run', () => {
     describe('one-shot with real NanoGPT', () => {
-        it('produces non-empty stdout with real LLM response', { timeout: 60_000 }, () => {
+        it('produces non-empty stdout with real LLM response', { timeout: 60_000 }, async () => {
             if (!hasApiKey) return; // skip without API key
 
-            const { stdout, exitCode } = runAca(['"what is 2+2"']);
+            const { stdout, exitCode } = await runAca(['"what is 2+2"']);
             // The LLM should produce some text
             expect(exitCode).toBe(0);
             expect(stdout.trim().length).toBeGreaterThan(0);
         });
 
-        it('session manifest exists after run', { timeout: 60_000 }, () => {
+        it('session manifest exists after run', { timeout: 60_000 }, async () => {
             if (!hasApiKey) return;
 
             // Run a one-shot and check session dir
-            runAca(['what is the capital of France']);
+            await runAca(['what is the capital of France']);
 
             const sessionsDir = join(TEST_HOME, '.aca', 'sessions');
             expect(existsSync(sessionsDir)).toBe(true);
@@ -100,11 +108,11 @@ describe('M8.2 — First Real Run', () => {
             expect(manifest.turnCount).toBeGreaterThanOrEqual(1);
         });
 
-        it('conversation.jsonl contains user message + assistant response', { timeout: 60_000 }, () => {
+        it('conversation.jsonl contains user message + assistant response', { timeout: 60_000 }, async () => {
             if (!hasApiKey) return;
 
             // Run a one-shot
-            runAca(['say hello']);
+            await runAca(['say hello']);
 
             const sessionsDir = join(TEST_HOME, '.aca', 'sessions');
             const dirs = readdirSync(sessionsDir)
@@ -133,38 +141,38 @@ describe('M8.2 — First Real Run', () => {
     });
 
     describe('error handling', () => {
-        it('bad API key → stderr contains auth error and exit code 4', { timeout: 30_000 }, () => {
-            const { stderr, exitCode } = runAca(['hello'], {
+        it('bad API key → stderr contains auth error and exit code 4', { timeout: 30_000 }, async () => {
+            const { stderr, exitCode } = await runAca(['hello'], {
                 env: { NANOGPT_API_KEY: 'bad-key-12345' },
             });
             expect(exitCode).toBe(4);
             expect(stderr).toContain('API key');
         });
 
-        it('missing API key → stderr contains error and exit code 4', { timeout: 30_000 }, () => {
+        it('missing API key → stderr contains error and exit code 4', { timeout: 30_000 }, async () => {
             // Override key to empty AND set HOME to temp dir to prevent ~/.api_keys fallback
             const { mkdtempSync } = require('node:fs');
             const fakeHome = mkdtempSync(join(require('node:os').tmpdir(), 'aca-nohome-'));
             const env: Record<string, string> = { NANOGPT_API_KEY: '', HOME: fakeHome };
-            const { stderr, exitCode } = runAca(['hello'], { env });
+            const { stderr, exitCode } = await runAca(['hello'], { env });
             expect(exitCode).toBe(4);
             expect(stderr).toContain('API key');
         });
 
-        it('invalid model → exits non-zero with error on stderr', { timeout: 30_000 }, () => {
+        it('invalid model → exits non-zero with error on stderr', { timeout: 30_000 }, async () => {
             if (!hasApiKey) return;
 
-            const { stderr, exitCode } = runAca(['--model', 'nonexistent/fake-model-xyz', 'hello']);
+            const { stderr, exitCode } = await runAca(['--model', 'nonexistent/fake-model-xyz', 'hello']);
             expect(exitCode).not.toBe(0);
             expect(stderr.length).toBeGreaterThan(0);
         });
     });
 
     describe('invoke mode (executor)', () => {
-        function runInvoke(
+        async function runInvoke(
             task: string,
-            opts?: { env?: Record<string, string>; timeout?: number },
-        ): { stdout: string; stderr: string; exitCode: number } {
+            opts?: { env?: Record<string, string>; timeout?: number; args?: string[] },
+        ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
             const request = JSON.stringify({
                 contract_version: '1.0.0',
                 schema_version: '1.0.0',
@@ -177,23 +185,51 @@ describe('M8.2 — First Real Run', () => {
                 ...apiKeyEnv,
                 ...(opts?.env ?? {}),
             };
-            try {
-                const stdout = execFileSync('npx', ['tsx', SRC_INDEX, 'invoke'], {
+            return await new Promise((resolve) => {
+                const child = spawn('node', [DIST_INDEX, 'invoke', ...(opts?.args ?? [])], {
                     cwd: ROOT,
-                    encoding: 'utf-8',
-                    input: request,
-                    timeout: opts?.timeout ?? 60_000,
                     env,
+                    stdio: ['pipe', 'pipe', 'pipe'],
                 });
-                return { stdout, stderr: '', exitCode: 0 };
-            } catch (err: unknown) {
-                const e = err as { stdout?: string; stderr?: string; status?: number };
-                return {
-                    stdout: e.stdout ?? '',
-                    stderr: e.stderr ?? '',
-                    exitCode: e.status ?? 1,
+
+                let stdout = '';
+                let stderr = '';
+                let settled = false;
+                const timeoutMs = opts?.timeout ?? 60_000;
+
+                const finalize = (exitCode: number) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    resolve({ stdout, stderr, exitCode });
                 };
-            }
+
+                const timer = setTimeout(() => {
+                    child.kill('SIGTERM');
+                    finalize(1);
+                }, timeoutMs);
+
+                child.stdout.setEncoding('utf-8');
+                child.stdout.on('data', (chunk: string) => {
+                    stdout += chunk;
+                });
+
+                child.stderr.setEncoding('utf-8');
+                child.stderr.on('data', (chunk: string) => {
+                    stderr += chunk;
+                });
+
+                child.on('error', (error) => {
+                    stderr += error.message;
+                    finalize(1);
+                });
+
+                child.on('close', (code) => {
+                    finalize(code ?? 1);
+                });
+
+                child.stdin.end(request);
+            });
         }
 
         // TODO(M10.2): moonshotai/kimi-k2.5 (current project default) does not emit
@@ -213,8 +249,8 @@ describe('M8.2 — First Real Run', () => {
             expect(response.usage.output_tokens).toBeGreaterThan(0);
         });
 
-        it('returns error for bad API key', { timeout: 30_000 }, () => {
-            const { stdout, exitCode } = runInvoke('hello', {
+        it('returns error for bad API key', { timeout: 30_000 }, async () => {
+            const { stdout, exitCode } = await runInvoke('hello', {
                 env: { NANOGPT_API_KEY: 'bad-key-12345' },
             });
             expect(exitCode).not.toBe(0);
@@ -224,44 +260,31 @@ describe('M8.2 — First Real Run', () => {
             expect(response.errors.length).toBeGreaterThan(0);
         });
 
-        it('returns structured error response (not empty success) on LLM failure', { timeout: 30_000 }, () => {
+        it('returns structured error response (not empty success) on LLM failure', { timeout: 30_000 }, async () => {
             if (!hasApiKey) return;
 
-            // Use a model that NanoGPT won't recognize
-            const request = JSON.stringify({
-                contract_version: '1.0.0',
-                schema_version: '1.0.0',
-                task: 'hello',
+            const { stdout, exitCode } = await runInvoke('hello', {
+                env: {
+                    ACA_MODEL_DEFAULT: 'nonexistent/fake-model-xyz-999',
+                },
             });
-            const env = {
-                ...process.env,
-                NODE_NO_WARNINGS: '1',
-                HOME: TEST_HOME,
-                ...apiKeyEnv,
-                // Override model to something invalid
-                ACA_MODEL_DEFAULT: 'nonexistent/fake-model-xyz-999',
-            };
-            try {
-                const stdout = execFileSync('npx', ['tsx', SRC_INDEX, 'invoke'], {
-                    cwd: ROOT,
-                    encoding: 'utf-8',
-                    input: request,
-                    timeout: 30_000,
-                    env,
-                });
-                // Should have exited non-zero, but if it didn't, check the response
-                const response = JSON.parse(stdout.trim());
-                expect(response.status).toBe('error');
-            } catch (err: unknown) {
-                const e = err as { stdout?: string; status?: number };
-                // Non-zero exit expected
-                expect(e.status).not.toBe(0);
-                if (e.stdout && e.stdout.trim()) {
-                    const response = JSON.parse(e.stdout.trim());
-                    expect(response.status).toBe('error');
-                    expect(response.errors.length).toBeGreaterThan(0);
-                }
-            }
+
+            expect(exitCode).not.toBe(0);
+            const response = JSON.parse(stdout.trim());
+            expect(response.status).toBe('error');
+            expect(response.errors.length).toBeGreaterThan(0);
+        });
+
+        it('accepts invoke --json as a backward-compatible alias', { timeout: 30_000 }, async () => {
+            const { stdout, exitCode } = await runInvoke('hello', {
+                args: ['--json'],
+                env: { NANOGPT_API_KEY: 'bad-key-12345' },
+            });
+            expect(exitCode).not.toBe(0);
+
+            const response = JSON.parse(stdout.trim());
+            expect(response.status).toBe('error');
+            expect(response.errors.length).toBeGreaterThan(0);
         });
     });
 

@@ -412,14 +412,25 @@ export function computeDigest(
     switch (toolName) {
         case 'read_file': {
             const filePath = (args.file_path ?? args.path ?? 'unknown') as string;
-            const startLine = (args.start_line ?? args.offset) as number | undefined;
-            const endLine = (args.end_line ?? args.limit) as number | undefined;
+            const startLine = (args.line_start ?? args.start_line ?? args.offset) as number | undefined;
+            const endLine = (args.line_end ?? args.end_line ?? args.limit) as number | undefined;
             const lineRange = startLine != null && endLine != null
                 ? `lines ${startLine}-${endLine}`
                 : startLine != null
                     ? `from line ${startLine}`
                     : 'all lines';
-            const totalLines = countLines(output.data);
+            const parsed = tryParseJson(output.data) as
+                | { totalLines?: unknown; lineCount?: unknown; isBinary?: unknown }
+                | undefined;
+            const totalLines =
+                typeof parsed?.totalLines === 'number'
+                    ? parsed.totalLines
+                    : typeof parsed?.lineCount === 'number'
+                        ? parsed.lineCount
+                        : countLines(output.data);
+            if (parsed?.isBinary === true) {
+                return `read_file: ${filePath} (${lineRange}, binary file)\n[binary content omitted — use read_file to inspect metadata]`;
+            }
             return `read_file: ${filePath} (${lineRange}, ${totalLines} lines total)\n[content omitted — use read_file to re-read]`;
         }
         case 'exec_command': {
@@ -441,29 +452,29 @@ export function computeDigest(
         }
         case 'search_text': {
             const query = (args.query ?? args.pattern ?? 'unknown') as string;
-            const lines = extractNonEmptyLines(output.data);
-            const matchCount = lines.length;
-            const topPaths = lines.slice(0, 3).join(', ');
+            const parsed = parseSearchTextResult(output.data);
+            const matchCount = parsed.matchCount;
+            const topPaths = parsed.topPaths.join(', ');
             let result = `search_text: "${query}" — ${matchCount} matches`;
             if (topPaths) result += `\nTop: ${topPaths}`;
             return result;
         }
         case 'find_paths': {
             const pattern = (args.pattern ?? args.glob ?? 'unknown') as string;
-            const lines = extractNonEmptyLines(output.data);
-            const matchCount = lines.length;
-            const topPaths = lines.slice(0, 3).join(', ');
+            const parsed = parseFindPathsResult(output.data);
+            const matchCount = parsed.matchCount;
+            const topPaths = parsed.topPaths.join(', ');
             let result = `find_paths: "${pattern}" — ${matchCount} matches`;
             if (topPaths) result += `\nTop: ${topPaths}`;
             return result;
         }
         case 'lsp_query': {
             const operation = (args.operation ?? 'unknown') as string;
-            const target = (args.target ?? args.symbol ?? 'unknown') as string;
-            const lines = extractNonEmptyLines(output.data);
-            const resultCount = lines.length;
+            const target = (args.file ?? args.target ?? args.symbol ?? 'unknown') as string;
+            const parsed = parseLspQueryResult(output.data);
+            const resultCount = parsed.resultCount;
             let result = `lsp_query: ${operation} on ${target} — ${resultCount} results`;
-            if (lines[0]) result += `\nFirst: ${lines[0]}`;
+            if (parsed.firstResult) result += `\nFirst: ${parsed.firstResult}`;
             return result;
         }
         default: {
@@ -491,6 +502,18 @@ function extractFirstLine(text: string): string | undefined {
     return line?.trim();
 }
 
+function topUnique(items: string[], maxItems: number): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const item of items) {
+        if (!item || seen.has(item)) continue;
+        seen.add(item);
+        result.push(item);
+        if (result.length >= maxItems) break;
+    }
+    return result;
+}
+
 function tryParseJson(text: string): Record<string, unknown> | undefined {
     try {
         const parsed = JSON.parse(text);
@@ -498,6 +521,107 @@ function tryParseJson(text: string): Record<string, unknown> | undefined {
     } catch {
         return undefined;
     }
+}
+
+function parseSearchTextResult(text: string): { matchCount: number; topPaths: string[] } {
+    const parsed = tryParseJson(text) as { matches?: Array<{ file?: unknown }> } | undefined;
+    if (Array.isArray(parsed?.matches)) {
+        const files = parsed.matches
+            .map((match) => typeof match.file === 'string' ? match.file : '')
+            .filter(Boolean);
+        return {
+            matchCount: parsed.matches.length,
+            topPaths: topUnique(files, 3),
+        };
+    }
+
+    const lines = extractNonEmptyLines(text);
+    return {
+        matchCount: lines.length,
+        topPaths: lines.slice(0, 3),
+    };
+}
+
+function parseFindPathsResult(text: string): { matchCount: number; topPaths: string[] } {
+    const parsed = tryParseJson(text) as { matches?: Array<{ path?: unknown }> } | undefined;
+    if (Array.isArray(parsed?.matches)) {
+        const paths = parsed.matches
+            .map((match) => typeof match.path === 'string' ? match.path : '')
+            .filter(Boolean);
+        return {
+            matchCount: parsed.matches.length,
+            topPaths: topUnique(paths, 3),
+        };
+    }
+
+    const lines = extractNonEmptyLines(text);
+    return {
+        matchCount: lines.length,
+        topPaths: lines.slice(0, 3),
+    };
+}
+
+function parseLspQueryResult(text: string): { resultCount: number; firstResult?: string } {
+    const parsed = tryParseJson(text) as
+        | {
+            kind?: unknown;
+            contents?: unknown;
+            locations?: Array<{ uri?: unknown; startLine?: unknown; startCharacter?: unknown }>;
+            diagnostics?: Array<{ message?: unknown; severity?: unknown }>;
+            symbols?: Array<{ name?: unknown; kind?: unknown }>;
+            items?: Array<{ label?: unknown; detail?: unknown }>;
+            edit?: { changes?: Record<string, unknown> };
+        }
+        | undefined;
+    if (!parsed) {
+        const lines = extractNonEmptyLines(text);
+        return { resultCount: lines.length, firstResult: lines[0] };
+    }
+
+    if (parsed.kind === 'hover') {
+        const firstLine = typeof parsed.contents === 'string' ? extractFirstLine(parsed.contents) : undefined;
+        return { resultCount: firstLine ? 1 : 0, firstResult: firstLine };
+    }
+
+    if (Array.isArray(parsed.locations)) {
+        const first = parsed.locations[0];
+        const location = first && typeof first.uri === 'string'
+            ? `${first.uri}:${String(first.startLine ?? '?')}:${String(first.startCharacter ?? '?')}`
+            : undefined;
+        return { resultCount: parsed.locations.length, firstResult: location };
+    }
+
+    if (Array.isArray(parsed.diagnostics)) {
+        const first = parsed.diagnostics[0];
+        const message = first && typeof first.message === 'string'
+            ? first.message
+            : undefined;
+        return { resultCount: parsed.diagnostics.length, firstResult: message };
+    }
+
+    if (Array.isArray(parsed.symbols)) {
+        const first = parsed.symbols[0];
+        const symbol = first && typeof first.name === 'string'
+            ? first.name
+            : undefined;
+        return { resultCount: parsed.symbols.length, firstResult: symbol };
+    }
+
+    if (Array.isArray(parsed.items)) {
+        const first = parsed.items[0];
+        const label = first && typeof first.label === 'string'
+            ? first.label
+            : undefined;
+        return { resultCount: parsed.items.length, firstResult: label };
+    }
+
+    const renameChanges = parsed.edit?.changes;
+    if (renameChanges && typeof renameChanges === 'object') {
+        const paths = Object.keys(renameChanges);
+        return { resultCount: paths.length, firstResult: paths[0] };
+    }
+
+    return { resultCount: 0 };
 }
 
 // --- Packing algorithm ---
@@ -550,17 +674,44 @@ function pack(
 
     // Current turn is always included. Apply 25% guard at ALL tiers.
     let adjustedCurrentTurnTokens = currentTurnTokens;
+    const currentTurnDigestCandidates: Array<{
+        id: string;
+        digest: string;
+        itemTokens: number;
+        digestTokens: number;
+    }> = [];
     for (const item of currentTurnItems) {
         if (item.kind === 'tool_result') {
             const itemTokens = estimateItemTokens(item, bytesPerToken, calibrationMultiplier);
-            if (itemTokens > singleItemThreshold) {
-                const args = findToolCallArgs(allItems, item.toolCallId);
-                const digest = computeDigest(item, args);
+            const args = findToolCallArgs(allItems, item.toolCallId);
+            const digest = computeDigest(item, args);
+            const digestTokens = estimateDigestTokens(digest, bytesPerToken, calibrationMultiplier);
+            currentTurnDigestCandidates.push({
+                id: item.id,
+                digest,
+                itemTokens,
+                digestTokens,
+            });
+
+            if (itemTokens > singleItemThreshold && digestTokens < itemTokens) {
                 digestOverrides.set(item.id, digest);
                 digestedItemCount++;
-                const digestTokens = estimateDigestTokens(digest, bytesPerToken, calibrationMultiplier);
                 adjustedCurrentTurnTokens -= (itemTokens - digestTokens);
             }
+        }
+    }
+
+    // Emergency tier must still fit the always-pinned current turn chain. If the
+    // current turn is too large as a whole, progressively digest older tool
+    // results within that turn until it fits or no additional savings remain.
+    if (tier === 'emergency' && adjustedCurrentTurnTokens > itemBudget) {
+        for (const candidate of currentTurnDigestCandidates) {
+            if (adjustedCurrentTurnTokens <= itemBudget) break;
+            if (digestOverrides.has(candidate.id)) continue;
+            if (candidate.digestTokens >= candidate.itemTokens) continue;
+            digestOverrides.set(candidate.id, candidate.digest);
+            digestedItemCount++;
+            adjustedCurrentTurnTokens -= (candidate.itemTokens - candidate.digestTokens);
         }
     }
 

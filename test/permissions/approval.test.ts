@@ -418,6 +418,28 @@ describe('step 5: pre-auth rules', () => {
         expect(result.decision).toBe('allow');
         expect(result.step).toBe(5);
     });
+
+    it('preauth cwdPattern matches exec_command default workspace cwd when args omit cwd', () => {
+        const config = makeConfigWithPermissions({
+            preauth: [{
+                id: 'r1',
+                tool: 'exec_command',
+                match: { cwdPattern: '/repo' },
+                decision: 'allow',
+                scope: 'permanent',
+            }],
+        });
+        const result = resolveApproval(
+            makeRequest({
+                toolName: 'exec_command',
+                toolArgs: { command: 'npm test' },
+                approvalClass: 'external-effect',
+            }),
+            makeOptions({ config, workspaceRoot: '/repo' }),
+        );
+        expect(result.decision).toBe('allow');
+        expect(result.step).toBe(5);
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -481,6 +503,25 @@ describe('step 6: session grants', () => {
         expect(result.decision).toBe('allow');
         expect(result.step).toBe(6);
     });
+
+    it('session grant can re-approve an exact approved-only network command', () => {
+        const grants = new SessionGrantStore();
+        grants.addGrant('exec_command', 'curl https://example.com');
+        const result = resolveApproval(
+            makeRequest({
+                toolName: 'exec_command',
+                toolArgs: { command: 'curl https://example.com' },
+                approvalClass: 'external-effect',
+                networkPolicyResult: {
+                    decision: 'confirm',
+                    reason: 'network command requires approval (mode: approved-only)',
+                },
+            }),
+            makeOptions({ sessionGrants: grants }),
+        );
+        expect(result.decision).toBe('allow');
+        expect(result.step).toBe(6);
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -514,6 +555,47 @@ describe('risk analysis: open_session and session_io', () => {
         );
         expect(result.decision).toBe('deny');
         expect(result.step).toBe(3);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Network policy integration
+// ---------------------------------------------------------------------------
+
+describe('network policy integration', () => {
+    it('network deny → denied before execution', () => {
+        const result = resolveApproval(
+            makeRequest({
+                toolName: 'exec_command',
+                toolArgs: { command: 'curl https://evil.com' },
+                approvalClass: 'external-effect',
+                networkPolicyResult: {
+                    decision: 'deny',
+                    reason: 'network access is disabled (mode: off)',
+                },
+            }),
+            makeOptions(),
+        );
+        expect(result.decision).toBe('deny');
+        expect(result.step).toBe(4);
+        expect(result.reason).toContain('network policy');
+    });
+
+    it('approved-only network confirm escalates to confirm_always and noConfirm does not bypass', () => {
+        const result = resolveApproval(
+            makeRequest({
+                toolName: 'exec_command',
+                toolArgs: { command: 'curl https://example.com' },
+                approvalClass: 'external-effect',
+                networkPolicyResult: {
+                    decision: 'confirm',
+                    reason: 'network command requires approval (mode: approved-only)',
+                },
+            }),
+            makeOptions({ noConfirm: true }),
+        );
+        expect(result.decision).toBe('confirm_always');
+        expect(result.reason).toContain('network command requires confirmation');
     });
 });
 

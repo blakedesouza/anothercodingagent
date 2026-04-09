@@ -73,6 +73,7 @@ export class StatusLine {
     private startMs = 0;
     private interval: ReturnType<typeof setInterval> | null = null;
     private currentMessage = 'Thinking';
+    private active = false;
 
     constructor(options: ProgressOptions) {
         this.output = options.output;
@@ -90,6 +91,7 @@ export class StatusLine {
         }
         this.currentMessage = sanitizeLabel(message);
         this.startMs = this.getNow();
+        this.active = true;
 
         if (!this.caps.stderr.isTTY) {
             this.output.stderr(`${timestampPrefix(this.startMs)}${this.currentMessage}...\n`);
@@ -106,9 +108,10 @@ export class StatusLine {
             clearInterval(this.interval);
             this.interval = null;
         }
-        if (this.caps.stderr.isTTY) {
+        if (this.caps.stderr.isTTY && this.active) {
             this.output.stderr('\r\x1b[K');
         }
+        this.active = false;
     }
 
     private renderTTY(): void {
@@ -269,6 +272,15 @@ export class ProgressBar {
             this.output.stderr('\n');
         } else {
             this.output.stderr(`${this.buildBarStr()} ${this.current}/${this.total} ${this.label}\n`);
+        }
+    }
+
+    /** Clear an active in-place bar without logging completion. */
+    clear(): void {
+        if (!this.active) return;
+        this.active = false;
+        if (this.caps.stderr.isTTY) {
+            this.output.stderr('\r\x1b[K');
         }
     }
 

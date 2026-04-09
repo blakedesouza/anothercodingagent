@@ -1,7 +1,7 @@
 /**
  * Tests for TurnEngine model fallback chain (M5.2).
  *
- * Fallback is triggered on: llm.rate_limit, llm.server_error, llm.timeout.
+ * Fallback is triggered on: llm.rate_limited, llm.server_error, llm.timeout.
  * Fallback is NOT triggered on: llm.content_filtered, llm.auth_error, llm.context_too_long.
  */
 import { describe, it, expect } from 'vitest';
@@ -112,8 +112,8 @@ function makeTurnEngine(
 // --- Tests ---
 
 describe('TurnEngine fallback chain', () => {
-    it('tries next model when primary returns llm.rate_limit (429)', async () => {
-        const primaryDriver = makeDriver([errorResponse('llm.rate_limit')]);
+    it('tries next model when primary returns llm.rate_limited (429)', async () => {
+        const primaryDriver = makeDriver([errorResponse('llm.rate_limited')]);
         const fallbackDriver = makeDriver([textResponse('fallback response')]);
 
         const registry = new ProviderRegistry();
@@ -146,7 +146,7 @@ describe('TurnEngine fallback chain', () => {
 
         // Fallback was triggered
         expect(fallbackEvents).toHaveLength(1);
-        expect((fallbackEvents[0] as { reason: string }).reason).toBe('llm.rate_limit');
+        expect((fallbackEvents[0] as { reason: string }).reason).toBe('llm.rate_limited');
         // Turn completed successfully using fallback
         expect(result.turn.outcome).toBe('assistant_final');
     });
@@ -274,14 +274,14 @@ describe('TurnEngine fallback chain', () => {
 
     it('aborts when fallback chain is exhausted', async () => {
         // Primary fails, fallback also fails
-        const primaryDriver = makeDriver([errorResponse('llm.rate_limit')]);
+        const primaryDriver = makeDriver([errorResponse('llm.rate_limited')]);
         const fallbackDriverWithModel: ProviderDriver = {
             capabilities: (model: string) => {
                 if (model === 'fallback-model') return BASE_CAPS;
                 throw new Error(`Unknown model: ${model}`);
             },
             async *stream(): AsyncIterable<StreamEvent> {
-                yield { type: 'error', error: { code: 'llm.rate_limit', message: 'also rate limited' } };
+                yield { type: 'error', error: { code: 'llm.rate_limited', message: 'also rate limited' } };
             },
             validate: () => ({ ok: true as const, value: undefined }),
         };
@@ -302,7 +302,7 @@ describe('TurnEngine fallback chain', () => {
     });
 
     it('emits model.fallback event with correct payload', async () => {
-        const primaryDriver = makeDriver([errorResponse('llm.rate_limit')]);
+        const primaryDriver = makeDriver([errorResponse('llm.rate_limited')]);
         const fallbackDriverWithModel: ProviderDriver = {
             capabilities: (model: string) => {
                 if (model === 'backup-model') return BASE_CAPS;
@@ -341,7 +341,7 @@ describe('TurnEngine fallback chain', () => {
         };
         expect(payload.from_model).toBe('primary-model');
         expect(payload.to_model).toBe('backup-model');
-        expect(payload.reason).toBe('llm.rate_limit');
+        expect(payload.reason).toBe('llm.rate_limited');
         expect(payload.provider).toBe('backup-provider');
     });
 

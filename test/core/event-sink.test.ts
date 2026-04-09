@@ -247,7 +247,7 @@ describe('EventSink', () => {
                 TEST_SESSION_ID,
                 1,
                 TEST_AGENT_ID,
-                { estimated_tokens: 1000, token_budget: 128000, compression_tier: 'none', item_count: 10 },
+                { estimated_tokens: 1000, token_budget: 128000, compression_tier: 'full', item_count: 10 },
             );
             sink.emit(event);
             ids.add(event.event_id);

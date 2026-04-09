@@ -177,6 +177,64 @@ describe('await_agent', () => {
             const data = parseOutput(result);
             expect(data.status).toBe('active');
         });
+
+        it('accepts a numeric string timeout from weaker model tool output', async () => {
+            const agentId = await spawnTestAgent(tracker, agentRegistry);
+            const deps: AwaitAgentDeps = { delegationTracker: tracker };
+            const impl = createAwaitAgentImpl(deps);
+
+            const result = await impl(
+                { agent_id: agentId, timeout: '0' },
+                stubToolContext,
+            );
+
+            expect(result.status).toBe('success');
+            const data = parseOutput(result);
+            expect(data.status).toBe('active');
+        });
+
+        it('resolves $spawn_agent to the latest child for the current session', async () => {
+            const agentId = await spawnTestAgent(tracker, agentRegistry);
+            const deps: AwaitAgentDeps = { delegationTracker: tracker };
+            const impl = createAwaitAgentImpl(deps);
+
+            const result = await impl(
+                { agent_id: '$spawn_agent', timeout: 0 },
+                stubToolContext,
+            );
+
+            expect(result.status).toBe('success');
+            const data = parseOutput(result);
+            expect(data.agentId).toBe(agentId);
+            expect(data.status).toBe('active');
+        });
+
+        it('resolves a spawned child label for the current session', async () => {
+            const spawnDeps: SpawnAgentDeps = {
+                agentRegistry,
+                delegationTracker: tracker,
+                limits: DEFAULT_DELEGATION_LIMITS,
+                createChildSession: createMockChildSession,
+            };
+            const spawnImpl = createSpawnAgentImpl(spawnDeps, makeCallerContext());
+            const spawned = await spawnImpl(
+                { agent_type: 'general', task: 'test task', label: 'child_agent' },
+                stubToolContext,
+            );
+            const agentId = parseOutput(spawned).agentId as string;
+            const deps: AwaitAgentDeps = { delegationTracker: tracker };
+            const impl = createAwaitAgentImpl(deps);
+
+            const result = await impl(
+                { agent_id: 'child_agent', timeout: 0 },
+                stubToolContext,
+            );
+
+            expect(result.status).toBe('success');
+            const data = parseOutput(result);
+            expect(data.agentId).toBe(agentId);
+            expect(data.status).toBe('active');
+        });
     });
 
     describe('blocking mode', () => {

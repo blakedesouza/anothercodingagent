@@ -303,20 +303,19 @@ describe('EmbeddingModel', () => {
         expect(mockPipeline).toHaveBeenCalledTimes(1);
     });
 
-    it('initialize() logs warning on failure', async () => {
+    it('initialize() returns false on failure without writing directly to console', async () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         mockPipeline.mockRejectedValue(new Error('fetch failed'));
 
         const model = new EmbeddingModel({ cacheDir });
-        await model.initialize();
+        const ok = await model.initialize();
 
-        expect(warnSpy).toHaveBeenCalledWith(
-            expect.stringContaining('Initialization failed'),
-        );
+        expect(ok).toBe(false);
+        expect(warnSpy).not.toHaveBeenCalled();
         warnSpy.mockRestore();
     });
 
-    it('env.cacheDir conflict logs warning', async () => {
+    it('env.cacheDir conflict is resolved quietly in favor of the requested cache dir', async () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         mockEnv.cacheDir = '/some/other/path';
         mockPipeline.mockResolvedValue(createMockExtractor());
@@ -324,11 +323,8 @@ describe('EmbeddingModel', () => {
         const model = new EmbeddingModel({ cacheDir });
         await model.initialize();
 
-        expect(warnSpy).toHaveBeenCalledWith(
-            expect.stringContaining('cacheDir already set'),
-        );
-        // Should NOT overwrite existing cacheDir
-        expect(mockEnv.cacheDir).toBe('/some/other/path');
+        expect(warnSpy).not.toHaveBeenCalled();
+        expect(mockEnv.cacheDir).toBe(cacheDir);
         warnSpy.mockRestore();
     });
 

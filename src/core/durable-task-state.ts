@@ -13,6 +13,7 @@ import type {
 } from '../types/conversation.js';
 import type { ProviderDriver, ModelRequest } from '../types/provider.js';
 import { generateId } from '../types/ids.js';
+import { normalizeTrackedPath, normalizeTrackedPaths } from './path-normalization.js';
 
 // --- Types ---
 
@@ -70,6 +71,10 @@ export interface DurableStatePatch {
     filesOfInterestAdd?: string[];
 }
 
+function hasPatchFields(patch: DurableStatePatch): boolean {
+    return Object.keys(patch).length > 0;
+}
+
 // --- Constants ---
 
 // Tools whose successful execution means files were modified
@@ -99,6 +104,26 @@ function addUnique(arr: string[], items: string[]): string[] {
     return dedup([...arr, ...items]);
 }
 
+function shouldTrackToolError(
+    toolName: string,
+    errorCode: string | undefined,
+    filePath: string | undefined,
+    modifiedFilesThisTurn: ReadonlySet<string>,
+): boolean {
+    if (errorCode === 'tool.deferred') {
+        return false;
+    }
+    if (
+        errorCode === 'tool.validation'
+        && toolName === 'read_file'
+        && filePath !== undefined
+        && modifiedFilesThisTurn.has(filePath)
+    ) {
+        return false;
+    }
+    return true;
+}
+
 // --- Initial State ---
 
 export function createInitialDurableTaskState(): DurableTaskState {
@@ -121,7 +146,7 @@ export function createInitialDurableTaskState(): DurableTaskState {
  * Deterministically extract facts from a completed turn's conversation items.
  * No LLM call — pure data extraction from tool calls, tool results, and user messages.
  */
-export function extractTurnFacts(turnItems: ConversationItem[]): TurnFacts {
+export function extractTurnFacts(turnItems: ConversationItem[], workspaceRoot?: string): TurnFacts {
     // Build a lookup: toolCallId → { toolName, args }
     const toolCallArgs = new Map<string, { toolName: string; args: Record<string, unknown> }>();
     for (const item of turnItems) {
@@ -136,6 +161,7 @@ export function extractTurnFacts(turnItems: ConversationItem[]): TurnFacts {
     }
 
     const modifiedFiles: string[] = [];
+    const modifiedFilesThisTurn = new Set<string>();
     const toolErrors: TurnToolError[] = [];
     const approvalsDenied: TurnApprovalDenied[] = [];
     const mentionedFiles: string[] = [];
@@ -147,19 +173,38 @@ export function extractTurnFacts(turnItems: ConversationItem[]): TurnFacts {
 
             // Successful file modifications → modifiedFiles
             if (item.output.status === 'success' && FILE_MODIFICATION_TOOLS.has(item.toolName)) {
-                if (typeof args.path === 'string') modifiedFiles.push(args.path);
-                if (typeof args.source === 'string') modifiedFiles.push(args.source);
-                if (typeof args.destination === 'string') modifiedFiles.push(args.destination);
+                if (typeof args.path === 'string') {
+                    const path = String(args.path);
+                    modifiedFiles.push(path);
+                    const normalizedPath = normalizeTrackedPath(path, workspaceRoot);
+                    if (normalizedPath) modifiedFilesThisTurn.add(normalizedPath);
+                }
+                if (typeof args.source === 'string') {
+                    const source = String(args.source);
+                    modifiedFiles.push(source);
+                    const normalizedSource = normalizeTrackedPath(source, workspaceRoot);
+                    if (normalizedSource) modifiedFilesThisTurn.add(normalizedSource);
+                }
+                if (typeof args.destination === 'string') {
+                    const destination = String(args.destination);
+                    modifiedFiles.push(destination);
+                    const normalizedDestination = normalizeTrackedPath(destination, workspaceRoot);
+                    if (normalizedDestination) modifiedFilesThisTurn.add(normalizedDestination);
+                }
             }
 
             // Tool errors → toolErrors
             if (item.output.status === 'error') {
+                const errorCode = item.output.error?.code;
                 const errorSummary = item.output.error?.message ?? item.output.data.slice(0, 120);
-                const filePath =
+                const filePathRaw =
                     typeof args.path === 'string' ? args.path :
                     typeof args.source === 'string' ? args.source :
                     undefined;
-                toolErrors.push({ toolName: item.toolName, errorSummary, filePath });
+                const filePath = filePathRaw ? normalizeTrackedPath(filePathRaw, workspaceRoot) : undefined;
+                if (shouldTrackToolError(item.toolName, errorCode, filePath, modifiedFilesThisTurn)) {
+                    toolErrors.push({ toolName: item.toolName, errorSummary, filePath });
+                }
             }
 
             // Approval denials — yieldOutcome fires for all confirm_action calls;
@@ -195,10 +240,10 @@ export function extractTurnFacts(turnItems: ConversationItem[]): TurnFacts {
     }
 
     return {
-        modifiedFiles: dedup(modifiedFiles),
+        modifiedFiles: dedup(normalizeTrackedPaths(modifiedFiles, workspaceRoot)),
         toolErrors,
         approvalsDenied,
-        mentionedFiles: dedup(mentionedFiles),
+        mentionedFiles: dedup(normalizeTrackedPaths(mentionedFiles, workspaceRoot)),
     };
 }
 
@@ -337,7 +382,74 @@ export function applyLlmPatch(
     return { ...state, goal, constraints, confirmedFacts, decisions, openLoops, blockers, filesOfInterest };
 }
 
+export function applyDurableStatePatchUpdate(
+    state: DurableTaskState,
+    patch: DurableStatePatch,
+): DurableTaskState {
+    if (!hasPatchFields(patch)) {
+        return state;
+    }
+
+    const updated = applyLlmPatch(state, patch);
+    return {
+        ...updated,
+        revision: state.revision + 1,
+        stale: false,
+    };
+}
+
 // --- Internal LLM helpers ---
+
+export function normalizeDurableStatePatch(raw: unknown): DurableStatePatch {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+        return {};
+    }
+
+    const obj = raw as Record<string, unknown>;
+    const patch: DurableStatePatch = {};
+
+    if ('goal' in obj) patch.goal = typeof obj.goal === 'string' ? obj.goal : null;
+
+    const toStrArr = (v: unknown): string[] =>
+        Array.isArray(v) ? (v as unknown[]).filter((s): s is string => typeof s === 'string') : [];
+
+    if (obj.constraintsAdd) patch.constraintsAdd = toStrArr(obj.constraintsAdd);
+    if (obj.constraintsRemove) patch.constraintsRemove = toStrArr(obj.constraintsRemove);
+    if (obj.confirmedFactsAdd) patch.confirmedFactsAdd = toStrArr(obj.confirmedFactsAdd);
+    if (obj.decisionsAdd) patch.decisionsAdd = toStrArr(obj.decisionsAdd);
+    if (obj.filesOfInterestAdd) patch.filesOfInterestAdd = toStrArr(obj.filesOfInterestAdd);
+    if (obj.blockersAdd) patch.blockersAdd = toStrArr(obj.blockersAdd);
+    if (obj.blockersRemove) patch.blockersRemove = toStrArr(obj.blockersRemove);
+
+    if (Array.isArray(obj.openLoopsAdd)) {
+        patch.openLoopsAdd = (obj.openLoopsAdd as unknown[])
+            .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
+            .map(v => ({
+                id: typeof v.id === 'string' ? v.id : generateId('item'),
+                text: typeof v.text === 'string' ? v.text : '',
+                status: VALID_LOOP_STATUSES.has(v.status as string)
+                    ? v.status as OpenLoop['status']
+                    : 'open',
+                files: Array.isArray(v.files)
+                    ? (v.files as unknown[]).filter((f): f is string => typeof f === 'string')
+                    : undefined,
+            }));
+    }
+
+    if (Array.isArray(obj.openLoopsUpdate)) {
+        patch.openLoopsUpdate = (obj.openLoopsUpdate as unknown[])
+            .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
+            .map(v => ({
+                id: typeof v.id === 'string' ? v.id : '',
+                status: VALID_LOOP_STATUSES.has(v.status as string)
+                    ? v.status as OpenLoop['status']
+                    : 'open',
+            }))
+            .filter(u => u.id !== '');
+    }
+
+    return patch;
+}
 
 /** Parse an LLM patch JSON response. Returns empty patch on failure. */
 function parseLlmPatchResponse(text: string): DurableStatePatch {
@@ -346,49 +458,7 @@ function parseLlmPatchResponse(text: string): DurableStatePatch {
 
     try {
         const raw = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-        const patch: DurableStatePatch = {};
-
-        if ('goal' in raw) patch.goal = typeof raw.goal === 'string' ? raw.goal : null;
-
-        const toStrArr = (v: unknown): string[] =>
-            Array.isArray(v) ? (v as unknown[]).filter((s): s is string => typeof s === 'string') : [];
-
-        if (raw.constraintsAdd) patch.constraintsAdd = toStrArr(raw.constraintsAdd);
-        if (raw.constraintsRemove) patch.constraintsRemove = toStrArr(raw.constraintsRemove);
-        if (raw.confirmedFactsAdd) patch.confirmedFactsAdd = toStrArr(raw.confirmedFactsAdd);
-        if (raw.decisionsAdd) patch.decisionsAdd = toStrArr(raw.decisionsAdd);
-        if (raw.filesOfInterestAdd) patch.filesOfInterestAdd = toStrArr(raw.filesOfInterestAdd);
-        if (raw.blockersAdd) patch.blockersAdd = toStrArr(raw.blockersAdd);
-        if (raw.blockersRemove) patch.blockersRemove = toStrArr(raw.blockersRemove);
-
-        if (Array.isArray(raw.openLoopsAdd)) {
-            patch.openLoopsAdd = (raw.openLoopsAdd as unknown[])
-                .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
-                .map(v => ({
-                    id: typeof v.id === 'string' ? v.id : generateId('item'),
-                    text: typeof v.text === 'string' ? v.text : '',
-                    status: VALID_LOOP_STATUSES.has(v.status as string)
-                        ? v.status as OpenLoop['status']
-                        : 'open',
-                    files: Array.isArray(v.files)
-                        ? (v.files as unknown[]).filter((f): f is string => typeof f === 'string')
-                        : undefined,
-                }));
-        }
-
-        if (Array.isArray(raw.openLoopsUpdate)) {
-            patch.openLoopsUpdate = (raw.openLoopsUpdate as unknown[])
-                .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
-                .map(v => ({
-                    id: typeof v.id === 'string' ? v.id : '',
-                    status: VALID_LOOP_STATUSES.has(v.status as string)
-                        ? v.status as OpenLoop['status']
-                        : 'open',
-                }))
-                .filter(u => u.id !== '');
-        }
-
-        return patch;
+        return normalizeDurableStatePatch(raw);
     } catch {
         return {};
     }

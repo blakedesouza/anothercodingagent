@@ -14,6 +14,21 @@ import type {
 import type { RegisteredTool } from '../tools/tool-registry.js';
 import type { ProjectSnapshot } from './project-awareness.js';
 import { renderProjectContext } from './project-awareness.js';
+import {
+    assembleContext,
+    buildToolDefsForTier,
+    getTierContextFlags,
+    renderProjectForTier,
+    type CompressionTier,
+    type ContextAssemblyResult,
+} from './context-assembly.js';
+import {
+    estimateRequestTokens,
+    estimateTextTokens,
+    MESSAGE_OVERHEAD,
+    TOOL_SCHEMA_OVERHEAD,
+} from './token-estimator.js';
+import { buildCoverageMap, visibleHistory } from './summarizer.js';
 
 // --- Capability health ---
 
@@ -80,6 +95,40 @@ export interface PromptAssemblyOptions {
 
     /** Active errors from current turn (pinned section — never compressed) */
     activeErrors?: string[];
+
+    /** Additional system messages injected ahead of the context block. */
+    additionalSystemMessages?: RequestMessage[];
+
+    /** Optional scrubber for user/tool text before it reaches the model. */
+    scrub?: (text: string) => string;
+
+    /** Optional model context window size for live compression decisions. */
+    contextLimit?: number;
+
+    /** Reserved output tokens for safe-input budgeting. */
+    reservedOutputTokens?: number;
+
+    /** Model-specific bytes-per-token estimate. */
+    bytesPerToken?: number;
+
+    /** Optional token-estimation calibration multiplier. */
+    calibrationMultiplier?: number;
+}
+
+export interface PromptAssemblyStats {
+    compressionTier: CompressionTier;
+    estimatedTokens: number;
+    safeInputBudget?: number;
+    droppedItemCount: number;
+    digestedItemCount: number;
+    instructionSummaryIncluded: boolean;
+    durableTaskStateIncluded: boolean;
+    warning?: string;
+}
+
+export interface PreparedPrompt {
+    request: ModelRequest;
+    contextStats: PromptAssemblyStats;
 }
 
 // --- System prompt template ---
@@ -120,79 +169,66 @@ export function buildContextBlock(options: {
     durableTaskState?: DurableTaskSummary;
     userInstructions?: string;
     activeErrors?: string[];
+    tier?: CompressionTier;
 }): string {
     const lines: string[] = [];
+    const tier = options.tier ?? 'full';
+    const flags = getTierContextFlags(tier);
 
     // Runtime facts
-    lines.push('--- Environment ---');
-    lines.push(`OS: ${platform()} ${release()} (${arch()})`);
-    lines.push(`Shell: ${options.shell ?? 'unknown'}`);
-    lines.push(`CWD: ${options.cwd}`);
+    const environmentLines: string[] = [];
+    if (flags.includeOsShell) {
+        environmentLines.push(`OS: ${platform()} ${release()} (${arch()})`);
+        environmentLines.push(`Shell: ${options.shell ?? 'unknown'}`);
+    }
+    if (flags.includeCwd) {
+        environmentLines.push(`CWD: ${options.cwd}`);
+    }
+    pushSection(lines, '--- Environment ---', environmentLines);
 
     // Active errors (pinned — never compressed)
     if (options.activeErrors && options.activeErrors.length > 0) {
-        lines.push('');
-        lines.push('--- Active Errors ---');
-        for (const err of options.activeErrors) {
-            lines.push(`- ${err}`);
-        }
+        pushSection(lines, '--- Active Errors ---', options.activeErrors.map((err) => `- ${err}`));
     }
 
     // Project snapshot
-    if (options.projectSnapshot) {
-        lines.push('');
-        lines.push('--- Project ---');
-        lines.push(renderProjectContext(options.projectSnapshot));
+    if (flags.includeProjectSnapshot && options.projectSnapshot) {
+        pushSection(
+            lines,
+            '--- Project ---',
+            [renderProjectForTier(tier, options.projectSnapshot)].filter(Boolean),
+        );
     }
 
     // User/repo instructions
-    if (options.userInstructions) {
-        lines.push('');
-        lines.push('--- Instructions ---');
-        lines.push(options.userInstructions);
+    if (flags.includeUserInstructions && options.userInstructions) {
+        pushSection(lines, '--- Instructions ---', [options.userInstructions]);
     }
 
     // Working set
-    if (options.workingSet && options.workingSet.length > 0) {
-        lines.push('');
-        lines.push('--- Working Set ---');
-        for (const entry of options.workingSet) {
-            lines.push(`${entry.path} (${entry.role})`);
-        }
+    if (flags.includeWorkingSet && options.workingSet && options.workingSet.length > 0) {
+        pushSection(
+            lines,
+            '--- Working Set ---',
+            options.workingSet.map((entry) => `${entry.path} (${entry.role})`),
+        );
     }
 
     // Durable task state
-    if (options.durableTaskState) {
-        const dts = options.durableTaskState;
-        const parts: string[] = [];
-        if (dts.goal) parts.push(`Goal: ${dts.goal}`);
-        if (dts.confirmedFacts && dts.confirmedFacts.length > 0) {
-            parts.push(`Facts: ${dts.confirmedFacts.join('; ')}`);
-        }
-        if (dts.openLoops && dts.openLoops.length > 0) {
-            parts.push(`Open loops: ${dts.openLoops.join('; ')}`);
-        }
-        if (dts.blockers && dts.blockers.length > 0) {
-            parts.push(`Blockers: ${dts.blockers.join('; ')}`);
-        }
-        if (parts.length > 0) {
-            lines.push('');
-            lines.push('--- Task State ---');
-            lines.push(...parts);
-        }
+    const taskStateLines = buildDurableTaskStateLines(options.durableTaskState);
+    if (flags.includeDurableTaskState) {
+        pushSection(lines, '--- Task State ---', taskStateLines);
     }
 
     // Capability health (only non-available)
-    if (options.capabilities) {
-        const degraded = options.capabilities.filter(c => c.status !== 'available');
-        if (degraded.length > 0) {
-            lines.push('');
-            lines.push('--- Capability Health ---');
-            for (const cap of degraded) {
+    if (flags.includeCapabilityHealth && options.capabilities) {
+        const degraded = options.capabilities
+            .filter(c => c.status !== 'available')
+            .map((cap) => {
                 const detail = cap.detail ? ` — ${cap.detail}` : '';
-                lines.push(`${cap.name}: ${cap.status}${detail}`);
-            }
-        }
+                return `${cap.name}: ${cap.status}${detail}`;
+            });
+        pushSection(lines, '--- Capability Health ---', degraded);
     }
 
     return lines.join('\n');
@@ -215,6 +251,7 @@ export function buildToolDefinitions(tools: RegisteredTool[]): ToolDefinition[] 
 export function buildConversationMessages(
     items: ConversationItem[],
     scrub?: (text: string) => string,
+    digestOverrides?: Map<string, string>,
 ): RequestMessage[] {
     const messages: RequestMessage[] = [];
 
@@ -253,7 +290,8 @@ export function buildConversationMessages(
                 }
             }
         } else if (item.kind === 'tool_result') {
-            const toolData = scrub ? scrub(item.output.data) : item.output.data;
+            const rawToolData = digestOverrides?.get(item.id) ?? item.output.data;
+            const toolData = scrub ? scrub(rawToolData) : rawToolData;
             messages.push({
                 role: 'tool',
                 content: JSON.stringify({
@@ -283,14 +321,21 @@ export function buildConversationMessages(
  * Layer 4: Conversation history (recent verbatim + older summarized)
  */
 export function assemblePrompt(options: PromptAssemblyOptions): ModelRequest {
+    return preparePrompt(options).request;
+}
+
+export function preparePrompt(options: PromptAssemblyOptions): PreparedPrompt {
     // Layer 1: System parameter
     const systemMessage: RequestMessage = {
         role: 'system',
         content: SYSTEM_IDENTITY,
     };
+    const additionalSystemMessages = options.additionalSystemMessages ?? [];
 
-    // Layer 3: Per-turn context block (inserted as second system message)
-    const contextBlock = buildContextBlock({
+    const bytesPerToken = options.bytesPerToken ?? 3.0;
+    const calibrationMultiplier = options.calibrationMultiplier ?? 1.0;
+    const visibleItems = visibleHistory(options.items, buildCoverageMap(options.items));
+    const fullContextBlock = buildContextBlock({
         cwd: options.cwd,
         shell: options.shell,
         projectSnapshot: options.projectSnapshot,
@@ -299,31 +344,155 @@ export function assemblePrompt(options: PromptAssemblyOptions): ModelRequest {
         durableTaskState: options.durableTaskState,
         userInstructions: options.userInstructions,
         activeErrors: options.activeErrors,
+        tier: 'full',
     });
-    const contextMessage: RequestMessage = {
-        role: 'system',
-        content: contextBlock,
-    };
+    const fullToolDefs = buildToolDefsForTier('full', options.tools);
+    const additionalSystemTokens = additionalSystemMessages.reduce(
+        (sum, message) => sum + estimateMessageTokens(String(message.content), bytesPerToken, calibrationMultiplier),
+        0,
+    );
+    const fullContextTokens = estimateMessageTokens(fullContextBlock, bytesPerToken, calibrationMultiplier);
+    const toolDefTokens = estimateToolDefinitionTokens(fullToolDefs, bytesPerToken, calibrationMultiplier);
+    const conditionalContextTokens = estimateConditionalContextTokens(
+        options.userInstructions,
+        options.durableTaskState,
+        bytesPerToken,
+        calibrationMultiplier,
+    );
+    const alwaysPinnedTokens = Math.max(
+        0,
+        estimateMessageTokens(SYSTEM_IDENTITY, bytesPerToken, calibrationMultiplier)
+            + additionalSystemTokens
+            + fullContextTokens
+            + toolDefTokens
+            - conditionalContextTokens,
+    );
 
-    // Layer 4: Conversation history
-    const conversationMessages = buildConversationMessages(options.items);
+    const compression = options.contextLimit
+        ? assembleContext({
+            contextLimit: options.contextLimit,
+            reservedOutputTokens: options.reservedOutputTokens ?? options.maxTokens ?? 4096,
+            calibrationMultiplier,
+            bytesPerToken,
+            items: visibleItems,
+            alwaysPinnedTokens,
+            conditionalPinnedTokens: conditionalContextTokens,
+        })
+        : createUncompressedResult(visibleItems);
 
-    // Assemble messages: system → context → conversation
-    const messages: RequestMessage[] = [
-        systemMessage,
-        contextMessage,
-        ...conversationMessages,
-    ];
-
-    // Layer 2: Tool definitions
-    const toolDefs = buildToolDefinitions(options.tools);
-
-    return {
+    const contextBlock = buildContextBlock({
+        cwd: options.cwd,
+        shell: options.shell,
+        projectSnapshot: options.projectSnapshot,
+        workingSet: options.workingSet,
+        capabilities: options.capabilities,
+        durableTaskState: compression.durableTaskStateIncluded ? options.durableTaskState : undefined,
+        userInstructions: compression.instructionSummaryIncluded ? options.userInstructions : undefined,
+        activeErrors: options.activeErrors,
+        tier: compression.tier,
+    });
+    const contextMessage: RequestMessage = { role: 'system', content: contextBlock };
+    const conversationMessages = buildConversationMessages(
+        compression.includedItems,
+        options.scrub,
+        compression.digestOverrides,
+    );
+    const toolDefs = buildToolDefsForTier(compression.tier, options.tools);
+    const request: ModelRequest = {
         model: options.model,
-        messages,
+        messages: [systemMessage, ...additionalSystemMessages, contextMessage, ...conversationMessages],
         tools: toolDefs.length > 0 ? toolDefs : undefined,
         maxTokens: options.maxTokens ?? 4096,
         temperature: options.temperature ?? 0.7,
+    };
+
+    return {
+        request,
+        contextStats: {
+            compressionTier: compression.tier,
+            estimatedTokens: estimateRequestTokens(request, bytesPerToken, calibrationMultiplier),
+            safeInputBudget: options.contextLimit ? compression.safeInputBudget : undefined,
+            droppedItemCount: compression.droppedItemCount,
+            digestedItemCount: compression.digestedItemCount,
+            instructionSummaryIncluded: compression.instructionSummaryIncluded,
+            durableTaskStateIncluded: compression.durableTaskStateIncluded,
+            warning: compression.warning,
+        },
+    };
+}
+
+function pushSection(lines: string[], title: string, body: string[]): void {
+    if (body.length === 0) return;
+    if (lines.length > 0) lines.push('');
+    lines.push(title);
+    lines.push(...body);
+}
+
+function buildDurableTaskStateLines(durableTaskState?: DurableTaskSummary): string[] {
+    if (!durableTaskState) return [];
+    const parts: string[] = [];
+    if (durableTaskState.goal) parts.push(`Goal: ${durableTaskState.goal}`);
+    if (durableTaskState.confirmedFacts && durableTaskState.confirmedFacts.length > 0) {
+        parts.push(`Facts: ${durableTaskState.confirmedFacts.join('; ')}`);
+    }
+    if (durableTaskState.openLoops && durableTaskState.openLoops.length > 0) {
+        parts.push(`Open loops: ${durableTaskState.openLoops.join('; ')}`);
+    }
+    if (durableTaskState.blockers && durableTaskState.blockers.length > 0) {
+        parts.push(`Blockers: ${durableTaskState.blockers.join('; ')}`);
+    }
+    return parts;
+}
+
+function estimateMessageTokens(
+    content: string,
+    bytesPerToken: number,
+    calibrationMultiplier: number,
+): number {
+    return Math.ceil((MESSAGE_OVERHEAD + estimateTextTokens(content, bytesPerToken)) * calibrationMultiplier);
+}
+
+function estimateToolDefinitionTokens(
+    toolDefs: ToolDefinition[],
+    bytesPerToken: number,
+    calibrationMultiplier: number,
+): number {
+    let total = 0;
+    for (const tool of toolDefs) {
+        total += TOOL_SCHEMA_OVERHEAD;
+        total += estimateTextTokens(tool.description, bytesPerToken);
+        total += estimateTextTokens(JSON.stringify(tool.parameters), bytesPerToken);
+    }
+    return Math.ceil(total * calibrationMultiplier);
+}
+
+function estimateConditionalContextTokens(
+    userInstructions: string | undefined,
+    durableTaskState: DurableTaskSummary | undefined,
+    bytesPerToken: number,
+    calibrationMultiplier: number,
+): number {
+    const lines: string[] = [];
+    if (userInstructions) {
+        pushSection(lines, '--- Instructions ---', [userInstructions]);
+    }
+    pushSection(lines, '--- Task State ---', buildDurableTaskStateLines(durableTaskState));
+    if (lines.length === 0) return 0;
+    return Math.ceil(estimateTextTokens(lines.join('\n'), bytesPerToken) * calibrationMultiplier);
+}
+
+function createUncompressedResult(items: ConversationItem[]): ContextAssemblyResult {
+    return {
+        tier: 'full',
+        includedItems: items,
+        digestOverrides: new Map(),
+        estimatedTokens: 0,
+        safeInputBudget: Number.POSITIVE_INFINITY,
+        historyItemCount: items.length,
+        droppedItemCount: 0,
+        digestedItemCount: 0,
+        instructionSummaryIncluded: true,
+        durableTaskStateIncluded: true,
     };
 }
 
@@ -433,6 +602,7 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     lines.push('<mode>');
     lines.push('You are running in NON-INTERACTIVE delegation mode. There is no human watching this conversation and no follow-up turn unless you call a tool.');
     lines.push('A response containing only text (no tool calls) ENDS THE CONVERSATION IMMEDIATELY. Treat this as an irreversible decision.');
+    lines.push('If the task instructs you to inspect, research, read, write, verify, or use named tools, your FIRST assistant message must include at least one tool call. Do not spend the first message on narration alone.');
     lines.push('You cannot ask the user questions. Make decisions yourself based on the task and available context. Document your assumptions in your final summary.');
     lines.push('</mode>');
     lines.push('');
@@ -461,6 +631,8 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     lines.push('<tool_preambles>');
     lines.push('For any multi-step task, structure your behavior as:');
     lines.push('1. Restate the goal in 1-2 sentences.');
+    lines.push('When tools are available, that restatement must be immediately followed by tool calls in the SAME assistant message. Never send the restatement by itself.');
+    lines.push('If a tool result changes your next step, immediately make the next tool calls in that SAME assistant message. Do not emit an interim status update like "need to try..." or "let me also fetch..." without tool calls.');
     if (contextTools.length > 0) {
         lines.push(`2. Gather context using only available context tools: ${joinToolNames(contextTools)}. Call independent reads/searches in PARALLEL when possible.`);
     } else {
@@ -488,6 +660,9 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     lines.push('');
     lines.push('ANTI-PATTERN — this exact text will end the conversation and cause task failure:');
     lines.push('  "Now I have all the context I need. Let me make the modifications: 1. ... 2. ... 3. ..."  [no tool calls]');
+    lines.push('  "I\'ll research this across multiple sources and start with web searches."  [no tool calls]');
+    lines.push('  "I\'ll start by reading the local reference files and querying the wiki API in parallel."  [no tool calls]');
+    lines.push('  "The category came back empty; I need to try subcategories and direct page fetches. Let me also fetch key pages."  [no tool calls]');
     lines.push('If you catch yourself about to write planning prose instead of calling a tool, STOP and call the tool. Your plan lives in tool calls, not in text.');
     lines.push('</tool_preambles>');
     lines.push('');

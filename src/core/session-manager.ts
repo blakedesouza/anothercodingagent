@@ -21,6 +21,8 @@ import { buildCoverageMap } from './summarizer.js';
 export interface SessionManifest {
     sessionId: SessionId;
     workspaceId: WorkspaceId;
+    parentSessionId?: SessionId;
+    rootSessionId?: SessionId;
     status: SessionStatus;
     turnCount: number;
     lastActivityTimestamp: string;
@@ -86,6 +88,7 @@ export class SessionManager {
     create(
         workspaceRoot: string,
         configSnapshot: Record<string, unknown> = {},
+        lineage?: { parentSessionId?: SessionId; rootSessionId?: SessionId },
     ): SessionProjection {
         const sessionId = generateId('session') as SessionId;
         const workspaceId = deriveWorkspaceId(workspaceRoot);
@@ -96,10 +99,15 @@ export class SessionManager {
         const manifest: SessionManifest = {
             sessionId,
             workspaceId,
+            ...(lineage?.parentSessionId ? { parentSessionId: lineage.parentSessionId } : {}),
+            ...(lineage?.rootSessionId ? { rootSessionId: lineage.rootSessionId } : {}),
             status: 'active',
             turnCount: 0,
             lastActivityTimestamp: new Date().toISOString(),
-            configSnapshot,
+            configSnapshot: {
+                ...configSnapshot,
+                workspaceRoot,
+            },
             durableTaskState: null,
             fileActivityIndex: null,
             calibration: null,
@@ -180,6 +188,7 @@ export class SessionManager {
         const items: ConversationItem[] = [];
         const turns: TurnRecord[] = [];
         const steps: StepRecord[] = [];
+        const turnIndexById = new Map<string, number>();
         let maxSeq = 0;
 
         for (const { recordType, record } of records) {
@@ -192,7 +201,14 @@ export class SessionManager {
                 items.push(item);
                 if (item.seq > maxSeq) maxSeq = item.seq;
             } else if (recordType === 'turn') {
-                turns.push(record as TurnRecord);
+                const turn = record as TurnRecord;
+                const existingIndex = turnIndexById.get(turn.id);
+                if (existingIndex === undefined) {
+                    turnIndexById.set(turn.id, turns.length);
+                    turns.push(turn);
+                } else {
+                    turns[existingIndex] = turn;
+                }
             } else if (recordType === 'step') {
                 steps.push(record as StepRecord);
             }
@@ -278,10 +294,14 @@ export class SessionManager {
 
         // Rebuild FileActivityIndex from conversation log replay
         const openLoopFiles = getActiveOpenLoopFiles(projection.manifest.durableTaskState);
+        const workspaceRoot = typeof projection.manifest.configSnapshot.workspaceRoot === 'string'
+            ? projection.manifest.configSnapshot.workspaceRoot
+            : undefined;
         const fileActivityIndex = FileActivityIndex.rebuildFromLog(
             projection.items,
             projection.turns,
             openLoopFiles,
+            workspaceRoot,
         );
 
         return { projection, coverageMap, fileActivityIndex };

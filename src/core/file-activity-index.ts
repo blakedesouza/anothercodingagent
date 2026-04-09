@@ -13,6 +13,7 @@ import type {
 } from '../types/conversation.js';
 import type { TurnRecord } from '../types/session.js';
 import type { DurableTaskState } from './durable-task-state.js';
+import { normalizeTrackedPath, normalizeTrackedPaths } from './path-normalization.js';
 
 // --- Types ---
 
@@ -57,13 +58,16 @@ const FILE_PATH_RE = /(?<![:/])((?:\/|\.\.?\/)?(?:[\w.-]+\/)+[\w.-]+\.\w{1,10})\
 // --- Helpers ---
 
 /** Extract unique file paths from search_text JSON output. */
-function extractSearchTextFiles(data: string): string[] {
+function extractSearchTextFiles(data: string, workspaceRoot?: string): string[] {
     try {
         const parsed = JSON.parse(data) as { matches?: Array<{ file?: string }> };
         if (!Array.isArray(parsed.matches)) return [];
         const files = new Set<string>();
         for (const m of parsed.matches) {
-            if (typeof m.file === 'string') files.add(m.file);
+            if (typeof m.file === 'string') {
+                const normalized = normalizeTrackedPath(m.file, workspaceRoot);
+                if (normalized) files.add(normalized);
+            }
         }
         return [...files];
     } catch {
@@ -72,23 +76,29 @@ function extractSearchTextFiles(data: string): string[] {
 }
 
 /** Extract file paths from a tool call's arguments. */
-function extractToolCallFiles(toolName: string, args: Record<string, unknown>): string[] {
+function extractToolCallFiles(
+    toolName: string,
+    args: Record<string, unknown>,
+    workspaceRoot?: string,
+): string[] {
     const files: string[] = [];
     if (typeof args.path === 'string') files.push(args.path);
     if (toolName === 'move_path') {
         if (typeof args.source === 'string') files.push(args.source);
         if (typeof args.destination === 'string') files.push(args.destination);
     }
-    return files;
+    return normalizeTrackedPaths(files, workspaceRoot);
 }
 
 // --- FileActivityIndex ---
 
 export class FileActivityIndex {
     private entries: Map<string, FileActivityEntry>;
+    private readonly workspaceRoot?: string;
 
-    constructor(serialized?: SerializedFileActivityIndex | null) {
+    constructor(serialized?: SerializedFileActivityIndex | null, workspaceRoot?: string) {
         this.entries = new Map();
+        this.workspaceRoot = workspaceRoot;
         if (serialized) {
             for (const [path, entry] of Object.entries(serialized)) {
                 this.entries.set(path, { ...entry });
@@ -108,6 +118,9 @@ export class FileActivityIndex {
         openLoopFiles?: Set<string>,
     ): void {
         const touchedFiles = new Set<string>();
+        const normalizedOpenLoopFiles = new Set(
+            normalizeTrackedPaths([...(openLoopFiles ?? [])], this.workspaceRoot),
+        );
 
         // Build toolCallId → { toolName, args } lookup from assistant messages
         const toolCallArgs = new Map<string, { toolName: string; args: Record<string, unknown> }>();
@@ -134,10 +147,10 @@ export class FileActivityIndex {
 
             let filePaths: string[];
             if (item.toolName === 'search_text') {
-                filePaths = extractSearchTextFiles(item.output.data);
+                filePaths = extractSearchTextFiles(item.output.data, this.workspaceRoot);
             } else {
                 const call = toolCallArgs.get(item.toolCallId);
-                filePaths = call ? extractToolCallFiles(item.toolName, call.args) : [];
+                filePaths = call ? extractToolCallFiles(item.toolName, call.args, this.workspaceRoot) : [];
             }
 
             const role = TOOL_ROLES[item.toolName] ?? 'referenced';
@@ -159,7 +172,8 @@ export class FileActivityIndex {
                 if (part.type !== 'text') continue;
                 const text = (part as TextPart).text;
                 for (const match of text.matchAll(FILE_PATH_RE)) {
-                    mentionedPaths.add(match[1]);
+                    const normalized = normalizeTrackedPath(match[1], this.workspaceRoot);
+                    if (normalized) mentionedPaths.add(normalized);
                 }
             }
         }
@@ -184,7 +198,7 @@ export class FileActivityIndex {
         }
 
         // Evict files inactive for >= EVICTION_THRESHOLD turns (unless in open loop)
-        const exempt = openLoopFiles ?? new Set<string>();
+        const exempt = normalizedOpenLoopFiles;
         for (const [path, entry] of this.entries) {
             if (entry.turnsSinceLastTouch >= EVICTION_THRESHOLD && !exempt.has(path)) {
                 this.entries.delete(path);
@@ -242,8 +256,9 @@ export class FileActivityIndex {
         items: ConversationItem[],
         turns: TurnRecord[],
         openLoopFiles?: Set<string>,
+        workspaceRoot?: string,
     ): FileActivityIndex {
-        const index = new FileActivityIndex();
+        const index = new FileActivityIndex(undefined, workspaceRoot);
 
         // Only replay completed turns, ordered by turn number
         const sortedTurns = [...turns]

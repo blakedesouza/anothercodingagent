@@ -62,6 +62,8 @@ describe('buildToolSchemaPrompt', () => {
         expect(prompt).toContain('name');
         expect(prompt).toContain('arguments');
         expect(prompt).toContain('Do not wrap the JSON in Markdown fences');
+        expect(prompt).toContain('Do not restate the goal');
+        expect(prompt).toContain('Do not emit XML, HTML, or pseudo-tool wrappers');
     });
 });
 
@@ -172,6 +174,150 @@ describe('parseEmulatedToolCalls', () => {
         expect(result).not.toBeNull();
         expect(result!.calls[0].name).toBe('read_file');
         expect(result!.preamble).toBe('');
+    });
+
+    it('salvages truncated tool-call JSON followed by think tags and prose', () => {
+        const text = '{"tool_calls":[{"name":"read_file","arguments":{"path":"/x"}}]</think></think>Now let me continue.';
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(1);
+        expect(result!.calls[0].name).toBe('read_file');
+        expect(JSON.parse(result!.calls[0].arguments)).toEqual({ path: '/x' });
+    });
+
+    it('parses tool-call JSON when string arguments contain braces', () => {
+        const text = JSON.stringify({
+            tool_calls: [
+                {
+                    name: 'write_file',
+                    arguments: {
+                        path: '/tmp/out.md',
+                        content: 'literal braces: {keep this}',
+                    },
+                },
+            ],
+        });
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(1);
+        expect(JSON.parse(result!.calls[0].arguments)).toEqual({
+            path: '/tmp/out.md',
+            content: 'literal braces: {keep this}',
+        });
+    });
+
+    it('parses wrapped single-call JSON inside tool_call tags', () => {
+        const text = '<tool_call>{"name":"read_file","arguments":{"path":"/tmp/x"}}</tool_call>';
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(1);
+        expect(result!.calls[0].name).toBe('read_file');
+        expect(JSON.parse(result!.calls[0].arguments)).toEqual({ path: '/tmp/x' });
+    });
+
+    it('parses repeated wrapped single-call JSON blocks', () => {
+        const text = [
+            '<tool_call>{"name":"read_file","arguments":{"path":"/tmp/a"}}</tool_call>',
+            '<tool_call>{"name":"list_directory","arguments":{"path":"/tmp"}}</tool_call>',
+        ].join('\n');
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(2);
+        expect(result!.calls[0].name).toBe('read_file');
+        expect(result!.calls[1].name).toBe('list_directory');
+    });
+
+    it('parses wrapped tool call arrays inside tool_calls tags', () => {
+        const text = '<tool_calls>[{"name":"read_file","arguments":{"path":"/tmp/a"}},{"name":"list_directory","arguments":{"path":"/tmp"}}]</tool_calls>';
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(2);
+        expect(result!.calls[0].name).toBe('read_file');
+        expect(result!.calls[1].name).toBe('list_directory');
+    });
+
+    it('parses arg_key/arg_value pseudo tool markup', () => {
+        const text = '<tool_call>write_file<arg_key>path</arg_key><arg_value>/tmp/out.md</arg_value><arg_key>content</arg_key><arg_value># Heading</arg_value></tool_call>';
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(1);
+        expect(result!.calls[0].name).toBe('write_file');
+        expect(JSON.parse(result!.calls[0].arguments)).toEqual({
+            path: '/tmp/out.md',
+            content: '# Heading',
+        });
+    });
+
+    it('parses repeated arg_key/arg_value pseudo tool markup blocks', () => {
+        const text = [
+            '<tool_call>make_directory<arg_key>path</arg_key><arg_value>/tmp/out</arg_value></tool_call>',
+            '<tool_call>write_file<arg_key>path</arg_key><arg_value>/tmp/out/file.md</arg_value><arg_key>content</arg_key><arg_value># Body</arg_value></tool_call>',
+        ].join('\n');
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(2);
+        expect(result!.calls[0].name).toBe('make_directory');
+        expect(result!.calls[1].name).toBe('write_file');
+    });
+
+    it('parses function/parameter pseudo tool markup', () => {
+        const text = [
+            '<tool_call>',
+            '<function=fetch_mediawiki_page>',
+            '<parameter=api_url>https://example.test/api.php</parameter>',
+            '<parameter=page>Asahiyama High School</parameter>',
+            '</function>',
+            '</tool_call>',
+        ].join('\n');
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(1);
+        expect(result!.calls[0].name).toBe('fetch_mediawiki_page');
+        expect(JSON.parse(result!.calls[0].arguments)).toEqual({
+            api_url: 'https://example.test/api.php',
+            page: 'Asahiyama High School',
+        });
+    });
+
+    it('parses invoke/parameter pseudo tool markup', () => {
+        const text = [
+            '<invoke name="read_file">',
+            '<parameter name="path">/tmp/a</parameter>',
+            '</invoke>',
+        ].join('\n');
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(1);
+        expect(result!.calls[0].name).toBe('read_file');
+        expect(JSON.parse(result!.calls[0].arguments)).toEqual({ path: '/tmp/a' });
+    });
+
+    it('parses namespaced invoke wrappers emitted by routed models', () => {
+        const text = [
+            '<minimax:tool_call>',
+            '<invoke name="write_file">',
+            '<parameter name="path">/tmp/out.md</parameter>',
+            '<parameter name="content"># Body</parameter>',
+            '</invoke>',
+            '</minimax:tool_call>',
+        ].join('\n');
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(1);
+        expect(result!.calls[0].name).toBe('write_file');
+        expect(JSON.parse(result!.calls[0].arguments)).toEqual({
+            path: '/tmp/out.md',
+            content: '# Body',
+        });
+    });
+
+    it('ignores invalid tool entries with missing names instead of returning empty-name calls', () => {
+        const text = '{"tool_calls":[{"name":"","arguments":{"path":"/tmp/x"}},{"name":"read_file","arguments":{"path":"/tmp/y"}}]}';
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(1);
+        expect(result!.calls[0].name).toBe('read_file');
+        expect(JSON.parse(result!.calls[0].arguments)).toEqual({ path: '/tmp/y' });
     });
 });
 
@@ -288,5 +434,69 @@ describe('wrapStreamWithToolEmulation', () => {
         const toolDeltas = events.filter(e => e.type === 'tool_call_delta');
         expect(toolDeltas).toHaveLength(1);
         expect(toolDeltas[0]).toMatchObject({ name: 'read_file' });
+    });
+
+    it('salvages truncated emulated tool-call JSON before trailing prose', async () => {
+        const malformed = '{"tool_calls":[{"name":"read_file","arguments":{"path":"/tmp/test"}}]</think>next';
+
+        async function* inner(): AsyncIterable<StreamEvent> {
+            yield { type: 'text_delta', text: malformed };
+            yield { type: 'done', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 5 } };
+        }
+
+        const events = await collectStream(wrapStreamWithToolEmulation(inner()));
+        const toolDeltas = events.filter(e => e.type === 'tool_call_delta');
+        expect(toolDeltas).toHaveLength(1);
+        expect(toolDeltas[0]).toMatchObject({ name: 'read_file' });
+    });
+
+    it('converts pseudo tool markup into tool_call_delta events', async () => {
+        async function* inner(): AsyncIterable<StreamEvent> {
+            yield {
+                type: 'text_delta',
+                text: '<tool_call>{"name":"read_file","arguments":{"path":"/tmp/pseudo"}}</tool_call>',
+            };
+            yield { type: 'done', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 5 } };
+        }
+
+        const events = await collectStream(wrapStreamWithToolEmulation(inner()));
+        const toolDeltas = events.filter(e => e.type === 'tool_call_delta');
+        expect(toolDeltas).toHaveLength(1);
+        expect(toolDeltas[0]).toMatchObject({ name: 'read_file' });
+        expect(JSON.parse((toolDeltas[0] as { arguments: string }).arguments)).toEqual({ path: '/tmp/pseudo' });
+    });
+
+    it('emits tool calls before the inner stream finishes when JSON is already complete', async () => {
+        const toolCallJson = JSON.stringify({
+            tool_calls: [{ name: 'read_file', arguments: { path: '/tmp/early' } }],
+        });
+        let releaseDone: (() => void) | undefined;
+        const doneGate = new Promise<void>(resolve => {
+            releaseDone = resolve;
+        });
+
+        async function* inner(): AsyncIterable<StreamEvent> {
+            yield { type: 'text_delta', text: toolCallJson };
+            await doneGate;
+            yield { type: 'done', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 5 } };
+        }
+
+        const iterator = wrapStreamWithToolEmulation(inner())[Symbol.asyncIterator]();
+        const first = await Promise.race([
+            iterator.next(),
+            new Promise<'timeout'>(resolve => setTimeout(() => resolve('timeout'), 50)),
+        ]);
+
+        expect(first).not.toBe('timeout');
+        const firstResult = first as IteratorResult<StreamEvent>;
+        expect(firstResult.done).toBe(false);
+        expect(firstResult.value).toMatchObject({ type: 'tool_call_delta', name: 'read_file' });
+
+        releaseDone?.();
+        const remaining: StreamEvent[] = [];
+        for await (const event of { [Symbol.asyncIterator]: () => iterator }) {
+            remaining.push(event);
+        }
+        expect(remaining.find(event => event.type === 'done')).toBeDefined();
     });
 });

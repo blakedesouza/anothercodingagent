@@ -117,11 +117,12 @@ export function containsProtocolEnvelopeJson(text: string): boolean {
     const record = payload as Record<string, unknown>;
     if (Array.isArray(record.needs_context)) return true;
     if (Array.isArray(record.files)) return true;
+    if (Array.isArray(record.read)) return true;
     if (typeof record.status === 'string' && (record.data !== undefined || record.error !== undefined)) return true;
     const data = typeof record.data === 'object' && record.data !== null && !Array.isArray(record.data)
         ? record.data as Record<string, unknown>
         : undefined;
-    return Array.isArray(data?.files);
+    return Array.isArray(data?.files) || Array.isArray(data?.read);
 }
 
 export function buildContextRequestPrompt(prompt: string, limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS): string {
@@ -132,6 +133,9 @@ export function buildContextRequestPrompt(prompt: string, limits: ContextRequest
 You are in ACA-native context-request mode.
 
 First decide whether the available evidence is enough. If it is enough, return your final findings directly in Markdown.
+Assume you know nothing beyond the prompt text and any ACA-appended evidence. If the task asks for a concrete repo fact that is not shown verbatim, request the minimal supporting snippet instead of guessing.
+Missing snippets, ENOENT paths, or omitted files are not evidence that a file, feature, or configuration is absent.
+If the available evidence cannot support a claim, request the most direct missing snippets or leave that point as an open question in the final report.
 
 If one narrow follow-up is needed before finalizing, return only this JSON object and no Markdown:
 \`\`\`json
@@ -146,6 +150,16 @@ If one narrow follow-up is needed before finalizing, return only this JSON objec
   ]
 }
 \`\`\`
+
+If ACA enforces structured output for this request, return the same decision using this object shape:
+\`\`\`json
+{
+  "action": "needs_context",
+  "findings_markdown": "",
+  "needs_context": []
+}
+\`\`\`
+Use "action": "final" with an empty needs_context array when no follow-up is needed, and put the report in findings_markdown.
 
 Limits:
 - Request at most ${limits.maxSnippets} snippets.
@@ -170,6 +184,7 @@ ${truncateUtf8(invalidResponse, 4_000)}
 \`\`\`
 
 Try again now. If you need more context, return only the needs_context JSON object from the protocol above. If the evidence is enough, return final findings in Markdown.
+If your previous response used a custom JSON object or unsupported schema, rewrite it using either the exact needs_context object above or plain Markdown final findings.
 Do not emit XML, function-call, tool-call, invoke, parameter, arg_key, arg_value, read_file, [TOOL_CALL], or "tool_calls" markup.
 `;
 }
@@ -181,6 +196,9 @@ export function buildSharedContextRequestPrompt(prompt: string, limits: ContextR
 
 You are selecting raw code ranges for a shared witness evidence pack. Tools are disabled.
 The final evidence pack will be assembled by ACA, not by you: ACA will read accepted snippets directly from disk after your response.
+Assume you know nothing beyond the prompt text and any ACA-appended evidence.
+If the task asks for a concrete repo fact that is not already shown verbatim, request the minimal supporting snippets needed to verify it.
+Do not return an empty needs_context list unless the prompt already contains enough quoted evidence to answer the task.
 
 Return only this JSON object and no Markdown:
 \`\`\`json
@@ -201,8 +219,12 @@ Limits:
 - Each snippet should be at most ${limits.maxLines} lines.
 - Request only repo-relative paths.
 - Prefer narrow ranges that satisfy all witnesses before their review.
+- Request paths only when the prompt or current evidence concretely suggests them.
+- Avoid shotgun guesses across unrelated ecosystems or fallback docs (for example Cargo.toml, pyproject.toml, or README.md) unless the task specifically points there.
+- Prefer the most direct source or config files over generic entrypoints when identifying named settings or model lineups.
 - Do not request broad directories or whole-repo searches.
 - Do not summarize findings or quote code yourself.
+- Missing or ENOENT snippets are not positive evidence; they only mean the requested path was unhelpful.
 - Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, <read_file>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
 `;
 }
@@ -370,6 +392,10 @@ ${renderContextSnippets(snippets)}
 ## Finalization
 
 Return your final findings now. Do not request more context. Tools are disabled in this pass.
+Use only the exact prompt and fulfilled snippets shown above. Do not rely on remembered, hidden, or inferred repo contents.
+If a fulfilled snippet shows ERROR, ENOENT, or empty content, treat that as missing evidence, not evidence of absence.
+Do not claim a file, feature, or configuration is missing unless a provided snippet explicitly establishes that fact. Otherwise record an open question.
+If ACA enforces structured output for this request, put the final Markdown report in the "markdown" field.
 Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, <read_file>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
 `;
 }
@@ -386,8 +412,10 @@ ${truncateUtf8(invalidResponse, 4_000)}
 \`\`\`
 
 Produce the final findings now using only the original prompt, the shared evidence pack, and the fulfilled context snippets above.
+If your previous response used a custom JSON object or unsupported schema, rewrite it as plain Markdown findings instead of JSON.
 Do not request more context. Do not emit XML, function-call, tool-call, invoke, or parameter markup.
 Do not return needs_context JSON or file-result JSON such as {"status":"success","data":{"files":[]}}.
+If ACA enforces structured output for this request, put the final Markdown report in the "markdown" field.
 `;
 }
 

@@ -31,10 +31,14 @@ function makeSessionStarted(sessionId: SessionId = TEST_SESSION): AcaEvent {
     });
 }
 
-function makeToolCompleted(sessionId: SessionId = TEST_SESSION, turnNumber = 1): AcaEvent {
+function makeToolCompleted(
+    sessionId: SessionId = TEST_SESSION,
+    turnNumber = 1,
+    status: 'success' | 'error' = 'success',
+): AcaEvent {
     return createEvent('tool.completed', sessionId, turnNumber, TEST_AGENT, {
         tool_name: 'read_file',
-        status: 'success',
+        status,
         duration_ms: 42,
         bytes_returned: 1024,
         correlation_id: 'corr_123',
@@ -48,7 +52,7 @@ function makeError(sessionId: SessionId = TEST_SESSION): AcaEvent {
     });
 }
 
-function makeLlmResponse(sessionId: SessionId = TEST_SESSION, turnNumber = 1): AcaEvent {
+function makeLlmResponse(sessionId: SessionId = TEST_SESSION, turnNumber = 1, costUsd: number | null = null): AcaEvent {
     return createEvent('llm.response', sessionId, turnNumber, TEST_AGENT, {
         model: 'claude-sonnet',
         provider: 'nanogpt',
@@ -56,7 +60,7 @@ function makeLlmResponse(sessionId: SessionId = TEST_SESSION, turnNumber = 1): A
         tokens_out: 200,
         latency_ms: 1500,
         finish_reason: 'stop',
-        cost_usd: null,
+        cost_usd: costUsd,
     });
 }
 
@@ -186,6 +190,42 @@ describe('SqliteStore', () => {
         expect(ids.size).toBe(2);
         expect(ids.has(e1.event_id)).toBe(true);
         expect(ids.has(e2.event_id)).toBe(true);
+    });
+
+    it('daily baseline excludes active sessions and the current session', () => {
+        const endedStart = makeSessionStarted(TEST_SESSION);
+        const endedResponse = makeLlmResponse(TEST_SESSION, 1, 1.25);
+        const endedEnd = makeSessionEnded(TEST_SESSION);
+        const activeStart = makeSessionStarted(TEST_SESSION_2);
+        const activeResponse = makeLlmResponse(TEST_SESSION_2, 1, 3.5);
+        const currentStart = makeSessionStarted(TEST_SESSION_3);
+        const currentResponse = makeLlmResponse(TEST_SESSION_3, 1, 7.75);
+
+        store.insertBatch([
+            endedStart,
+            endedResponse,
+            endedEnd,
+            activeStart,
+            activeResponse,
+            currentStart,
+            currentResponse,
+        ]);
+
+        const total = store.getDailyCostExcludingSession(TEST_SESSION_3);
+        expect(total).toBeCloseTo(1.25, 6);
+    });
+
+    it('getToolErrorCountSince counts failed tool calls without mixing runtime errors', () => {
+        store.insertBatch([
+            makeSessionStarted(TEST_SESSION),
+            makeToolCompleted(TEST_SESSION, 1, 'error'),
+            makeError(TEST_SESSION),
+            makeSessionEnded(TEST_SESSION),
+        ]);
+
+        expect(store.getToolCallCountSince('1970-01-01T00:00:00.000Z')).toBe(1);
+        expect(store.getToolErrorCountSince('1970-01-01T00:00:00.000Z')).toBe(1);
+        expect(store.getErrorCountSince('1970-01-01T00:00:00.000Z')).toBe(1);
     });
 });
 

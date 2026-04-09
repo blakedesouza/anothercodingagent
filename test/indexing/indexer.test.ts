@@ -380,6 +380,54 @@ describe('Indexer', () => {
         // Hash match → skip
         expect(store.hasMatchingHash('app.ts', file!.hash)).toBe(true);
     });
+
+    it('full rebuild removes deleted files from the index', async () => {
+        writeFileSync(join(tmpDir, 'a.ts'), 'export const a = 1;');
+        writeFileSync(join(tmpDir, 'b.ts'), 'export const b = 2;');
+
+        const indexer = new Indexer(tmpDir, store, null);
+        await indexer.buildIndex();
+        expect(store.getFile('b.ts')).not.toBeNull();
+
+        rmSync(join(tmpDir, 'b.ts'));
+
+        await indexer.buildIndex();
+
+        expect(store.getFile('a.ts')).not.toBeNull();
+        expect(store.getFile('b.ts')).toBeNull();
+    });
+
+    it('incrementalUpdate removes an explicitly deleted file from the index', async () => {
+        writeFileSync(join(tmpDir, 'deleted.ts'), 'export const gone = true;');
+
+        const indexer = new Indexer(tmpDir, store, null);
+        await indexer.buildIndex();
+        expect(store.getFile('deleted.ts')).not.toBeNull();
+
+        rmSync(join(tmpDir, 'deleted.ts'));
+
+        const result = await indexer.incrementalUpdate(['deleted.ts']);
+
+        expect(result.filesIndexed).toBe(1);
+        expect(store.getFile('deleted.ts')).toBeNull();
+    });
+
+    it('reports progress for full index builds', async () => {
+        writeFileSync(join(tmpDir, 'app.ts'), 'const x = 1;');
+        writeFileSync(join(tmpDir, 'util.ts'), 'export const y = 2;');
+
+        const updates: Array<[number, number]> = [];
+        const indexer = new Indexer(tmpDir, store, null);
+        indexer.setProgressReporter((current, total) => {
+            updates.push([current, total]);
+        });
+
+        await indexer.buildIndex();
+
+        expect(updates[0]).toEqual([0, 2]);
+        expect(updates).toContainEqual([1, 2]);
+        expect(updates[updates.length - 1]).toEqual([2, 2]);
+    });
 });
 
 // --- M6 Post-Milestone Review Regression Tests ---

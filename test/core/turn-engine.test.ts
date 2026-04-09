@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { TurnEngine, Phase } from '../../src/core/turn-engine.js';
+import {
+    TurnEngine,
+    Phase,
+    type ToolStartedEvent,
+    type ToolCompletedEvent,
+} from '../../src/core/turn-engine.js';
 import type { TurnEngineConfig } from '../../src/core/turn-engine.js';
 import { ToolRegistry } from '../../src/tools/tool-registry.js';
 import type { ToolSpec, ToolImplementation } from '../../src/tools/tool-registry.js';
@@ -7,11 +12,15 @@ import { ConversationWriter } from '../../src/core/conversation-writer.js';
 import { SequenceGenerator } from '../../src/types/sequence.js';
 import type { ProviderDriver, StreamEvent, ModelRequest, ModelCapabilities } from '../../src/types/provider.js';
 import type { MessageItem, ToolResultItem } from '../../src/types/conversation.js';
-import type { SessionId } from '../../src/types/ids.js';
+import type { ItemId, SessionId } from '../../src/types/ids.js';
+import { SessionGrantStore } from '../../src/permissions/session-grants.js';
+import { CONFIG_DEFAULTS } from '../../src/config/schema.js';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { writeFileSpec, writeFileImpl } from '../../src/tools/write-file.js';
+import { confirmActionSpec, confirmActionImpl } from '../../src/tools/confirm-action.js';
 
 // --- Helpers ---
 
@@ -71,6 +80,12 @@ function createMockProvider(responseQueue: StreamEvent[][]): ProviderDriver {
 function textResponse(text: string, inputTokens = 10, outputTokens = 5): StreamEvent[] {
     return [
         { type: 'text_delta', text },
+        { type: 'done', finishReason: 'stop', usage: { inputTokens, outputTokens } },
+    ];
+}
+
+function emptyResponse(inputTokens = 10, outputTokens = 0): StreamEvent[] {
+    return [
         { type: 'done', finishReason: 'stop', usage: { inputTokens, outputTokens } },
     ];
 }
@@ -239,6 +254,26 @@ describe('TurnEngine', () => {
         expect(isMessage(msg1) && msg1.role).toBe('assistant');
     });
 
+    it('empty response does not count as assistant_final', async () => {
+        const provider = createMockProvider([
+            emptyResponse(),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(makeConfig(), 'Hi', []);
+
+        expect(result.turn.outcome).toBe('aborted');
+        expect(result.lastError).toEqual({
+            code: 'llm.malformed',
+            message: 'Model returned an empty response',
+        });
+        expect(result.steps).toHaveLength(1);
+        expect(result.items).toHaveLength(1);
+        const msg0 = result.items[0];
+        expect(isMessage(msg0) && msg0.role).toBe('user');
+    });
+
     // Test 2: Single tool call
     it('single tool call → tool executes → LLM returns text → yields with assistant_final, two steps', async () => {
         const provider = createMockProvider([
@@ -280,6 +315,36 @@ describe('TurnEngine', () => {
         expect(toolResults[0].output.data).toBe('one');
         expect(toolResults[1].output.data).toBe('two');
         expect(toolResults[2].output.data).toBe('three');
+    });
+
+    it('emits tool lifecycle events with mutation render previews for write_file', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([{ name: 'write_file', args: { path: 'note.txt', content: 'hello\n', mode: 'create' } }]),
+            textResponse('done'),
+        ]);
+        registry.register(writeFileSpec, writeFileImpl);
+        const { engine } = createEngine(provider, registry, dir);
+        const started: ToolStartedEvent[] = [];
+        const completed: ToolCompletedEvent[] = [];
+
+        engine.on('tool.started', (event: ToolStartedEvent) => started.push(event));
+        engine.on('tool.completed', (event: ToolCompletedEvent) => completed.push(event));
+
+        const result = await engine.executeTurn(
+            makeConfig({ workspaceRoot: dir, interactive: false, isSubAgent: true }),
+            'create a note',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(started).toHaveLength(1);
+        expect(started[0].toolName).toBe('write_file');
+        expect(completed).toHaveLength(1);
+        expect(completed[0].toolName).toBe('write_file');
+        expect(completed[0].renderPreview).toBeDefined();
+        expect(completed[0].renderPreview?.filePath).toBe('note.txt');
+        expect(completed[0].renderPreview?.isNewFile).toBe(true);
+        expect(completed[0].renderPreview?.newContent).toBe('hello\n');
     });
 
     // Test 4: Non-interactive mode has no step ceiling (MCP deadline is the safety net)
@@ -741,6 +806,20 @@ describe('TurnEngine', () => {
         expect(result.turn.completedAt).toBeTruthy();
     });
 
+    it('derives turnNumber from prior turn history', async () => {
+        const provider = createMockProvider([
+            textResponse('First'),
+            textResponse('Second'),
+        ]);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const first = await engine.executeTurn(makeConfig(), 'Turn 1', []);
+        const second = await engine.executeTurn(makeConfig(), 'Turn 2', first.items);
+
+        expect(first.turn.turnNumber).toBe(1);
+        expect(second.turn.turnNumber).toBe(2);
+    });
+
     // Test 12: Conversation log → after turn, all items are in the JSONL
     it('conversation log → all items written to JSONL (user, assistant, tool results)', async () => {
         const provider = createMockProvider([
@@ -877,6 +956,30 @@ describe('TurnEngine', () => {
         expect(toolResults).toHaveLength(1);
         expect(toolResults[0].output.status).toBe('success');
         expect(toolResults[0].output.data).toBe('hello');
+    });
+
+    it('confirm_action with autoConfirm continues the turn instead of yielding approval_required', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([{ name: 'confirm_action', args: { action: 'proceed' } }]),
+            textResponse('Confirmed automatically, continuing'),
+        ]);
+        registry.register(confirmActionSpec, confirmActionImpl);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, autoConfirm: true }),
+            'Proceed without asking',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(result.steps).toHaveLength(2);
+        const toolResults = result.items.filter(isToolResult);
+        expect(toolResults).toHaveLength(1);
+        expect(toolResults[0].toolName).toBe('confirm_action');
+        expect(toolResults[0].output.status).toBe('success');
+        expect(toolResults[0].output.yieldOutcome).toBeUndefined();
+        expect(JSON.parse(toolResults[0].output.data)).toEqual({ approved: true });
     });
 
     // Test 18: allowedTools null = all tools allowed
@@ -1114,11 +1217,9 @@ describe('TurnEngine', () => {
         registry.register(execFailSpec, execFailImpl);
 
         const provider = createMockProvider([
-            toolCallResponse([
-                { name: 'exec_fail_test', args: {} },
-                { name: 'exec_fail_test', args: {} },
-                { name: 'exec_fail_test', args: {} }, // 3rd consecutive → llm.confused
-            ]),
+            toolCallResponse([{ name: 'exec_fail_test', args: {} }]),
+            toolCallResponse([{ name: 'exec_fail_test', args: {} }]),
+            toolCallResponse([{ name: 'exec_fail_test', args: {} }]), // 3rd assistant attempt → llm.confused
         ]);
         const { engine } = createEngine(provider, registry, dir);
 
@@ -1253,6 +1354,319 @@ describe('TurnEngine', () => {
         // When the filtered list is empty, the request.tools field should be omitted
         // (or undefined). TurnEngine does `tools: toolDefs.length > 0 ? toolDefs : undefined`.
         expect(capturedRequest!.tools).toBeUndefined();
+    });
+
+    it('default runtime path uses prompt assembly context instead of the bare fallback system prompt', async () => {
+        let capturedRequest: ModelRequest | null = null;
+        const capturingProvider: ProviderDriver = {
+            capabilities: () => ({
+                maxContext: 128_000,
+                maxOutput: 4096,
+                supportsTools: 'native',
+                supportsVision: false,
+                supportsStreaming: true,
+                supportsPrefill: false,
+                supportsEmbedding: false,
+                embeddingModels: [],
+                toolReliability: 'native',
+                costPerMillion: { input: 3, output: 15 },
+                specialFeatures: [],
+                bytesPerToken: 3,
+            }),
+            async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
+                capturedRequest = request;
+                yield { type: 'text_delta', text: 'OK' };
+                yield { type: 'done', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 5 } };
+            },
+            validate: () => ({ ok: true as const, value: undefined }),
+        };
+
+        registerEchoTool(registry);
+        const { engine } = createEngine(capturingProvider, registry, dir);
+
+        await engine.executeTurn(
+            makeConfig({
+                shell: 'bash',
+                projectSnapshot: {
+                    root: '/repo',
+                    stack: ['typescript', 'pnpm'],
+                    git: { branch: 'main', status: 'dirty', staged: false },
+                    ignorePaths: [],
+                    indexStatus: 'ready',
+                },
+                workingSet: [{ path: 'src/main.ts', role: 'editing' }],
+                durableTaskState: {
+                    goal: 'Fix prompt wiring',
+                    openLoops: ['run prompt regression'],
+                },
+                capabilities: [{ name: 'lsp', status: 'degraded', detail: 'retry ~5s' }],
+            }),
+            'Say hi',
+            [],
+        );
+
+        expect(capturedRequest).not.toBeNull();
+        expect(String(capturedRequest!.messages[0].content)).toContain('You are ACA (Another Coding Agent)');
+        expect(String(capturedRequest!.messages[1].content)).toContain('--- Project ---');
+        expect(String(capturedRequest!.messages[1].content)).toContain('src/main.ts (editing)');
+        expect(String(capturedRequest!.messages[1].content)).toContain('Goal: Fix prompt wiring');
+        expect(String(capturedRequest!.messages[1].content)).toContain('lsp: degraded');
+        expect(String(capturedRequest!.messages[0].content)).not.toContain('You are a helpful coding assistant.');
+    });
+
+    it('records live compression tier and token limit in step context stats', async () => {
+        const compressedProvider: ProviderDriver = {
+            capabilities: () => ({
+                maxContext: 1400,
+                maxOutput: 256,
+                supportsTools: 'native',
+                supportsVision: false,
+                supportsStreaming: true,
+                supportsPrefill: false,
+                supportsEmbedding: false,
+                embeddingModels: [],
+                toolReliability: 'native',
+                costPerMillion: { input: 3, output: 15 },
+                specialFeatures: [],
+                bytesPerToken: 3,
+            }),
+            async *stream(): AsyncIterable<StreamEvent> {
+                yield { type: 'text_delta', text: 'compressed' };
+                yield { type: 'done', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 5 } };
+            },
+            validate: () => ({ ok: true as const, value: undefined }),
+        };
+
+        const { engine } = createEngine(compressedProvider, registry, dir);
+        const bigText = 'x'.repeat(900);
+        const existingItems: MessageItem[] = [
+            {
+                kind: 'message',
+                id: 'item_old_1' as ItemId,
+                seq: 1,
+                role: 'user',
+                parts: [{ type: 'text', text: bigText }],
+                timestamp: new Date().toISOString(),
+            },
+            {
+                kind: 'message',
+                id: 'item_old_2' as ItemId,
+                seq: 2,
+                role: 'assistant',
+                parts: [{ type: 'text', text: bigText }],
+                timestamp: new Date().toISOString(),
+            },
+        ];
+
+        const result = await engine.executeTurn(
+            makeConfig({
+                durableTaskState: { goal: 'Keep prompt context bounded' },
+                userInstructions: 'Prefer minimal diffs.',
+            }),
+            'Handle the next step',
+            existingItems,
+        );
+
+        expect(result.steps[0].contextStats.tokenLimit).toBe(1400);
+        expect(['medium', 'aggressive', 'emergency']).toContain(result.steps[0].contextStats.compressionTier);
+    });
+
+    it('session_io stdin is risk-analyzed conservatively in auto-confirm mode', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([{ name: 'session_io', args: { session_id: 'psh_123', stdin: 'rm -rf node_modules' } }]),
+            textResponse('Recovered after denial.'),
+        ]);
+
+        const sessionIoSpec: ToolSpec = {
+            name: 'session_io',
+            description: 'Fake session io tool',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    session_id: { type: 'string' },
+                    stdin: { type: 'string' },
+                },
+                required: ['session_id'],
+                additionalProperties: false,
+            },
+            approvalClass: 'external-effect',
+            idempotent: false,
+            timeoutCategory: 'shell',
+        };
+        const sessionIoImpl: ToolImplementation = async () => ({
+            status: 'success',
+            data: '{"status":"running","output":""}',
+            truncated: false,
+            bytesReturned: 30,
+            bytesOmitted: 0,
+            retryable: false,
+            timedOut: false,
+            mutationState: 'process',
+        });
+        registry.register(sessionIoSpec, sessionIoImpl);
+
+        const { engine } = createEngine(provider, registry, dir);
+        const result = await engine.executeTurn(
+            makeConfig({
+                interactive: false,
+                autoConfirm: true,
+                resolvedConfig: structuredClone(CONFIG_DEFAULTS),
+                sessionGrants: new SessionGrantStore(),
+            }),
+            'clean dependencies',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        const toolResults = result.items.filter(isToolResult);
+        expect(toolResults).toHaveLength(1);
+        expect(toolResults[0].output.status).toBe('error');
+        expect(toolResults[0].output.error?.code).toBe('tool.permission');
+    });
+
+    it('approved-only shell network commands prompt once and execute after approval', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([{ name: 'exec_command', args: { command: 'curl https://example.com' } }]),
+            textResponse('Fetched after approval.'),
+        ]);
+
+        const execSpec: ToolSpec = {
+            name: 'exec_command',
+            description: 'Fake exec tool',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    command: { type: 'string' },
+                },
+                required: ['command'],
+                additionalProperties: false,
+            },
+            approvalClass: 'external-effect',
+            idempotent: false,
+            timeoutCategory: 'shell',
+        };
+        let promptText = '';
+        const execImpl: ToolImplementation = async () => ({
+            status: 'success',
+            data: '{"exit_code":0,"stdout":"ok","stderr":"","duration_ms":1}',
+            truncated: false,
+            bytesReturned: 57,
+            bytesOmitted: 0,
+            retryable: false,
+            timedOut: false,
+            mutationState: 'process',
+        });
+        registry.register(execSpec, execImpl);
+
+        const logPath = join(dir, 'conversation-network-approval.jsonl');
+        writeFileSync(logPath, '');
+        const writer = new ConversationWriter(logPath);
+        const seq = new SequenceGenerator(0);
+        const engine = new TurnEngine(
+            provider,
+            registry,
+            writer,
+            seq,
+            undefined,
+            undefined,
+            undefined,
+            {
+                mode: 'approved-only',
+                allowDomains: [],
+                denyDomains: [],
+                allowHttp: false,
+            },
+        );
+
+        const result = await engine.executeTurn(
+            makeConfig({
+                interactive: false,
+                resolvedConfig: structuredClone(CONFIG_DEFAULTS),
+                sessionGrants: new SessionGrantStore(),
+                promptUser: async (prompt) => {
+                    promptText = prompt;
+                    return 'y';
+                },
+            }),
+            'fetch the remote script',
+            [],
+        );
+
+        const toolResults = result.items.filter(isToolResult);
+        expect(toolResults).toHaveLength(1);
+        expect(toolResults[0].output.status).toBe('success');
+        expect(promptText).toContain('Network policy');
+        expect(promptText).toContain('approved-only');
+    });
+
+    it('approved-only shell network confirmation is not bypassed by autoConfirm', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([{ name: 'exec_command', args: { command: 'curl https://example.com' } }]),
+            textResponse('Recovered after denial.'),
+        ]);
+
+        const execSpec: ToolSpec = {
+            name: 'exec_command',
+            description: 'Fake exec tool',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    command: { type: 'string' },
+                },
+                required: ['command'],
+                additionalProperties: false,
+            },
+            approvalClass: 'external-effect',
+            idempotent: false,
+            timeoutCategory: 'shell',
+        };
+        const execImpl: ToolImplementation = async () => ({
+            status: 'success',
+            data: '{"exit_code":0}',
+            truncated: false,
+            bytesReturned: 15,
+            bytesOmitted: 0,
+            retryable: false,
+            timedOut: false,
+            mutationState: 'process',
+        });
+        registry.register(execSpec, execImpl);
+
+        const logPath = join(dir, 'conversation-network-autoconfirm.jsonl');
+        writeFileSync(logPath, '');
+        const writer = new ConversationWriter(logPath);
+        const seq = new SequenceGenerator(0);
+        const engine = new TurnEngine(
+            provider,
+            registry,
+            writer,
+            seq,
+            undefined,
+            undefined,
+            undefined,
+            {
+                mode: 'approved-only',
+                allowDomains: [],
+                denyDomains: [],
+                allowHttp: false,
+            },
+        );
+
+        const result = await engine.executeTurn(
+            makeConfig({
+                interactive: false,
+                autoConfirm: true,
+                resolvedConfig: structuredClone(CONFIG_DEFAULTS),
+                sessionGrants: new SessionGrantStore(),
+            }),
+            'fetch the remote script',
+            [],
+        );
+
+        const toolResults = result.items.filter(isToolResult);
+        expect(toolResults).toHaveLength(1);
+        expect(toolResults[0].output.status).toBe('error');
+        expect(toolResults[0].output.error?.code).toBe('tool.permission');
     });
 
     // ---------------------------------------------------------------------

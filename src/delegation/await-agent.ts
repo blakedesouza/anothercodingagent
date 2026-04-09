@@ -21,7 +21,12 @@ export const awaitAgentSpec: ToolSpec = {
         type: 'object',
         properties: {
             agent_id: { type: 'string', minLength: 1 },
-            timeout: { type: 'number', minimum: 0 },
+            timeout: {
+                oneOf: [
+                    { type: 'number', minimum: 0 },
+                    { type: 'string', pattern: '^[0-9]+$' },
+                ],
+            },
         },
         required: ['agent_id'],
         additionalProperties: false,
@@ -75,11 +80,22 @@ export interface AwaitAgentDeps {
 export function createAwaitAgentImpl(deps: AwaitAgentDeps): ToolImplementation {
     return async (
         args: Record<string, unknown>,
-        _context: ToolContext,
+        context: ToolContext,
     ): Promise<ToolOutput> => {
-        const agentId = args.agent_id as string;
-        const timeout = (args.timeout as number | undefined) ?? 0;
+        const requestedAgentId = args.agent_id as string;
+        const rawTimeout = args.timeout;
+        const timeout = typeof rawTimeout === 'string'
+            ? Number.parseInt(rawTimeout, 10)
+            : (rawTimeout as number | undefined) ?? 0;
         const { delegationTracker } = deps;
+        const agentId = delegationTracker.resolveAgentReference(requestedAgentId, context.sessionId);
+
+        if (!agentId) {
+            return errorOutput(
+                DELEGATION_ERRORS.MESSAGE_FAILED,
+                `agent not found: ${requestedAgentId}`,
+            );
+        }
 
         const agent = delegationTracker.getAgent(agentId);
 

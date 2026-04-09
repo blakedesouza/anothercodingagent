@@ -13,6 +13,8 @@ import { gunzipSync } from 'node:zlib';
 import { SqliteStore } from '../../src/observability/sqlite-store.js';
 import { runRetention } from '../../src/observability/log-retention.js';
 import type { RetentionConfig } from '../../src/observability/log-retention.js';
+import { createEvent } from '../../src/core/event-sink.js';
+import type { SessionId } from '../../src/types/ids.js';
 
 // --- Helpers ---
 
@@ -85,16 +87,13 @@ function registerSessionInSqlite(
     sessionId: string,
     startedAt: string,
 ): void {
-    // Use insertBatch with a minimal session.started event
-    store.insertBatch([{
-        event_id: `evt_${randomUUID().replace(/-/g, '').slice(0, 26)}`,
-        session_id: sessionId,
-        event_type: 'session.started',
-        timestamp: startedAt,
-        turn_number: 0,
-        agent_id: 'root',
-        payload: { workspace_id: 'wrk_test123', model: 'test', provider: 'test' },
-    } as any]);
+    const event = createEvent('session.started', sessionId as SessionId, 0, 'root', {
+        workspace_id: 'wrk_test123',
+        model: 'test',
+        provider: 'test',
+    });
+    event.timestamp = startedAt;
+    store.insertBatch([event]);
 }
 
 const DEFAULT_CONFIG: RetentionConfig = {
@@ -251,6 +250,29 @@ describe('Log Retention', () => {
         expect(existsSync(join(sessionDir, 'blobs'))).toBe(true);
         expect(result.pruned).toBe(0);
         expect(result.compressed).toBe(0);
+    });
+
+    it('protected session is skipped even if it is older than retention', async () => {
+        const protectedId = 'ses_KEEP000000000000000000001';
+        const oldId = 'ses_OLD0000000000000000000002';
+        createSession(sessionsDir, protectedId, { lastActivity: daysAgo(45) });
+        createSession(sessionsDir, oldId, { lastActivity: daysAgo(46) });
+        registerSessionInSqlite(store, protectedId, daysAgo(45));
+        registerSessionInSqlite(store, oldId, daysAgo(46));
+
+        const result = await runRetention(
+            sessionsDir,
+            store,
+            DEFAULT_CONFIG,
+            undefined,
+            { protectedSessionIds: [protectedId] },
+        );
+
+        expect(result.pruned).toBe(1);
+        expect(existsSync(join(sessionsDir, protectedId))).toBe(true);
+        expect(existsSync(join(sessionsDir, oldId))).toBe(false);
+        expect(store.getSessionById(protectedId)?.pruned).toBe(0);
+        expect(store.getSessionById(oldId)?.pruned).toBe(1);
     });
 
     it('already compressed session → not re-compressed', async () => {

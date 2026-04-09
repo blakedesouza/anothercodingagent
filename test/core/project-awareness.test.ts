@@ -49,12 +49,12 @@ describe('Project Awareness', () => {
 
     describe('detectRoot', () => {
         it('detects .git/ directory as project root', () => {
-            mkdirSync(join(tempDir, '.git'), { recursive: true });
+            initGitRepo(tempDir);
             expect(detectRoot(tempDir)).toBe(tempDir);
         });
 
         it('walks up to find .git/ in parent directory', () => {
-            mkdirSync(join(tempDir, '.git'), { recursive: true });
+            initGitRepo(tempDir);
             const subDir = join(tempDir, 'src', 'deep');
             mkdirSync(subDir, { recursive: true });
             expect(detectRoot(subDir)).toBe(tempDir);
@@ -67,18 +67,26 @@ describe('Project Awareness', () => {
 
         it('prefers .git/ over package.json in parent', () => {
             // parent has .git/, child has package.json
-            mkdirSync(join(tempDir, '.git'), { recursive: true });
+            initGitRepo(tempDir);
             const child = join(tempDir, 'packages', 'sub');
             mkdirSync(child, { recursive: true });
             touch(child, 'package.json');
             expect(detectRoot(child)).toBe(tempDir);
         });
 
+        it('ignores an unusable .git directory and falls back to the nearest language root', () => {
+            mkdirSync(join(tempDir, '.git'), { recursive: true });
+            const child = join(tempDir, 'packages', 'sub');
+            mkdirSync(child, { recursive: true });
+            touch(child, 'package.json');
+            expect(detectRoot(child)).toBe(child);
+        });
+
         it('falls back to package.json when .git/ is only in a deeper parent', () => {
             // Structure: /tmp/root/.git/ + /tmp/root/sub/package.json
             // Starting from /tmp/root/sub → finds package.json first as fallback,
             // but keeps walking up and finds .git/ → returns .git/ parent
-            mkdirSync(join(tempDir, '.git'), { recursive: true });
+            initGitRepo(tempDir);
             const sub = join(tempDir, 'sub');
             mkdirSync(sub, { recursive: true });
             touch(sub, 'package.json');
@@ -356,7 +364,7 @@ describe('Project Awareness', () => {
         });
 
         it('includes config ignore paths in snapshot', () => {
-            mkdirSync(join(tempDir, '.git'), { recursive: true });
+            initGitRepo(tempDir);
             const snapshot = buildProjectSnapshot(tempDir, ['.cache/']);
             expect(snapshot.ignorePaths).toContain('.cache/');
             expect(snapshot.ignorePaths).toContain('.git/');

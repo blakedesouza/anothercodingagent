@@ -11,9 +11,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { spawn, type ChildProcess } from 'node:child_process';
-import type { InvokeResponse } from '../cli/executor.js';
+import type { InvokeResponse, InvokeSystemMessage } from '../cli/executor.js';
 import { CONTRACT_VERSION, SCHEMA_VERSION } from '../cli/executor.js';
 import { DEFAULT_API_TIMEOUT_MS } from '../config/schema.js';
+import type { ModelResponseFormat } from '../types/provider.js';
 
 /**
  * Default outer wall-clock deadline for aca_run MCP invocations.
@@ -36,6 +37,14 @@ const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 /** Maximum concurrent aca_run invocations. Prevents resource exhaustion from unbounded subprocess spawning. */
 export const MAX_CONCURRENT_AGENTS = 5;
 
+function describeDefaultDeadline(deadlineMs: number): string {
+    if (deadlineMs % 60_000 === 0) {
+        const minutes = deadlineMs / 60_000;
+        return `Timeout in milliseconds (default: ${deadlineMs} = ${minutes} minute${minutes === 1 ? '' : 's'})`;
+    }
+    return `Timeout in milliseconds (default: ${deadlineMs})`;
+}
+
 /** Result from spawning an aca invoke subprocess. */
 export interface AcaInvokeResult {
     stdout: string;
@@ -51,6 +60,7 @@ export interface AcaInvokeResult {
 export async function runAcaInvoke(
     task: string,
     options: {
+        cwd?: string;
         allowedTools?: string[];
         deniedTools?: string[];
         deadlineMs?: number;
@@ -68,10 +78,14 @@ export async function runAcaInvoke(
         temperature?: number;
         topP?: number;
         thinking?: 'enabled' | 'disabled';
+        responseFormat?: ModelResponseFormat;
+        systemMessages?: InvokeSystemMessage[];
     },
     spawnFn = defaultSpawn,
 ): Promise<AcaInvokeResult> {
-    const deadline = options.deadlineMs ?? DEFAULT_DEADLINE_MS;
+    const deadline = Number.isFinite(options.deadlineMs) && (options.deadlineMs ?? 0) > 0
+        ? Math.trunc(options.deadlineMs as number)
+        : DEFAULT_DEADLINE_MS;
 
     const constraints: Record<string, unknown> = {
         max_steps: options.maxSteps ?? DEFAULT_MAX_STEPS,
@@ -109,12 +123,15 @@ export async function runAcaInvoke(
         contract_version: CONTRACT_VERSION,
         schema_version: SCHEMA_VERSION,
         task,
-        ...((options.model || options.profile || options.temperature !== undefined || options.topP !== undefined || options.thinking) ? { context: {
+        ...((options.cwd || options.model || options.profile || options.temperature !== undefined || options.topP !== undefined || options.thinking || options.responseFormat || options.systemMessages) ? { context: {
+            ...(options.cwd ? { cwd: options.cwd } : {}),
             ...(options.model ? { model: options.model } : {}),
             ...(options.profile ? { profile: options.profile } : {}),
             ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
             ...(options.topP !== undefined ? { top_p: options.topP } : {}),
             ...(options.thinking ? { thinking: options.thinking } : {}),
+            ...(options.responseFormat ? { response_format: options.responseFormat } : {}),
+            ...(options.systemMessages ? { system_messages: options.systemMessages } : {}),
         } } : {}),
         constraints,
         deadline,
@@ -142,7 +159,33 @@ function debug(msg: string): void {
  * The invoke handler already sets autoConfirm: true internally.
  */
 export function buildSpawnArgs(acaBin: string): string[] {
-    return [acaBin, 'invoke'];
+    const passthroughExecArgv: string[] = [];
+    for (let i = 0; i < process.execArgv.length; i++) {
+        const arg = process.execArgv[i];
+        if (
+            arg === '--import'
+            || arg === '--loader'
+            || arg === '--require'
+            || arg === '-r'
+        ) {
+            passthroughExecArgv.push(arg);
+            const value = process.execArgv[i + 1];
+            if (value !== undefined) {
+                passthroughExecArgv.push(value);
+                i++;
+            }
+            continue;
+        }
+        if (
+            arg.startsWith('--import=')
+            || arg.startsWith('--loader=')
+            || arg.startsWith('--require=')
+        ) {
+            passthroughExecArgv.push(arg);
+        }
+    }
+
+    return [...passthroughExecArgv, acaBin, 'invoke'];
 }
 
 /** Default spawn implementation — calls the aca binary. */
@@ -337,8 +380,8 @@ export function createMcpServer(
                     .describe('Model nucleus sampling override'),
                 thinking: z.enum(['enabled', 'disabled']).optional()
                     .describe('Provider thinking mode override when supported'),
-                timeout_ms: z.number().optional()
-                    .describe('Timeout in milliseconds (default: 900000 = 15 minutes)'),
+                timeout_ms: z.number().int().positive().optional()
+                    .describe(describeDefaultDeadline(DEFAULT_DEADLINE_MS)),
             },
         },
         async ({

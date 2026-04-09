@@ -4,7 +4,7 @@
  * Defines the witness models used by /consult and ACA-mode witness agents.
  * consult_ring.py reads these via `aca witnesses --json` to stay in sync.
  *
- * Max output values sourced from NanoGPT /api/v1/models?detailed=true (2026-04-05).
+ * Max output values sourced from NanoGPT /subscription/v1/models?detailed=true (2026-04-05).
  */
 
 import { DEFAULT_API_TIMEOUT_MS } from './schema.js';

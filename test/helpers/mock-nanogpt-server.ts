@@ -135,7 +135,20 @@ export class MockNanoGPTServer {
         const chunks: Buffer[] = [];
         req.on('data', (chunk: Buffer) => chunks.push(chunk));
         req.on('end', () => {
-            const body = JSON.parse(Buffer.concat(chunks).toString());
+            let body: unknown;
+            try {
+                body = JSON.parse(Buffer.concat(chunks).toString());
+            } catch {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    error: {
+                        message: 'Invalid JSON request body',
+                        type: 'invalid_request_error',
+                        code: 'invalid_json',
+                    },
+                }));
+                return;
+            }
             this.requests.push({
                 body,
                 headers: req.headers as Record<string, string | string[] | undefined>,

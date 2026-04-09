@@ -136,11 +136,14 @@ export const sessionIoImpl: ToolImplementation = async (
     // Write stdin if provided.
     if (stdinInput !== undefined && !record.exited) {
         // Risk analysis: forbidden stdin is blocked before delivery to the shell process.
+        // Use conservative unknown-context analysis: a persistent shell may have
+        // changed directories since spawn, so workspaceRoot is not a trustworthy
+        // cwd for relative destructive commands.
         const stdinRisk = analyzeCommand(
             stdinInput,
-            context.workspaceRoot,
+            '/',
             undefined,
-            context.workspaceRoot,
+            undefined,
         );
         if (stdinRisk.tier === 'forbidden') {
             return errorOutput(

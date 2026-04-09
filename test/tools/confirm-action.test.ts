@@ -149,7 +149,7 @@ describe('confirm_action tool', () => {
             const data = JSON.parse(result.data);
             expect(data.approved).toBe(true);
             expect(prompted).toBe(false);
-            expect(result.yieldOutcome).toBe('approval_required');
+            expect(result.yieldOutcome).toBeUndefined();
         });
     });
 
@@ -188,6 +188,7 @@ describe('confirm_action tool', () => {
             expect(result.status).toBe('success');
             const data = JSON.parse(result.data);
             expect(data.approved).toBe(true);
+            expect(result.yieldOutcome).toBeUndefined();
         });
     });
 

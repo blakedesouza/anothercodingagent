@@ -88,6 +88,18 @@ describe('matchPreauthRules', () => {
         })).toBeNull();
     });
 
+    it('cwdPattern does not match sibling paths that share a string prefix', () => {
+        const rules = [makeRule({
+            id: 'r1',
+            tool: 'exec_command',
+            match: { cwdPattern: '/home/user/project' },
+        })];
+        expect(matchPreauthRules(rules, {
+            toolName: 'exec_command',
+            cwd: '/home/user/project-evil',
+        })).toBeNull();
+    });
+
     it('skips rule when cwdPattern specified but no cwd in input', () => {
         const rules = [makeRule({
             id: 'r1',

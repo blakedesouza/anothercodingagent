@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 
 describe('Path alias resolution', () => {
     it('resolves @/ to src/ in tests', async () => {
@@ -26,5 +28,26 @@ describe('Path alias resolution', () => {
 
         const toolCallId = generateId('toolCall');
         expect(toolCallId).toMatch(/^call_/);
+    });
+
+    it('resolves @/ to src/ in the tsx dev runtime', () => {
+        const root = join(import.meta.dirname, '..', '..');
+        const stdout = execFileSync(
+            'node',
+            [
+                '--import',
+                'tsx',
+                '--input-type=module',
+                '-e',
+                "const mod = await import('@/types/index.js'); console.log(typeof mod.generateId);",
+            ],
+            {
+                cwd: root,
+                encoding: 'utf-8',
+                env: { ...process.env, NODE_NO_WARNINGS: '1' },
+            },
+        );
+
+        expect(stdout.trim()).toBe('function');
     });
 });

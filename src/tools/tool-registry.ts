@@ -50,6 +50,8 @@ export interface ToolContext {
     promptUser?: (question: string, choices?: string[]) => Promise<string>;
     /** Additional trusted filesystem roots beyond workspace, session dir, and scoped tmp. From user config only. */
     extraTrustedRoots?: string[];
+    /** True when this specific tool call already cleared a network-policy confirmation gate. */
+    networkApproved?: boolean;
 }
 
 /** The function signature every tool implementation must satisfy. */

@@ -46,6 +46,10 @@ export interface RetentionResult {
     sizeReclaimed: number;
 }
 
+export interface RetentionRunOptions {
+    protectedSessionIds?: string[];
+}
+
 interface SessionInfo {
     sessionId: string;
     dir: string;
@@ -66,8 +70,10 @@ export async function runRetention(
     store: SqliteStore | null,
     config: RetentionConfig,
     warn: WarnFn = () => {},
+    options: RetentionRunOptions = {},
 ): Promise<RetentionResult> {
     const result: RetentionResult = { pruned: 0, compressed: 0, sizeReclaimed: 0 };
+    const protectedSessionIds = new Set(options.protectedSessionIds ?? []);
 
     if (!existsSync(sessionsDir)) return result;
 
@@ -84,6 +90,7 @@ export async function runRetention(
     // Phase 1: Prune sessions beyond retention period
     for (const session of sessions) {
         if (processed >= MAX_SESSIONS_PER_RUN) break;
+        if (protectedSessionIds.has(session.sessionId)) continue;
 
         const ageDays = daysBetween(session.lastActivity, now);
         if (ageDays > config.days) {
@@ -98,6 +105,7 @@ export async function runRetention(
     // Phase 2: Compress sessions older than COMPRESS_AFTER_DAYS
     for (const session of sessions) {
         if (processed >= MAX_SESSIONS_PER_RUN) break;
+        if (protectedSessionIds.has(session.sessionId)) continue;
 
         // Skip sessions that were already pruned in Phase 1
         if (!existsSync(session.dir)) continue;
@@ -130,6 +138,7 @@ export async function runRetention(
         for (const session of remaining) {
             if (processed >= MAX_SESSIONS_PER_RUN) break;
             if (currentSize <= maxBytes) break;
+            if (protectedSessionIds.has(session.sessionId)) continue;
 
             if (pruneSession(session, store, warn)) {
                 currentSize -= session.sizeBytes;

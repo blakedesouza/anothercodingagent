@@ -172,6 +172,40 @@ describe('extractTurnFacts', () => {
         expect(facts.toolErrors[0].filePath).toBeUndefined();
     });
 
+    it('ignores deferred overflow tool results when extracting durable errors', () => {
+        const callId = 'call_deferred1' as ToolCallId;
+        const items = [
+            makeAssistantMsgWithToolCall(callId, 'fetch_mediawiki_page', { api_url: 'https://example.test/api.php', page: 'Alpha' }),
+            makeToolResult(callId, 'fetch_mediawiki_page', 'error', '', {
+                errorCode: 'tool.deferred',
+                errorMessage: 'Tool call deferred: max 10 calls per message.',
+            }),
+        ];
+        const facts = extractTurnFacts(items);
+        expect(facts.toolErrors).toHaveLength(0);
+    });
+
+    it('ignores read_file validation errors for files written earlier in the same turn', () => {
+        const writeCallId = 'call_write_selfcheck' as ToolCallId;
+        const readCallId = 'call_read_selfcheck' as ToolCallId;
+        const items = [
+            makeAssistantMsgWithToolCall(writeCallId, 'write_file', { path: 'world/characters/lilith-asami.md', content: '# Lilith\n' }),
+            makeToolResult(writeCallId, 'write_file', 'success', 'Written 9 bytes'),
+            makeAssistantMsgWithToolCall(readCallId, 'read_file', {
+                path: 'world/characters/lilith-asami.md',
+                line_start: '1',
+                line_end: '50',
+            }),
+            makeToolResult(readCallId, 'read_file', 'error', '', {
+                errorCode: 'tool.validation',
+                errorMessage: 'Input validation failed',
+            }),
+        ];
+        const facts = extractTurnFacts(items);
+        expect(facts.modifiedFiles).toContain('world/characters/lilith-asami.md');
+        expect(facts.toolErrors).toHaveLength(0);
+    });
+
     it('extracts approval denial when approved===false in tool result data', () => {
         const callId = 'call_del1' as ToolCallId;
         const items = [
@@ -216,6 +250,21 @@ describe('extractTurnFacts', () => {
         ];
         const facts = extractTurnFacts(items);
         expect(facts.modifiedFiles.filter(f => f === 'src/a.ts')).toHaveLength(1);
+    });
+
+    it('normalizes workspace-local absolute and relative file references to one key', () => {
+        const callId = 'call_norm1' as ToolCallId;
+        const items = [
+            makeAssistantMsgWithToolCall(callId, 'write_file', { path: '/repo/src/a.ts', content: '' }),
+            makeToolResult(callId, 'write_file', 'success', 'ok'),
+            makeUserMsg('also check /repo/test/a.test.ts'),
+        ];
+
+        const facts = extractTurnFacts(items, '/repo');
+        expect(facts.modifiedFiles).toContain('src/a.ts');
+        expect(facts.modifiedFiles).not.toContain('/repo/src/a.ts');
+        expect(facts.mentionedFiles).toContain('test/a.test.ts');
+        expect(facts.mentionedFiles).not.toContain('/repo/test/a.test.ts');
     });
 });
 

@@ -88,16 +88,29 @@ export const DEFAULT_DELEGATION_LIMITS: DelegationLimits = {
     maxTotalAgents: 20,
 };
 
+export interface AuthorityRule {
+    id: string;
+    tool: string;
+    match: Record<string, unknown>;
+    decision: 'allow' | 'deny';
+    scope: 'session' | 'permanent';
+}
+
 // --- Delegation tracker ---
 
 export type AgentStatus = 'active' | 'completed' | 'failed' | 'cancelled';
 
 export interface TrackedAgent {
     identity: AgentIdentity;
+    parentSessionId: SessionId;
     childSessionId: SessionId;
     status: AgentStatus;
     tools: readonly string[];
     preAuthorizedPatterns: PreauthRule[];
+    authority: AuthorityRule[];
+    profileName: string;
+    task: string;
+    context: string;
     /** Current lifecycle phase (M7.1c). */
     phase: AgentPhase;
     /** Currently active tool name, or null. */
@@ -223,6 +236,34 @@ export class DelegationTracker {
         return this.agents.get(agentId);
     }
 
+    /**
+     * Resolve a model shorthand like "$spawn_agent" to the most recently spawned
+     * child of the current caller session.
+     */
+    resolveAgentReference(agentId: string, parentSessionId: string): string | null {
+        let latest: TrackedAgent | undefined;
+        let labeled: TrackedAgent | undefined;
+        for (const candidate of this.agents.values()) {
+            if (candidate.parentSessionId !== parentSessionId) continue;
+            if (!latest || candidate.spawnedAt > latest.spawnedAt) {
+                latest = candidate;
+            }
+            if (candidate.identity.label === agentId) {
+                labeled = candidate;
+            }
+        }
+
+        if (agentId === '$spawn_agent') {
+            return latest?.identity.id ?? null;
+        }
+
+        if (labeled) {
+            return labeled.identity.id;
+        }
+
+        return agentId;
+    }
+
     /** Update an agent's lifecycle phase. No-op if agent is not active (prevents done→active regression). */
     updatePhase(agentId: string, phase: AgentPhase, activeTool?: string | null, summary?: string): void {
         const agent = this.agents.get(agentId);
@@ -315,8 +356,8 @@ function matchFieldsEqual(
  * Requires: same tool, same decision, and identical match fields.
  */
 function isRuleCoveredByParent(
-    child: PreauthRule,
-    parentRules: PreauthRule[],
+    child: { tool: string; decision: string; match: Record<string, unknown> },
+    parentRules: Array<{ tool: string; decision: string; match: Record<string, unknown> }>,
 ): boolean {
     return parentRules.some(parent =>
         parent.tool === child.tool &&
@@ -347,9 +388,9 @@ export function validatePreauthNarrowing(
  * Returns rejected rules that widen beyond parent's authority.
  */
 export function validateAuthorityNarrowing(
-    parentAuthority: PreauthRule[],
-    overrideAuthority: PreauthRule[],
-): PreauthRule[] {
+    parentAuthority: AuthorityRule[],
+    overrideAuthority: AuthorityRule[],
+): AuthorityRule[] {
     if (overrideAuthority.length === 0) return [];
     return overrideAuthority.filter(or => !isRuleCoveredByParent(or, parentAuthority));
 }
@@ -366,6 +407,14 @@ export interface SpawnResult {
     profile: AgentProfile;
 }
 
+export interface SpawnLaunchPayload extends SpawnResult {
+    task: string;
+    context: string;
+    authority: AuthorityRule[];
+    callerSessionId: SessionId;
+    rootSessionId: SessionId;
+}
+
 // --- Dependencies ---
 
 export interface SpawnAgentDeps {
@@ -374,6 +423,8 @@ export interface SpawnAgentDeps {
     limits: DelegationLimits;
     /** Called to create the child session directory and manifest. */
     createChildSession: (parentSessionId: SessionId, rootSessionId: SessionId) => SessionId;
+    /** Optional runtime hook that launches the spawned child agent. */
+    onSpawn?: (payload: SpawnLaunchPayload) => void | Promise<void>;
 }
 
 /** Caller context injected per-call (varies by which agent is calling). */
@@ -382,7 +433,7 @@ export interface SpawnCallerContext {
     callerSessionId: SessionId;
     rootSessionId: SessionId;
     callerPreauths: PreauthRule[];
-    callerAuthority: PreauthRule[];
+    callerAuthority: AuthorityRule[];
     /** The caller's own active tool set. Child tools are intersected with this
      *  to prevent privilege escalation via profile selection. */
     callerTools: readonly string[];
@@ -436,7 +487,7 @@ export function createSpawnAgentImpl(
         const task = args.task as string;
         const contextText = (args.context as string | undefined) ?? '';
         const allowedTools = args.allowed_tools as string[] | undefined;
-        const authorityOverride = args.authority as PreauthRule[] | undefined;
+        const authorityOverride = args.authority as AuthorityRule[] | undefined;
         const label = (args.label as string | undefined) ?? `${agentType}-${Date.now()}`;
         const preAuthPatterns = args.preAuthorizedPatterns as PreauthRule[] | undefined;
 
@@ -473,7 +524,7 @@ export function createSpawnAgentImpl(
         // The caller cannot grant tools it does not hold (privilege escalation prevention).
         const callerToolSet = new Set(callerContext.callerTools);
         let resolvedTools: readonly string[];
-        if (allowedTools && allowedTools.length > 0) {
+        if (allowedTools !== undefined) {
             const narrowing = agentRegistry.validateToolNarrowing(agentType, allowedTools);
             if (!narrowing.valid) {
                 return errorOutput(
@@ -491,6 +542,9 @@ export function createSpawnAgentImpl(
         }
 
         // 4. Validate authority narrowing
+        const resolvedAuthority = authorityOverride && authorityOverride.length > 0
+            ? authorityOverride
+            : callerAuthority;
         if (authorityOverride && authorityOverride.length > 0) {
             const rejected = validateAuthorityNarrowing(callerAuthority, authorityOverride);
             if (rejected.length > 0) {
@@ -537,10 +591,15 @@ export function createSpawnAgentImpl(
         const completionPromise = new Promise<void>(resolve => { completionResolve = resolve; });
         delegationTracker.registerAgent({
             identity: childIdentity,
+            parentSessionId: callerSessionId,
             childSessionId,
             status: 'active',
             tools: resolvedTools,
             preAuthorizedPatterns: resolvedPreauths,
+            authority: resolvedAuthority,
+            profileName: profile.name,
+            task,
+            context: contextText,
             phase: 'booting',
             activeTool: null,
             lastEventAt: new Date().toISOString(),
@@ -552,6 +611,31 @@ export function createSpawnAgentImpl(
             completionPromise,
             completionResolve,
         });
+
+        const launchPayload: SpawnLaunchPayload = {
+            agentId,
+            childSessionId,
+            identity: childIdentity,
+            tools: resolvedTools,
+            preAuthorizedPatterns: resolvedPreauths,
+            profile,
+            task,
+            context: contextText,
+            authority: resolvedAuthority,
+            callerSessionId,
+            rootSessionId,
+        };
+        if (deps.onSpawn) {
+            void Promise.resolve(deps.onSpawn(launchPayload)).catch((err: unknown) => {
+                const message = err instanceof Error ? err.message : String(err);
+                delegationTracker.markCompleted(agentId, 'failed', {
+                    status: 'failed',
+                    output: `Failed to launch child agent: ${message}`,
+                    tokenUsage: { input: 0, output: 0 },
+                    toolCallSummary: [],
+                });
+            });
+        }
 
         // 9. Return success with agent ID and session ID
         return successOutput({

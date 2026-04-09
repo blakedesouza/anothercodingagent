@@ -60,6 +60,7 @@ describe('M8.1 — Build & Package', () => {
         expect(stdout).toContain('Usage:');
         expect(stdout).toContain('aca');
         expect(stdout).toContain('Options:');
+        expect(stdout).toContain('rp-research');
     });
 
     it('describe outputs valid JSON matching CapabilityDescriptor schema', () => {
@@ -78,10 +79,27 @@ describe('M8.1 — Build & Package', () => {
         expect(descriptor.constraints.supported_tools.length).toBeGreaterThan(10);
     });
 
-    it('dev mode (tsx) also works with --version', () => {
+    it('describe --json remains accepted as a backward-compatible alias', () => {
+        const { stdout, exitCode } = runDist('describe', '--json');
+        expect(exitCode).toBe(0);
+
+        const descriptor = JSON.parse(stdout.trim());
+        expect(descriptor.name).toBe('aca');
+        expect(Array.isArray(descriptor.constraints.supported_tools)).toBe(true);
+    });
+
+    it('witnesses --json remains accepted as a backward-compatible alias', () => {
+        const { stdout, exitCode } = runDist('witnesses', '--json');
+        expect(exitCode).toBe(0);
+
+        const witnesses = JSON.parse(stdout.trim());
+        expect(Object.keys(witnesses)).toEqual(['deepseek', 'kimi', 'qwen', 'gemma']);
+    });
+
+    it('dev mode (tsx loader) also works with --version', () => {
         const srcIndex = join(ROOT, 'src', 'index.ts');
         try {
-            const stdout = execFileSync('npx', ['tsx', srcIndex, '--version'], {
+            const stdout = execFileSync('node', ['--import', 'tsx', srcIndex, '--version'], {
                 cwd: ROOT,
                 encoding: 'utf-8',
                 timeout: 15_000,
@@ -90,7 +108,8 @@ describe('M8.1 — Build & Package', () => {
             expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
         } catch (err: unknown) {
             const e = err as { stdout?: string; stderr?: string; status?: number };
-            // tsx might exit non-zero on some envs; as long as version is in stdout, it's fine
+            // The loader path should exit cleanly, but preserve the old leniency:
+            // as long as version is in stdout, the dev entry is still working.
             if (e.stdout && /^\d+\.\d+\.\d+$/.test(e.stdout.trim())) {
                 expect(e.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
             } else {
@@ -113,7 +132,8 @@ describe('M8.1 — Build & Package', () => {
     it('unknown option exits non-zero', () => {
         // Commander rejects unknown flags. Single-word args route to one-shot mode
         // (treated as prompts), so we test flags instead.
-        const { exitCode } = runDist('--nonexistent-flag-xyz');
+        const { stderr, exitCode } = runDist('--nonexistent-flag-xyz');
         expect(exitCode).not.toBe(0);
+        expect(stderr).toContain("unknown option '--nonexistent-flag-xyz'");
     });
 });

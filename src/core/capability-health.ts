@@ -189,6 +189,42 @@ export class CapabilityHealthMap {
     }
 
     /**
+     * Return non-available entries in a prompt-friendly structured form.
+     * Used by prompt assembly for per-turn context injection.
+     */
+    toPromptEntries(): Array<{ name: string; status: 'degraded' | 'unavailable'; detail?: string }> {
+        const entries: Array<{ name: string; status: 'degraded' | 'unavailable'; detail?: string }> = [];
+
+        for (const entry of this.entries.values()) {
+            this.checkCooldown(entry);
+
+            if (entry.state === 'degraded') {
+                const retrySuffix = entry.cooldownExpiresAt
+                    ? `, retry ~${Math.ceil((entry.cooldownExpiresAt - this.now()) / 1000)}s`
+                    : '';
+                entries.push({
+                    name: entry.id,
+                    status: 'degraded',
+                    detail: `${entry.reason ?? 'unknown'}${retrySuffix}`,
+                });
+            } else if (entry.state === 'unavailable') {
+                const suffix = entry.sessionTerminal
+                    ? ' this session'
+                    : entry.cooldownExpiresAt
+                        ? `, cooldown ${Math.ceil((entry.cooldownExpiresAt - this.now()) / 1000)}s`
+                        : '';
+                entries.push({
+                    name: entry.id,
+                    status: 'unavailable',
+                    detail: `${entry.reason ?? 'unknown'}${suffix}`,
+                });
+            }
+        }
+
+        return entries;
+    }
+
+    /**
      * Return the set of tool names that should be masked (removed from LLM definitions)
      * because their associated capability is unavailable.
      * Tools without a capabilityId always pass through.

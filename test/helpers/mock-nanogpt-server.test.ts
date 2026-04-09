@@ -165,6 +165,21 @@ describe('MockNanoGPTServer', () => {
         expect(res.status).toBe(500);
     });
 
+    it('returns 400 for malformed JSON instead of crashing', async () => {
+        await server.start();
+
+        const res = await fetch(`${server.baseUrl}/v1/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{bad json',
+        });
+
+        expect(res.status).toBe(400);
+        const body = await res.json();
+        expect(body.error.code).toBe('invalid_json');
+        expect(server.receivedRequests).toHaveLength(0);
+    });
+
     it('reset clears responses and requests', async () => {
         server.addTextResponse('Will be cleared');
         await server.start();

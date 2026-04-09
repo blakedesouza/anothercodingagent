@@ -15,6 +15,7 @@ import type {
 } from '../types/provider.js';
 import { getModelCapabilities, getKnownModelIds } from './model-registry.js';
 import { parseSSE } from './sse-parser.js';
+import { DEFAULT_API_TIMEOUT_MS } from '../config/schema.js';
 
 export interface AnthropicDriverOptions {
     apiKey?: string;
@@ -41,7 +42,7 @@ export class AnthropicDriver implements ProviderDriver {
     constructor(options: AnthropicDriverOptions = {}) {
         this.apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
         this.baseUrl = options.baseUrl ?? 'https://api.anthropic.com';
-        this.timeout = options.timeout ?? 30_000;
+        this.timeout = options.timeout ?? DEFAULT_API_TIMEOUT_MS;
     }
 
     validate(config: ProviderConfig): Result<void, ConfigError> {

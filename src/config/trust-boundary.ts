@@ -13,7 +13,7 @@
 //   providers, defaultProvider, apiTimeout, trustedWorkspaces,
 //   permissions.nonInteractive, permissions.preauth,
 //   permissions.classOverrides, permissions.toolOverrides,
-//   sandbox.extraTrustedRoots,
+//   sandbox.extraTrustedRoots (allowed only for trusted workspaces),
 //   network.mode, network.allowDomains, network.allowHttp,
 //   scrubbing.allowPatterns,
 //   model.compressionModel, model.maxOutputTokens
@@ -72,6 +72,13 @@ export function filterProjectConfig(
         const allowed = ['ignorePaths', 'docAliases', 'conventions'];
         if (isTrusted) allowed.push('systemPromptOverlay');
         result.project = pick(project, allowed);
+    }
+
+    // sandbox: trusted workspaces may add extraTrustedRoots
+    const sandbox = asObject(config.sandbox);
+    if (sandbox && isTrusted) {
+        const filtered = pick(sandbox, ['extraTrustedRoots']);
+        if (Object.keys(filtered).length > 0) result.sandbox = filtered;
     }
 
     // network: only denyDomains

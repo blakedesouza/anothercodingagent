@@ -75,11 +75,19 @@ export interface MessageAgentDeps {
 export function createMessageAgentImpl(deps: MessageAgentDeps): ToolImplementation {
     return async (
         args: Record<string, unknown>,
-        _context: ToolContext,
+        context: ToolContext,
     ): Promise<ToolOutput> => {
-        const agentId = args.agent_id as string;
+        const requestedAgentId = args.agent_id as string;
         const message = args.message as string;
         const { delegationTracker } = deps;
+        const agentId = delegationTracker.resolveAgentReference(requestedAgentId, context.sessionId);
+
+        if (!agentId) {
+            return errorOutput(
+                DELEGATION_ERRORS.MESSAGE_FAILED,
+                `agent not found: ${requestedAgentId}`,
+            );
+        }
 
         const agent = delegationTracker.getAgent(agentId);
 
@@ -97,6 +105,19 @@ export function createMessageAgentImpl(deps: MessageAgentDeps): ToolImplementati
                 DELEGATION_ERRORS.MESSAGE_FAILED,
                 `agent terminated: ${agentId} (status: ${agent.status})`,
             );
+        }
+
+        if (agent.pendingApproval) {
+            agent.pendingApproval.resolve(message);
+            deps.delegationTracker.clearPendingApproval(agentId);
+            deps.delegationTracker.updatePhase(agentId, 'thinking', null, 'Resuming after parent response');
+            return successOutput({
+                acknowledged: true,
+                agentId,
+                status: agent.status,
+                phase: agent.phase,
+                resolvedPendingApproval: true,
+            });
         }
 
         // Enqueue the message for the child agent

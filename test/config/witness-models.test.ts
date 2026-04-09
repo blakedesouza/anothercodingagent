@@ -18,7 +18,7 @@ describe('M11.5 — Witness Model Configuration', () => {
         });
 
         it('uses actual API ceilings for maxOutputTokens', () => {
-            // Values from NanoGPT /api/v1/models?detailed=true (2026-04-05)
+            // Values from NanoGPT /subscription/v1/models?detailed=true (2026-04-05)
             const expected: Record<string, number> = {
                 deepseek: 65_536,
                 kimi: 65_536,

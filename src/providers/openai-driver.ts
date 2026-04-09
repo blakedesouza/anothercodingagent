@@ -13,6 +13,7 @@ import type {
 } from '../types/provider.js';
 import { getModelCapabilities, getKnownModelIds } from './model-registry.js';
 import { parseSSE } from './sse-parser.js';
+import { DEFAULT_API_TIMEOUT_MS } from '../config/schema.js';
 
 export interface OpenAiDriverOptions {
     apiKey?: string;
@@ -39,7 +40,7 @@ export class OpenAiDriver implements ProviderDriver {
     constructor(options: OpenAiDriverOptions = {}) {
         this.apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
         this.baseUrl = options.baseUrl ?? 'https://api.openai.com/v1';
-        this.timeout = options.timeout ?? 30_000;
+        this.timeout = options.timeout ?? DEFAULT_API_TIMEOUT_MS;
     }
 
     validate(config: ProviderConfig): Result<void, ConfigError> {

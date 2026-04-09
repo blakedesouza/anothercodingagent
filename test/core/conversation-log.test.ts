@@ -303,6 +303,38 @@ describe('M1.2 — JSONL Conversation Log', () => {
             expect(warnings[0].reason).toContain('Unknown recordType');
         });
 
+        it('should skip malformed message records', () => {
+            writeFileSync(
+                logPath,
+                '{"recordType":"message","id":"itm_bad","seq":1,"timestamp":"2026-01-01T00:00:00Z"}\n' +
+                '{"recordType":"message","id":"itm_ok","seq":2,"role":"user","parts":[{"type":"text","text":"ok"}],"timestamp":"2026-01-01T00:00:01Z"}\n',
+            );
+
+            const { records, warnings } = readConversationLog(logPath);
+
+            expect(records).toHaveLength(1);
+            expect(records[0].recordType).toBe('message');
+            expect((records[0].record as ConversationItem).id).toBe('itm_ok');
+            expect(warnings).toHaveLength(1);
+            expect(warnings[0].reason).toBe('Invalid message record shape');
+        });
+
+        it('should skip malformed turn records', () => {
+            writeFileSync(
+                logPath,
+                '{"recordType":"turn","id":"trn_bad","sessionId":"ses_test","turnNumber":1,"itemSeqStart":1,"itemSeqEnd":2,"steps":[],"startedAt":"2026-01-01T00:00:00Z"}\n' +
+                '{"recordType":"turn","id":"trn_ok","sessionId":"ses_test","turnNumber":2,"status":"completed","itemSeqStart":3,"itemSeqEnd":4,"steps":[],"startedAt":"2026-01-01T00:00:01Z","completedAt":"2026-01-01T00:00:02Z"}\n',
+            );
+
+            const { records, warnings } = readConversationLog(logPath);
+
+            expect(records).toHaveLength(1);
+            expect(records[0].recordType).toBe('turn');
+            expect((records[0].record as TurnRecord).id).toBe('trn_ok');
+            expect(warnings).toHaveLength(1);
+            expect(warnings[0].reason).toBe('Invalid turn record shape');
+        });
+
         it('should handle multiple malformed lines interspersed with valid ones', () => {
             const writer = new ConversationWriter(logPath);
             const msg = createItem('user', 'valid message');

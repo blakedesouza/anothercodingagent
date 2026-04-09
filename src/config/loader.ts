@@ -13,7 +13,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 
 import {
@@ -123,6 +123,7 @@ export async function loadConfig(options: ConfigLoadOptions): Promise<ConfigLoad
         cliFlags = {},
         env = process.env,
     } = options;
+    const normalizedWorkspaceRoot = resolve(workspaceRoot);
     const warnings: string[] = [];
     const sources = { user: false, project: false, env: [] as string[], cli: [] as string[] };
 
@@ -150,7 +151,7 @@ export async function loadConfig(options: ConfigLoadOptions): Promise<ConfigLoad
     }
 
     // Step 3: Load project config (trust-boundary filtered)
-    const projectConfigPath = options.projectConfigPath ?? join(workspaceRoot, '.aca', 'config.json');
+    const projectConfigPath = options.projectConfigPath ?? join(normalizedWorkspaceRoot, '.aca', 'config.json');
     const projectConfig = await loadJsonFile(projectConfigPath);
     if (projectConfig.error) {
         if (projectConfig.error !== 'ENOENT') {
@@ -166,7 +167,7 @@ export async function loadConfig(options: ConfigLoadOptions): Promise<ConfigLoad
         } else {
             // Determine if workspace is trusted
             const trustedWorkspaces = (merged as Record<string, unknown>).trustedWorkspaces as Record<string, string> | undefined;
-            const isTrusted = trustedWorkspaces?.[workspaceRoot] === 'trusted';
+            const isTrusted = trustedWorkspaces?.[normalizedWorkspaceRoot] === 'trusted';
 
             // Filter through trust boundary
             const filtered = filterProjectConfig(

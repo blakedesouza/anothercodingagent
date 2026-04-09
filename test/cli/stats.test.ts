@@ -77,10 +77,15 @@ function makeLlmResponse(sessionId: SessionId, turn: number, costUsd: number | n
     });
 }
 
-function makeToolCompleted(sessionId: SessionId, turn: number, toolName = 'read_file'): AcaEvent {
+function makeToolCompleted(
+    sessionId: SessionId,
+    turn: number,
+    toolName = 'read_file',
+    status: 'success' | 'error' = 'success',
+): AcaEvent {
     return createEvent('tool.completed', sessionId, turn, AGENT, {
         tool_name: toolName,
-        status: 'success',
+        status,
         duration_ms: 42,
         bytes_returned: 1024,
         correlation_id: 'corr_123',
@@ -95,8 +100,8 @@ function makeError(sessionId: SessionId): AcaEvent {
 }
 
 /**
- * Seed a store with realistic session data: 2 sessions, each with 2 turns,
- * tool calls, and an error in session 2.
+ * Seed a store with realistic session data: 2 sessions, each with turns,
+ * tool calls, and one failed tool call in session 2.
  */
 function seedStore(store: SqliteStore): void {
     // Session 1: 2 turns, read_file + write_file, no errors
@@ -115,13 +120,12 @@ function seedStore(store: SqliteStore): void {
         makeSessionEnded(SES_1),
     ]);
 
-    // Session 2: 1 turn, exec_command, 1 error
+    // Session 2: 1 turn, exec_command fails once
     store.insertBatch([
         makeSessionStarted(SES_2),
         makeTurnStarted(SES_2, 1),
         makeLlmResponse(SES_2, 1, 0.006),
-        makeToolCompleted(SES_2, 1, 'exec_command'),
-        makeError(SES_2),
+        makeToolCompleted(SES_2, 1, 'exec_command', 'error'),
         makeTurnEnded(SES_2, 1, 'assistant_final'),
         makeSessionEnded(SES_2),
     ]);
@@ -168,6 +172,23 @@ describe('aca stats — default summary', () => {
         expect(text).toContain('Top tools:');
         expect(text).toContain('Error rate:');
         expect(text).toContain('read_file');
+    });
+
+    it('ignores non-tool runtime errors when computing tool error rate', () => {
+        store.insertBatch([
+            makeSessionStarted(SES_1),
+            makeTurnStarted(SES_1, 1),
+            makeToolCompleted(SES_1, 1, 'read_file', 'error'),
+            makeError(SES_1),
+            makeTurnEnded(SES_1, 1),
+            makeSessionEnded(SES_1),
+        ]);
+
+        const result = buildSummary(store, '1970-01-01T00:00:00.000Z', 'last 7 days');
+
+        expect(result.totalToolCalls).toBe(1);
+        expect(result.errorCount).toBe(1);
+        expect(result.errorRate).toBe(100);
     });
 });
 

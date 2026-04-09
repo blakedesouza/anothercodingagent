@@ -27,10 +27,16 @@ export function buildToolSchemaPrompt(tools: ToolDefinition[]): string {
 
     return [
         '',
+        'ACA is emulating tools for this provider.',
+        'Any assistant message that uses tools must be ONLY the JSON tool-call object.',
+        'Do not restate the goal, add prose before the JSON, or add commentary after the JSON in a tool-using reply.',
         'You have access to the following tools. When you need to use a tool, respond',
         'ONLY with a JSON object in exactly this format (no surrounding text):',
         '{"tool_calls":[{"name":"<tool_name>","arguments":{<arguments>}}]}',
         'Do not wrap the JSON in Markdown fences.',
+        'If you need multiple tools, include multiple entries in the single "tool_calls" array.',
+        'Do not emit XML, HTML, or pseudo-tool wrappers such as <tool_call>, <tool_calls>, <function_calls>, <invoke>, <function=...>, <parameter=...>, <arg_key>, or <arg_value>.',
+        'After tool results arrive, either emit another JSON tool-call object or a normal final text reply with no pseudo-tool markup.',
         '',
         'Available tools:',
         toolList,
@@ -89,50 +95,310 @@ export interface EmulatedToolCallResult {
  */
 export function parseEmulatedToolCalls(text: string): EmulatedToolCallResult | null {
     const trimmed = stripJsonMarkdownFence(text.trim());
-    if (!trimmed.includes('tool_calls')) return null;
+    return parseStructuredJsonToolCalls(trimmed)
+        ?? parseWrappedJsonToolCalls(trimmed)
+        ?? parseArgTagToolCall(trimmed)
+        ?? parseInvokeTagToolCall(trimmed)
+        ?? parseFunctionTagToolCall(trimmed);
+}
 
-    // O(n) scan: find each '{' and use brace-depth counting to find the matching '}'.
-    // This avoids the O(n²) nested slicing approach.
-    let startIndex = trimmed.indexOf('{');
+function parseToolCallObject(candidate: string): EmulatedToolCall[] | null {
+    try {
+        const parsed = JSON.parse(candidate) as {
+            tool_calls?: Array<{ name?: unknown; arguments?: unknown }>;
+        };
+        if (!Array.isArray(parsed.tool_calls) || parsed.tool_calls.length === 0) {
+            return null;
+        }
+        const calls = parsed.tool_calls
+            .map(toEmulatedToolCall)
+            .filter((call): call is EmulatedToolCall => call !== null);
+        return calls.length > 0 ? calls : null;
+    } catch {
+        return null;
+    }
+}
+
+function parseStructuredJsonToolCalls(text: string): EmulatedToolCallResult | null {
+    if (!text.includes('tool_calls')) return null;
+
+    let startIndex = text.indexOf('{');
     while (startIndex !== -1) {
-        let depth = 0;
-        let endIndex = startIndex;
-
-        for (let i = startIndex; i < trimmed.length; i++) {
-            if (trimmed[i] === '{') depth++;
-            else if (trimmed[i] === '}') {
-                depth--;
-                if (depth === 0) {
-                    endIndex = i + 1;
-                    break;
-                }
-            }
-        }
-
-        if (endIndex > startIndex) {
-            const candidate = trimmed.slice(startIndex, endIndex);
+        const endIndex = findMatchingObjectEnd(text, startIndex);
+        if (endIndex !== -1) {
+            const candidate = text.slice(startIndex, endIndex);
             if (candidate.includes('tool_calls')) {
-                try {
-                    const parsed = JSON.parse(candidate) as {
-                        tool_calls?: Array<{ name?: unknown; arguments?: unknown }>;
+                const parsed = parseToolCallObject(candidate);
+                if (parsed) {
+                    return {
+                        calls: parsed,
+                        preamble: text.slice(0, startIndex).trim(),
                     };
-                    if (Array.isArray(parsed.tool_calls) && parsed.tool_calls.length > 0) {
-                        const calls = parsed.tool_calls.map(tc => ({
-                            name: typeof tc.name === 'string' ? tc.name : '',
-                            arguments: typeof tc.arguments === 'string'
-                                ? tc.arguments
-                                : JSON.stringify(tc.arguments ?? {}),
-                        }));
-                        const preamble = trimmed.slice(0, startIndex).trim();
-                        return { calls, preamble };
-                    }
-                } catch {
-                    // Not valid JSON — advance to next '{'
                 }
             }
         }
 
-        startIndex = trimmed.indexOf('{', startIndex + 1);
+        startIndex = text.indexOf('{', startIndex + 1);
+    }
+
+    const salvaged = salvageTruncatedToolCallObject(text);
+    if (!salvaged) return null;
+
+    const parsed = parseToolCallObject(salvaged.candidate);
+    if (!parsed) return null;
+
+    return {
+        calls: parsed,
+        preamble: text.slice(0, salvaged.startIndex).trim(),
+    };
+}
+
+function parseWrappedJsonToolCalls(text: string): EmulatedToolCallResult | null {
+    const wrappedArray = text.match(/<(?:[\w-]+:)?tool_calls>\s*([\s\S]*?)\s*<\/(?:[\w-]+:)?tool_calls>/i);
+    if (wrappedArray) {
+        const parsed = parseToolCallArray(wrappedArray[1]);
+        if (parsed) {
+            return {
+                calls: parsed,
+                preamble: text.slice(0, wrappedArray.index ?? 0).trim(),
+            };
+        }
+    }
+
+    const wrappedSingles = [...text.matchAll(/<(?:[\w-]+:)?tool_call>\s*({[\s\S]*?})\s*<\/(?:[\w-]+:)?tool_call>/gi)];
+    if (wrappedSingles.length === 0) return null;
+    const calls = wrappedSingles
+        .map(match => parseSingleToolCallObject(match[1]))
+        .filter((call): call is EmulatedToolCall => call !== null);
+    if (calls.length === 0) return null;
+
+    return {
+        calls,
+        preamble: text.slice(0, wrappedSingles[0]?.index ?? 0).trim(),
+    };
+}
+
+function parseToolCallArray(candidate: string): EmulatedToolCall[] | null {
+    try {
+        const parsed = JSON.parse(candidate) as Array<{ name?: unknown; arguments?: unknown }>;
+        if (!Array.isArray(parsed) || parsed.length === 0) return null;
+        const calls = parsed
+            .map(toEmulatedToolCall)
+            .filter((call): call is EmulatedToolCall => call !== null);
+        return calls.length > 0 ? calls : null;
+    } catch {
+        return null;
+    }
+}
+
+function parseSingleToolCallObject(candidate: string): EmulatedToolCall | null {
+    try {
+        const parsed = JSON.parse(candidate) as { name?: unknown; arguments?: unknown };
+        return toEmulatedToolCall(parsed);
+    } catch {
+        return null;
+    }
+}
+
+function toEmulatedToolCall(value: { name?: unknown; arguments?: unknown }): EmulatedToolCall | null {
+    if (typeof value.name !== 'string' || value.name.trim() === '') return null;
+    return {
+        name: value.name,
+        arguments: typeof value.arguments === 'string'
+            ? value.arguments
+            : JSON.stringify(value.arguments ?? {}),
+    };
+}
+
+function parseArgTagToolCall(text: string): EmulatedToolCallResult | null {
+    const matches = [...text.matchAll(
+        /<(?:[\w-]+:)?tool_call>\s*([A-Za-z0-9_.-]+)\s*((?:<arg_key>[\s\S]*?<\/arg_key>\s*<arg_value>[\s\S]*?<\/arg_value>\s*)+)<\/(?:[\w-]+:)?tool_call>/gi,
+    )];
+    if (matches.length === 0) return null;
+
+    const calls = matches.map((match) => {
+        const name = match[1]?.trim();
+        if (!name) return null;
+        const args = extractTaggedArguments(match[2], 'arg_key', 'arg_value');
+        if (!args) return null;
+        return { name, arguments: JSON.stringify(args) };
+    }).filter((call): call is EmulatedToolCall => call !== null);
+    if (calls.length === 0) return null;
+
+    return {
+        calls,
+        preamble: text.slice(0, matches[0]?.index ?? 0).trim(),
+    };
+}
+
+function parseInvokeTagToolCall(text: string): EmulatedToolCallResult | null {
+    const matches = [...text.matchAll(
+        /<(?:[\w-]+:)?invoke\b[^>]*\bname=(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))[^>]*>\s*([\s\S]*?)\s*<\/(?:[\w-]+:)?invoke>/gi,
+    )];
+    if (matches.length === 0) return null;
+
+    const calls = matches.map((match) => {
+        const name = match[1]?.trim() || match[2]?.trim() || match[3]?.trim() || '';
+        if (!name) return null;
+        const args = extractParameterArguments(match[4] ?? '');
+        if (!args) return null;
+        return { name, arguments: JSON.stringify(args) };
+    }).filter((call): call is EmulatedToolCall => call !== null);
+    if (calls.length === 0) return null;
+
+    return {
+        calls,
+        preamble: text.slice(0, matches[0]?.index ?? 0).replace(/<(?:[\w-]+:)?tool_call>\s*$/i, '').trim(),
+    };
+}
+
+function parseFunctionTagToolCall(text: string): EmulatedToolCallResult | null {
+    const matches = [...text.matchAll(/<function=([A-Za-z0-9_.-]+)>\s*([\s\S]*?)\s*<\/function>/gi)];
+    if (matches.length === 0) return null;
+
+    const calls = matches.map((match) => {
+        const name = match[1]?.trim();
+        if (!name) return null;
+        const args = extractParameterArguments(match[2] ?? '');
+        if (!args) return null;
+        return { name, arguments: JSON.stringify(args) };
+    }).filter((call): call is EmulatedToolCall => call !== null);
+    if (calls.length === 0) return null;
+
+    return {
+        calls,
+        preamble: text.slice(0, matches[0]?.index ?? 0).replace(/<tool_call>\s*$/i, '').trim(),
+    };
+}
+
+function extractParameterArguments(text: string): Record<string, unknown> | null {
+    const args: Record<string, unknown> = {};
+    let matched = false;
+    for (const match of text.matchAll(
+        /<parameter(?:=([A-Za-z0-9_.-]+)|\s+name=(?:"([^"]+)"|'([^']+)'))>\s*([\s\S]*?)\s*<\/parameter>/gi,
+    )) {
+        const key = match[1]?.trim() || match[2]?.trim() || match[3]?.trim() || '';
+        if (!key) continue;
+        args[key] = coercePseudoArgumentValue(match[4] ?? '');
+        matched = true;
+    }
+    return matched ? args : null;
+}
+
+function extractTaggedArguments(
+    text: string,
+    keyTag: string,
+    valueTag: string,
+): Record<string, unknown> | null {
+    const args: Record<string, unknown> = {};
+    const pairPattern = keyTag === valueTag
+        ? /<parameter=([A-Za-z0-9_.-]+)>\s*([\s\S]*?)\s*<\/parameter>/gi
+        : /<arg_key>([\s\S]*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/gi;
+
+    let matched = false;
+    for (const match of text.matchAll(pairPattern)) {
+        const key = match[1]?.trim();
+        if (!key) continue;
+        args[key] = coercePseudoArgumentValue(match[2] ?? '');
+        matched = true;
+    }
+
+    return matched ? args : null;
+}
+
+function coercePseudoArgumentValue(raw: string): unknown {
+    const trimmed = raw.trim();
+    if (trimmed === '') return '';
+    if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return Number(trimmed);
+    if (/^(?:true|false|null)$/i.test(trimmed)) {
+        return JSON.parse(trimmed.toLowerCase());
+    }
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+            return JSON.parse(trimmed);
+        } catch {
+            return trimmed;
+        }
+    }
+    return trimmed;
+}
+
+function findMatchingObjectEnd(text: string, startIndex: number): number {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = startIndex; i < text.length; i++) {
+        const ch = text[i];
+
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (ch === '\\' && inString) {
+            escaped = true;
+            continue;
+        }
+        if (ch === '"') {
+            inString = !inString;
+            continue;
+        }
+        if (inString) continue;
+
+        if (ch === '{') {
+            depth++;
+            continue;
+        }
+        if (ch === '}') {
+            depth--;
+            if (depth === 0) {
+                return i + 1;
+            }
+        }
+    }
+
+    return -1;
+}
+
+function salvageTruncatedToolCallObject(text: string): { candidate: string; startIndex: number } | null {
+    const keyIndex = text.indexOf('"tool_calls"');
+    if (keyIndex === -1) return null;
+
+    const startIndex = text.lastIndexOf('{', keyIndex);
+    const arrayStart = text.indexOf('[', keyIndex);
+    if (startIndex === -1 || arrayStart === -1) return null;
+
+    let bracketDepth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = arrayStart; i < text.length; i++) {
+        const ch = text[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (ch === '\\' && inString) {
+            escaped = true;
+            continue;
+        }
+        if (ch === '"') {
+            inString = !inString;
+            continue;
+        }
+        if (inString) continue;
+
+        if (ch === '[') {
+            bracketDepth++;
+            continue;
+        }
+        if (ch === ']') {
+            bracketDepth--;
+            if (bracketDepth === 0) {
+                const candidate = `${text.slice(startIndex, i + 1)}}`;
+                return { candidate, startIndex };
+            }
+        }
     }
 
     return null;
@@ -150,10 +416,10 @@ function stripJsonMarkdownFence(text: string): string {
 /**
  * Wrap a raw provider stream with tool-emulation post-processing.
  *
- * All text_delta events are buffered. After the underlying stream finishes:
- *  - If the buffered text contains a tool call JSON block → emit tool_call_delta
- *    events (one per tool call) followed by the done event.
- *  - Otherwise → re-emit the buffered text_delta events followed by done.
+ * Text deltas are buffered only until a complete emulated tool-call JSON object
+ * becomes parseable. At that point the wrapper emits tool_call_delta events
+ * immediately and continues draining the inner stream only for done/error/usage.
+ * If no tool-call JSON is ever found, the buffered text is emitted at the end.
  *
  * This ensures the agent loop always sees uniform StreamEvent regardless of
  * whether tool calling is native or emulated.
@@ -161,59 +427,45 @@ function stripJsonMarkdownFence(text: string): string {
 export async function* wrapStreamWithToolEmulation(
     inner: AsyncIterable<StreamEvent>,
 ): AsyncGenerator<StreamEvent> {
-    const textChunks: string[] = [];
+    let bufferedText = '';
+    let emittedToolCalls = false;
     let doneEvent: Extract<StreamEvent, { type: 'done' }> | null = null;
-    let errorEvent: Extract<StreamEvent, { type: 'error' }> | null = null;
-    const passthrough: StreamEvent[] = []; // non-text, non-done events (e.g. unexpected tool_call_delta)
 
     for await (const event of inner) {
         if (event.type === 'text_delta') {
-            textChunks.push(event.text);
+            if (emittedToolCalls) continue;
+            bufferedText += event.text;
+            const result = parseEmulatedToolCalls(bufferedText);
+            if (!result || result.calls.length === 0) continue;
+
+            if (result.preamble.length > 0) {
+                yield { type: 'text_delta', text: result.preamble };
+            }
+            for (let i = 0; i < result.calls.length; i++) {
+                yield {
+                    type: 'tool_call_delta',
+                    index: i,
+                    id: `emulated_${i}`,
+                    name: result.calls[i].name,
+                    arguments: result.calls[i].arguments,
+                };
+            }
+            emittedToolCalls = true;
+        } else if (event.type === 'tool_call_delta') {
+            emittedToolCalls = true;
+            yield event;
         } else if (event.type === 'done') {
             doneEvent = event;
         } else if (event.type === 'error') {
-            errorEvent = event;
-            break;
+            yield event;
+            return;
         } else {
-            passthrough.push(event);
+            yield event;
         }
     }
 
-    if (errorEvent) {
-        yield errorEvent;
-        return;
-    }
-
-    const fullText = textChunks.join('');
-    const result = parseEmulatedToolCalls(fullText);
-
-    if (result && result.calls.length > 0) {
-        // Yield any preamble text before the tool call JSON
-        if (result.preamble.length > 0) {
-            yield { type: 'text_delta', text: result.preamble };
-        }
-        for (let i = 0; i < result.calls.length; i++) {
-            // Synthesize a stable id per emulated tool call so the downstream
-            // accumulator path is type-uniform with provider-native paths.
-            yield {
-                type: 'tool_call_delta',
-                index: i,
-                id: `emulated_${i}`,
-                name: result.calls[i].name,
-                arguments: result.calls[i].arguments,
-            };
-        }
-    } else {
-        // No tool calls detected — yield original text
-        if (fullText.length > 0) {
-            yield { type: 'text_delta', text: fullText };
-        }
-    }
-
-    // Always yield passthrough events (e.g., unexpected tool_call_delta from
-    // underlying stream) in both branches to avoid silent event loss.
-    for (const ev of passthrough) {
-        yield ev;
+    if (!emittedToolCalls && bufferedText.length > 0) {
+        yield { type: 'text_delta', text: bufferedText };
     }
 
     if (doneEvent) {

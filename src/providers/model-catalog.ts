@@ -35,6 +35,22 @@ export interface ModelCatalog {
     readonly isLoaded: boolean;
 }
 
+export class NanoGptCatalogError extends Error {
+    readonly code: 'auth_error' | 'network_error' | 'malformed_response';
+    readonly status?: number;
+
+    constructor(
+        code: 'auth_error' | 'network_error' | 'malformed_response',
+        message: string,
+        status?: number,
+    ) {
+        super(message);
+        this.name = 'NanoGptCatalogError';
+        this.code = code;
+        this.status = status;
+    }
+}
+
 // --- StaticCatalog ---
 
 /**
@@ -56,7 +72,8 @@ export class StaticCatalog implements ModelCatalog {
                     vision: caps.supportsVision,
                     toolCalling: caps.supportsTools !== 'none',
                     reasoning: caps.specialFeatures.includes('deepseek-reasoning') ||
-                               caps.specialFeatures.includes('claude-extended-thinking'),
+                               caps.specialFeatures.includes('claude-extended-thinking') ||
+                               caps.specialFeatures.includes('glm-reasoning'),
                     structuredOutput: caps.supportsTools === 'native',
                 },
                 pricing: caps.costPerMillion.input > 0 || caps.costPerMillion.output > 0
@@ -84,7 +101,8 @@ export class StaticCatalog implements ModelCatalog {
 export interface NanoGptCatalogOptions {
     apiKey?: string;
     /**
-     * Host root for NanoGPT (no path suffix). Defaults to https://api.nano-gpt.com.
+     * Host root for NanoGPT (no endpoint suffix). Defaults to the same
+     * nano-gpt.com/api family used by the subscription chat endpoint.
      * The catalog calls /subscription/v1/models?detailed=true so discovery matches
      * the subscription invocation path used by the NanoGPT driver.
      */
@@ -116,7 +134,7 @@ export class NanoGptCatalog implements ModelCatalog {
 
     constructor(options: NanoGptCatalogOptions = {}) {
         this.apiKey = options.apiKey ?? process.env.NANOGPT_API_KEY;
-        this.baseUrl = options.baseUrl ?? 'https://api.nano-gpt.com';
+        this.baseUrl = options.baseUrl ?? 'https://nano-gpt.com/api';
         this.timeout = options.timeout ?? 10_000;
         this.fallback = options.fallback;
         this.fetchFn = options.fetchFn ?? globalThis.fetch;
@@ -125,14 +143,19 @@ export class NanoGptCatalog implements ModelCatalog {
     async fetch(): Promise<void> {
         if (this.loaded) return;
         if (this.fetchPromise) return this.fetchPromise;
-        this.fetchPromise = this.doFetch();
+        this.fetchPromise = this.doFetch(true);
         return this.fetchPromise;
+    }
+
+    async probe(): Promise<void> {
+        if (this.loaded) return;
+        await this.doFetch(false);
     }
 
     getModel(id: string): ModelCatalogEntry | null {
         // Lazy init: trigger fetch if not started
         if (!this.loaded && !this.fetchPromise) {
-            this.fetchPromise = this.doFetch();
+            this.fetchPromise = this.doFetch(true);
         }
         return this.entries.get(id) ?? null;
     }
@@ -141,7 +164,7 @@ export class NanoGptCatalog implements ModelCatalog {
         return this.loaded;
     }
 
-    private async doFetch(): Promise<void> {
+    private async doFetch(allowFallback: boolean): Promise<void> {
         try {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), this.timeout);
@@ -158,7 +181,14 @@ export class NanoGptCatalog implements ModelCatalog {
                 });
 
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    const code = response.status === 401 || response.status === 403
+                        ? 'auth_error'
+                        : 'network_error';
+                    throw new NanoGptCatalogError(
+                        code,
+                        `HTTP ${response.status}: ${response.statusText}`,
+                        response.status,
+                    );
                 }
 
                 const body = await response.json() as NanoGptModelsResponse;
@@ -168,7 +198,10 @@ export class NanoGptCatalog implements ModelCatalog {
                 // back to StaticCatalog. This catches schema drift where the
                 // endpoint starts returning a shape the parser doesn't recognize.
                 if (this.entries.size === 0) {
-                    throw new Error('parsed 0 usable model entries from response');
+                    throw new NanoGptCatalogError(
+                        'malformed_response',
+                        'parsed 0 usable model entries from response',
+                    );
                 }
                 this.loaded = true;
                 return;
@@ -176,6 +209,16 @@ export class NanoGptCatalog implements ModelCatalog {
                 clearTimeout(timer);
             }
         } catch (err: unknown) {
+            if (!allowFallback) {
+                if (err instanceof NanoGptCatalogError) throw err;
+                if (err instanceof Error && err.name === 'AbortError') {
+                    throw new NanoGptCatalogError('network_error', 'catalog probe timed out');
+                }
+                throw new NanoGptCatalogError(
+                    'network_error',
+                    err instanceof Error ? err.message : String(err),
+                );
+            }
             const msg = err instanceof Error ? err.message : String(err);
             console.warn(`[NanoGptCatalog] Failed to fetch models: ${msg}. Falling back to static catalog.`);
         }

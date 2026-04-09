@@ -19,7 +19,7 @@ export type TurnOutcome =
 export interface ContextStats {
     tokenCount: number;
     tokenLimit: number;
-    compressionTier: 'none' | 'trim' | 'summarize' | 'aggressive';
+    compressionTier: 'full' | 'medium' | 'aggressive' | 'emergency';
     systemPromptFingerprint: string;
 }
 

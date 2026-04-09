@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import {
     existsSync,
     readFileSync,
@@ -10,10 +10,12 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
 import { loadSecrets } from '../../src/config/secrets.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
-const SRC_INDEX = join(ROOT, 'src', 'index.ts');
+const DIST_INDEX = join(ROOT, 'dist', 'index.js');
+const execFileAsync = promisify(execFile);
 
 /** Isolated HOME for test sessions — prevents polluting user's real ~/.aca/ */
 const TEST_HOME = mkdtempSync(join(tmpdir(), 'aca-tool-test-'));
@@ -24,6 +26,13 @@ let apiKeyEnv: Record<string, string> = {};
 let rawApiKey = '';
 
 beforeAll(async () => {
+    if (!existsSync(DIST_INDEX)) {
+        execFileSync('npm', ['run', 'build'], {
+            cwd: ROOT,
+            encoding: 'utf-8',
+            timeout: 60_000,
+        });
+    }
     const result = await loadSecrets();
     const key = result.secrets.nanogpt;
     if (key && key.trim() !== '') {
@@ -44,14 +53,13 @@ afterAll(() => {
 });
 
 /**
- * Helper: run `npx tsx src/index.ts <args>` with the real API key and return results.
- * Uses tsx (dev mode) to avoid needing a fresh build.
+ * Helper: run `node dist/index.js <args>` with the built standalone CLI.
  * HOME is set to an isolated temp dir to prevent polluting user sessions.
  */
-function runAca(
+async function runAca(
     args: string[],
     options?: { env?: Record<string, string>; timeout?: number; cwd?: string },
-): { stdout: string; stderr: string; exitCode: number } {
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     const env = {
         ...process.env,
         NODE_NO_WARNINGS: '1',
@@ -60,19 +68,19 @@ function runAca(
         ...(options?.env ?? {}),
     };
     try {
-        const stdout = execFileSync('npx', ['tsx', SRC_INDEX, ...args], {
+        const { stdout, stderr } = await execFileAsync('node', [DIST_INDEX, ...args], {
             cwd: options?.cwd ?? ROOT,
             encoding: 'utf-8',
             timeout: options?.timeout ?? 120_000,
             env,
         });
-        return { stdout, stderr: '', exitCode: 0 };
+        return { stdout, stderr, exitCode: 0 };
     } catch (err: unknown) {
-        const e = err as { stdout?: string; stderr?: string; status?: number };
+        const e = err as { stdout?: string; stderr?: string; code?: number | string };
         return {
             stdout: e.stdout ?? '',
             stderr: e.stderr ?? '',
-            exitCode: e.status ?? 1,
+            exitCode: typeof e.code === 'number' ? e.code : 1,
         };
     }
 }
@@ -106,10 +114,10 @@ function readConversationJsonl(sessionDir: string): Record<string, unknown>[] {
 
 describe('M8.3 — Real Tool Execution', () => {
     describe('read_file tool', () => {
-        it('reads package.json and returns project name via real LLM', { timeout: 120_000 }, () => {
+        it('reads package.json and returns project name via real LLM', { timeout: 120_000 }, async () => {
             if (!hasApiKey) return;
 
-            const { stdout, exitCode } = runAca([
+            const { stdout, exitCode } = await runAca([
                 '--no-confirm',
                 'Read the file package.json in the current directory and tell me only the project name. Reply with just the name, nothing else.',
             ]);
@@ -121,17 +129,20 @@ describe('M8.3 — Real Tool Execution', () => {
     });
 
     describe('write_file tool', () => {
-        it('creates a file in the workspace via real LLM', { timeout: 120_000 }, () => {
+        it('creates a file in the workspace via real LLM', { timeout: 180_000 }, async () => {
             if (!hasApiKey) return;
 
             const targetFile = join(ROOT, '.aca-smoke-test.txt');
             // Clean up from prior runs
             if (existsSync(targetFile)) unlinkSync(targetFile);
 
-            const { exitCode } = runAca([
-                '--no-confirm',
-                `Create a file at the absolute path ${targetFile} with exactly this content: hello from aca`,
-            ]);
+            const { exitCode } = await runAca(
+                [
+                    '--no-confirm',
+                    `Create a file at the absolute path ${targetFile} with exactly this content: hello from aca`,
+                ],
+                { timeout: 180_000 },
+            );
 
             expect(exitCode).toBe(0);
             expect(existsSync(targetFile)).toBe(true);
@@ -142,10 +153,10 @@ describe('M8.3 — Real Tool Execution', () => {
     });
 
     describe('exec_command tool', () => {
-        it('runs echo command and returns output via real LLM', { timeout: 120_000 }, () => {
+        it('runs echo command and returns output via real LLM', { timeout: 120_000 }, async () => {
             if (!hasApiKey) return;
 
-            runAca([
+            await runAca([
                 '--no-confirm',
                 'Run the shell command: echo hello world. Then tell me what the output was.',
             ]);
@@ -169,11 +180,11 @@ describe('M8.3 — Real Tool Execution', () => {
     });
 
     describe('conversation.jsonl contains tool records', () => {
-        it('has tool_call parts in assistant messages and tool_result records', { timeout: 120_000 }, () => {
+        it('has tool_call parts in assistant messages and tool_result records', { timeout: 120_000 }, async () => {
             if (!hasApiKey) return;
 
             // Run a tool-using prompt
-            runAca([
+            await runAca([
                 '--no-confirm',
                 'Use the read_file tool to read package.json in the current directory. Then say "done".',
             ]);
@@ -201,14 +212,14 @@ describe('M8.3 — Real Tool Execution', () => {
     });
 
     describe('--no-confirm auto-approval', () => {
-        it('auto-approves workspace-write tools without prompting', { timeout: 120_000 }, () => {
+        it('auto-approves workspace-write tools without prompting', { timeout: 120_000 }, async () => {
             if (!hasApiKey) return;
 
             const targetFile = join(ROOT, '.aca-smoke-test.txt');
             if (existsSync(targetFile)) unlinkSync(targetFile);
 
             // --no-confirm should auto-approve write_file without TTY prompt
-            const { exitCode: ec, stderr } = runAca([
+            const { exitCode: ec, stderr } = await runAca([
                 '--no-confirm',
                 `Create a file at ${targetFile} containing the text "smoke test passed"`,
             ]);
@@ -221,14 +232,14 @@ describe('M8.3 — Real Tool Execution', () => {
     });
 
     describe('sandbox enforcement', () => {
-        it('blocks write_file outside workspace with clear error', { timeout: 120_000 }, () => {
+        it('blocks write_file outside workspace with clear error', { timeout: 120_000 }, async () => {
             if (!hasApiKey) return;
 
             // /root/ is outside all trusted zones — even --no-confirm won't bypass sandbox.
             // Retry up to 2 times if the LLM times out before producing a tool call.
             let toolResults: Record<string, unknown>[] = [];
             for (let attempt = 0; attempt < 2; attempt++) {
-                runAca([
+                await runAca([
                     '--no-confirm',
                     'Use write_file to create a file at /root/aca-sandbox-test.txt with content "should fail". Report whether it succeeded or failed.',
                 ]);
@@ -260,12 +271,12 @@ describe('M8.3 — Real Tool Execution', () => {
     });
 
     describe('secret scrubbing', () => {
-        it('API key does not appear in conversation.jsonl', { timeout: 120_000 }, () => {
+        it('API key does not appear in conversation.jsonl', { timeout: 120_000 }, async () => {
             if (!hasApiKey) return;
             if (!rawApiKey || rawApiKey.length < 8) return; // need real key to test
 
             // Run any tool-using prompt to generate conversation log
-            runAca([
+            await runAca([
                 '--no-confirm',
                 'Read the file package.json and tell me the version.',
             ]);

@@ -40,7 +40,10 @@ function errorOutput(code: string, message: string): ToolOutput {
     };
 }
 
-function successOutput(dataObj: Record<string, unknown>): ToolOutput {
+function successOutput(
+    dataObj: Record<string, unknown>,
+    yieldOutcome?: ToolOutput['yieldOutcome'],
+): ToolOutput {
     const data = JSON.stringify(dataObj);
     return {
         status: 'success',
@@ -51,7 +54,7 @@ function successOutput(dataObj: Record<string, unknown>): ToolOutput {
         retryable: false,
         timedOut: false,
         mutationState: 'none',
-        yieldOutcome: 'approval_required',
+        ...(yieldOutcome ? { yieldOutcome } : {}),
     };
 }
 
@@ -105,5 +108,5 @@ export const confirmActionImpl: ToolImplementation = async (
 
     const approved = ['yes', 'y'].includes(response.toLowerCase().trim());
 
-    return successOutput({ approved });
+    return successOutput({ approved }, 'approval_required');
 };

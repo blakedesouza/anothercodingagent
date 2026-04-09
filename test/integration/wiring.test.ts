@@ -238,7 +238,7 @@ describe('M5.8 CLI Wiring Integration', () => {
         const toolResults = result.items.filter(i => i.kind === 'tool_result') as ToolResultItem[];
         expect(toolResults).toHaveLength(1);
         expect(toolResults[0].output.status).toBe('error');
-        expect(toolResults[0].output.error?.code).toBe('network.denied');
+        expect(toolResults[0].output.error?.code).toBe('tool.permission');
     });
 
     it('T6: ProviderRegistry resolves models by priority', () => {

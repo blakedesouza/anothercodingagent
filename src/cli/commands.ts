@@ -2,6 +2,8 @@ import type { SessionProjection } from '../core/session-manager.js';
 import type { CostTracker } from '../observability/cost-tracker.js';
 import type { Indexer } from '../indexing/indexer.js';
 import type { CheckpointManager } from '../checkpointing/checkpoint-manager.js';
+import type { OutputChannel } from '../rendering/output-channel.js';
+import { ProgressBar } from '../rendering/progress.js';
 import pkg from '../../package.json' with { type: 'json' };
 
 export interface SlashCommandContext {
@@ -15,6 +17,7 @@ export interface SlashCommandContext {
     indexer?: Indexer;
     checkpointManager?: CheckpointManager;
     promptUser?: (question: string) => Promise<string>;
+    outputChannel?: OutputChannel;
 }
 
 export interface SlashCommandResult {
@@ -79,29 +82,34 @@ const commands: Record<string, SlashCommandHandler> = {
         ].join('\n'),
         shouldExit: false,
     }),
-    '/reindex': (ctx) => {
+    '/reindex': async (ctx) => {
         if (!ctx.indexer) {
             return { output: 'Project indexing is not available.', shouldExit: false };
         }
         if (ctx.indexer.indexing) {
             return { output: 'Indexing is already in progress.', shouldExit: false };
         }
-        // Fire-and-forget: buildIndex runs in background
-        ctx.indexer.buildIndex().then(
-            (result) => {
-                process.stderr.write(
+        const progressBar = ctx.outputChannel ? new ProgressBar({ output: ctx.outputChannel }) : undefined;
+        if (progressBar) {
+            ctx.indexer.setProgressReporter(createProgressReporter(progressBar, 'files indexed'));
+        }
+
+        try {
+            const result = await ctx.indexer.buildIndex();
+            return {
+                output:
                     `[reindex] Complete: ${result.filesIndexed} files indexed, ` +
                     `${result.filesSkipped} skipped` +
-                    (result.warnings.length > 0 ? `, ${result.warnings.length} warnings` : '') +
-                    '\n',
-                );
-            },
-            (err: unknown) => {
-                const msg = err instanceof Error ? err.message : String(err);
-                process.stderr.write(`[reindex] Failed: ${msg}\n`);
-            },
-        );
-        return { output: 'Reindexing started in background...', shouldExit: false };
+                    (result.warnings.length > 0 ? `, ${result.warnings.length} warnings` : ''),
+                shouldExit: false,
+            };
+        } catch (err: unknown) {
+            progressBar?.clear();
+            const msg = err instanceof Error ? err.message : String(err);
+            return { output: `[reindex] Failed: ${msg}`, shouldExit: false };
+        } finally {
+            ctx.indexer.setProgressReporter(undefined);
+        }
     },
     '/undo': async (ctx, args) => {
         if (!ctx.checkpointManager) {
@@ -255,4 +263,19 @@ export function handleSlashCommand(
  */
 export function isSlashCommand(input: string): boolean {
     return input.trim().startsWith('/');
+}
+
+function createProgressReporter(progressBar: ProgressBar, label: string): (current: number, total: number) => void {
+    let active = false;
+    return (current: number, total: number): void => {
+        if (!active) {
+            progressBar.start(label, total);
+            active = true;
+        }
+        progressBar.update(current);
+        if (current >= total) {
+            progressBar.complete();
+            active = false;
+        }
+    };
 }

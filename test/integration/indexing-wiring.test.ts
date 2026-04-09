@@ -207,23 +207,11 @@ describe('M6.6 Indexing Wiring Integration', () => {
 
         // Use /reindex slash command
         const ctx = makeCommandContext({ indexer });
-        const result = handleSlashCommand('/reindex', ctx);
+        const result = await handleSlashCommand('/reindex', ctx);
 
         expect(result).not.toBeNull();
-        expect(result!.output).toContain('Reindexing started');
+        expect(result!.output).toContain('[reindex] Complete:');
         expect(result!.shouldExit).toBe(false);
-
-        // Wait for background reindex to complete
-        await new Promise<void>((resolve) => {
-            const check = () => {
-                if (!indexer.indexing) {
-                    resolve();
-                } else {
-                    setTimeout(check, 50);
-                }
-            };
-            setTimeout(check, 100);
-        });
 
         // Verify the new file was indexed
         const updatedStats = indexStore.getStats();
@@ -236,9 +224,39 @@ describe('M6.6 Indexing Wiring Integration', () => {
         rmSync(join(projectDir, 'src', 'utils.ts'));
     });
 
-    it('T3b: /reindex returns message when no indexer available', () => {
+    it('T3d: /reindex removes deleted files from the index', async () => {
+        await indexer.buildIndex();
+        expect(indexStore.getFile('src/server.ts')).not.toBeNull();
+
+        rmSync(join(projectDir, 'src', 'server.ts'));
+
+        const ctx = makeCommandContext({ indexer });
+        const result = await handleSlashCommand('/reindex', ctx);
+
+        expect(result).not.toBeNull();
+        expect(result!.output).toContain('[reindex] Complete:');
+        expect(indexStore.getFile('src/server.ts')).toBeNull();
+        expect(indexStore.getStats().fileCount).toBe(1);
+
+        writeFileSync(
+            join(projectDir, 'src', 'server.ts'),
+            [
+                'import { authenticate } from "./auth";',
+                '',
+                'export function startServer(port: number): void {',
+                '    console.log(`Server running on port ${port}`);',
+                '}',
+                '',
+                'export function handleRequest(path: string): string {',
+                '    return `Response for ${path}`;',
+                '}',
+            ].join('\n'),
+        );
+    });
+
+    it('T3b: /reindex returns message when no indexer available', async () => {
         const ctx = makeCommandContext(); // no indexer
-        const result = handleSlashCommand('/reindex', ctx);
+        const result = await handleSlashCommand('/reindex', ctx);
         expect(result).not.toBeNull();
         expect(result!.output).toContain('not available');
     });
@@ -250,7 +268,7 @@ describe('M6.6 Indexing Wiring Integration', () => {
         // If indexer is still indexing (might be fast for 2 files)
         if (indexer.indexing) {
             const ctx = makeCommandContext({ indexer });
-            const result = handleSlashCommand('/reindex', ctx);
+            const result = await handleSlashCommand('/reindex', ctx);
             expect(result).not.toBeNull();
             expect(result!.output).toContain('already in progress');
         }

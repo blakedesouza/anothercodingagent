@@ -132,7 +132,8 @@ describe('AgentRegistry', () => {
             expect(tools).toContain('estimate_tokens');
             expect(tools).toContain('lsp_query');
             // message_agent and await_agent are read-only but are delegation tools
-            // general profile includes them since it resolves by approval class
+            // general profile includes all delegation tools for recursive delegation
+            expect(tools).toContain('spawn_agent');
             expect(tools).toContain('message_agent');
             expect(tools).toContain('await_agent');
 
@@ -196,23 +197,44 @@ describe('AgentRegistry', () => {
                 'write_file',
             ]);
             expect(profile!.systemPrompt).toContain('RP lore research writer');
-            expect(profile!.systemPrompt).toContain('prefer fetch_mediawiki_category');
+            expect(profile!.systemPrompt).toContain('When web_search is configured and available');
+            expect(profile!.systemPrompt).toContain('prefer fetch_mediawiki_page and fetch_mediawiki_category');
+            expect(profile!.systemPrompt).toContain('pass numeric limits such as limit: 25 or limit: 50');
             expect(profile!.systemPrompt).toContain('Write Markdown only');
             expect(profile!.systemPrompt).toContain('world/character/<character>.md');
             expect(profile!.systemPrompt).toContain('world/characters/<character>.md');
             expect(profile!.systemPrompt).toContain('character research notes');
-            expect(profile!.systemPrompt).toContain('dynamic multi-pass workflow');
-            expect(profile!.systemPrompt).toContain('orchestrator planning pass');
-            expect(profile!.systemPrompt).toContain('bounded research passes');
+            expect(profile!.systemPrompt).toContain('dynamic sequential workflow');
+            expect(profile!.systemPrompt).toContain('one deep research/write invocation per character');
+            expect(profile!.systemPrompt).toContain('stop once you have enough source-grounded evidence');
+            expect(profile!.systemPrompt).toContain('write exactly that character Markdown file');
+            expect(profile!.systemPrompt).toContain('up to 16-20 KB for main characters');
+            expect(profile!.systemPrompt).toContain('8-12 KB for side characters');
+            expect(profile!.systemPrompt).toContain('4-8 KB for minor/supporting characters');
+            expect(profile!.systemPrompt).toContain('ceilings, not floors');
+            expect(profile!.systemPrompt).toContain('do not pad sparse characters');
+            expect(profile!.systemPrompt).toContain('Keep Relationships compact');
+            expect(profile!.systemPrompt).toContain('1-2 sentences per relationship');
+            expect(profile!.systemPrompt).toContain('world/trinity-seven.md');
             expect(profile!.systemPrompt).toContain('discover the cast/topic list');
-            expect(profile!.systemPrompt).toContain('Do not spend the whole tool budget on unbounded exploration');
+            expect(profile!.systemPrompt).toContain('FIRST assistant message must include actual tool calls');
+            expect(profile!.systemPrompt).toContain('plan-only/intention-only text');
+            expect(profile!.systemPrompt).toContain("I'll start by reading the local reference files");
+            expect(profile!.systemPrompt).toContain('need to try subcategories');
+            expect(profile!.systemPrompt).toContain('switch to the next viable source/tool path');
+            expect(profile!.systemPrompt).toContain('source-grounded Markdown brief');
+            expect(profile!.systemPrompt).toContain('do not stop at a promise to research later');
+            expect(profile!.systemPrompt).toContain('stay on the assigned character or world topic');
+            expect(profile!.systemPrompt).toContain('GLM-5 local high-trust runs');
+            expect(profile!.systemPrompt).toContain('required-output validation');
             expect(profile!.systemPrompt).toContain('Do not create per-character instructions.md files');
             expect(profile!.systemPrompt).toContain('Do not include Japanese script');
+            expect(profile!.systemPrompt).toContain('ability/skill/magic name');
             expect(profile!.systemPrompt).toContain('Knowledge and Secrets');
             expect(profile!.systemPrompt).toContain('Avoid over-exposing hidden traits');
         });
 
-        it('coder profile gets all tools except delegation and user-facing', () => {
+        it('coder profile gets all tools except user-facing', () => {
             const toolReg = buildTestToolRegistry();
             const { registry } = AgentRegistry.resolve(toolReg);
 
@@ -249,10 +271,10 @@ describe('AgentRegistry', () => {
             expect(tools).toContain('browser_type');
             expect(tools).toContain('browser_snapshot');
             expect(tools).toContain('browser_screenshot');
-            // Must NOT include delegation tools
-            expect(tools).not.toContain('spawn_agent');
-            expect(tools).not.toContain('message_agent');
-            expect(tools).not.toContain('await_agent');
+            // Delegation tools stay available so coder can spawn depth-2 children
+            expect(tools).toContain('spawn_agent');
+            expect(tools).toContain('message_agent');
+            expect(tools).toContain('await_agent');
             // Must NOT include user-facing tools
             expect(tools).not.toContain('ask_user');
             expect(tools).not.toContain('confirm_action');
@@ -384,12 +406,12 @@ describe('AgentRegistry', () => {
             expect(profile!.systemPrompt.toLowerCase()).toContain('not to re-review');
         });
 
-        it('delegation tools are excluded from all non-general profiles', () => {
+        it('delegation tools are excluded from non-delegating profiles', () => {
             const toolReg = buildTestToolRegistry();
             const { registry } = AgentRegistry.resolve(toolReg);
 
             const delegationTools = ['spawn_agent', 'message_agent', 'await_agent'];
-            for (const profileName of ['coder', 'researcher', 'rp-researcher', 'reviewer', 'witness', 'triage']) {
+            for (const profileName of ['researcher', 'rp-researcher', 'reviewer', 'witness', 'triage']) {
                 const profile = registry.getProfile(profileName);
                 for (const tool of delegationTools) {
                     expect([...profile!.defaultTools]).not.toContain(tool);

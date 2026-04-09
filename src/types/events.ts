@@ -114,7 +114,7 @@ export interface DelegationCompletedPayload {
 export interface ContextAssembledPayload {
     estimated_tokens: number;
     token_budget: number;
-    compression_tier: 'none' | 'trim' | 'summarize' | 'aggressive';
+    compression_tier: 'full' | 'medium' | 'aggressive' | 'emergency';
     item_count: number;
 }
 

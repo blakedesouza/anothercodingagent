@@ -206,6 +206,42 @@ describe('runAcaInvoke', () => {
         expect(parsed.context.profile).toBe('rp-researcher');
     });
 
+    it('includes cwd context when provided', async () => {
+        const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
+            .mockResolvedValue(makeSuccessResult('done'));
+
+        await runAcaInvoke('task', { cwd: '/tmp/rpproject' }, spawnFn);
+
+        const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
+        expect(parsed.context.cwd).toBe('/tmp/rpproject');
+    });
+
+    it('includes response_format context when provided', async () => {
+        const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
+            .mockResolvedValue(makeSuccessResult('done'));
+        const responseFormat = {
+            type: 'json_object' as const,
+        };
+
+        await runAcaInvoke('task', { responseFormat }, spawnFn);
+
+        const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
+        expect(parsed.context.response_format).toEqual(responseFormat);
+    });
+
+    it('includes system_messages context when provided', async () => {
+        const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
+            .mockResolvedValue(makeSuccessResult('done'));
+        const systemMessages = [
+            { role: 'system' as const, content: 'Return Markdown only.' },
+        ];
+
+        await runAcaInvoke('task', { systemMessages }, spawnFn);
+
+        const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
+        expect(parsed.context.system_messages).toEqual(systemMessages);
+    });
+
     it('includes explicit max_steps and max_total_tokens in constraints', async () => {
         const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
             .mockResolvedValue(makeSuccessResult('done'));
@@ -242,6 +278,18 @@ describe('runAcaInvoke', () => {
 
         const [, deadline] = spawnFn.mock.calls[0];
         expect(deadline).toBe(DEFAULT_API_TIMEOUT_MS); // pinned to the project-wide LLM timeout
+    });
+
+    it('falls back to the default deadline for non-positive values', async () => {
+        const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
+            .mockResolvedValue(makeSuccessResult('done'));
+
+        await runAcaInvoke('task', { deadlineMs: 0 }, spawnFn);
+
+        const [json, deadline] = spawnFn.mock.calls[0];
+        const parsed = JSON.parse(json);
+        expect(parsed.deadline).toBe(DEFAULT_API_TIMEOUT_MS);
+        expect(deadline).toBe(DEFAULT_API_TIMEOUT_MS);
     });
 
     it('keeps default budget constraints when no allowed_tools is provided', async () => {
@@ -294,6 +342,9 @@ describe('MCP Server (in-memory transport)', () => {
         expect(acaRun!.inputSchema.properties).toHaveProperty('top_p');
         expect(acaRun!.inputSchema.properties).toHaveProperty('thinking');
         expect(acaRun!.inputSchema.properties).toHaveProperty('timeout_ms');
+        expect(acaRun!.inputSchema.properties.timeout_ms.description).toContain(
+            String(DEFAULT_API_TIMEOUT_MS),
+        );
         expect(acaRun!.inputSchema.required).toContain('task');
 
         await client.close();
@@ -332,6 +383,24 @@ describe('MCP Server (in-memory transport)', () => {
         const parsed = JSON.parse(json);
         expect(parsed.deadline).toBe(60000);
         expect(deadline).toBe(60000);
+
+        await client.close();
+    });
+
+    it('aca_run rejects non-positive timeout_ms before spawning', async () => {
+        spawnFn.mockResolvedValue(makeSuccessResult('done'));
+        const client = await connectClient(spawnFn);
+
+        const result = await client.callTool({
+            name: 'aca_run',
+            arguments: { task: 'some task', timeout_ms: 0 },
+        });
+
+        expect(result.isError).toBe(true);
+        const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+        expect(text).toContain('Input validation error');
+        expect(text).toContain('timeout_ms');
+        expect(spawnFn).not.toHaveBeenCalled();
 
         await client.close();
     });
@@ -931,14 +1000,61 @@ describe('Parallel invocation (M9.3)', () => {
 
 describe('buildSpawnArgs (M10.1b)', () => {
     it('returns only the binary path and "invoke" — no extra flags', () => {
-        const args = buildSpawnArgs('/path/to/dist/index.js');
-        expect(args).toEqual(['/path/to/dist/index.js', 'invoke']);
+        const originalExecArgv = process.execArgv;
+        Object.defineProperty(process, 'execArgv', {
+            value: [],
+            configurable: true,
+        });
+        try {
+            const args = buildSpawnArgs('/path/to/dist/index.js');
+            expect(args).toEqual(['/path/to/dist/index.js', 'invoke']);
+        } finally {
+            Object.defineProperty(process, 'execArgv', {
+                value: originalExecArgv,
+                configurable: true,
+            });
+        }
+    });
+
+    it('preserves loader/import flags needed for dev-mode subprocesses', () => {
+        const originalExecArgv = process.execArgv;
+        Object.defineProperty(process, 'execArgv', {
+            value: ['--import', 'tsx', '--inspect', '--loader=custom-loader'],
+            configurable: true,
+        });
+        try {
+            const args = buildSpawnArgs('/path/to/src/index.ts');
+            expect(args).toEqual([
+                '--import',
+                'tsx',
+                '--loader=custom-loader',
+                '/path/to/src/index.ts',
+                'invoke',
+            ]);
+        } finally {
+            Object.defineProperty(process, 'execArgv', {
+                value: originalExecArgv,
+                configurable: true,
+            });
+        }
     });
 
     it('does not include --no-confirm (Commander v13 rejects unknown subcommand options)', () => {
-        const args = buildSpawnArgs('/any/path');
-        expect(args).not.toContain('--no-confirm');
-        expect(args).not.toContain('--json');
+        const originalExecArgv = process.execArgv;
+        Object.defineProperty(process, 'execArgv', {
+            value: [],
+            configurable: true,
+        });
+        try {
+            const args = buildSpawnArgs('/any/path');
+            expect(args).not.toContain('--no-confirm');
+            expect(args).not.toContain('--json');
+        } finally {
+            Object.defineProperty(process, 'execArgv', {
+                value: originalExecArgv,
+                configurable: true,
+            });
+        }
     });
 });
 

@@ -249,6 +249,8 @@ function createEngine(
     return { engine, logPath };
 }
 
+type EngineWithSessionConfusionCount = TurnEngine & { sessionConfusionCount: number };
+
 function getToolResults(items: unknown[]): ToolResultItem[] {
     return items.filter(
         (i): i is ToolResultItem =>
@@ -324,6 +326,27 @@ describe('Confusion Limits', () => {
         expect(toolResults[2].output.error?.code).toBe('llm.confused');
     });
 
+    it('multiple bad tool calls in one step count as one confusion attempt', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([
+                { name: 'strict_tool', args: {} },
+                { name: 'strict_tool', args: {} },
+                { name: 'strict_tool', args: {} },
+            ]),
+            textResponse('Recovered after one bad batch'),
+        ]);
+        registerStrictTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(makeConfig(), 'Test', []);
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        const toolResults = getToolResults(result.items);
+        expect(toolResults).toHaveLength(3);
+        expect(toolResults.every(r => r.output.error?.code === 'tool.validation')).toBe(true);
+        expect(engine.getSessionConfusionCount()).toBe(1);
+    });
+
     it('counter resets on successful tool call: bad→bad→success→bad → counter is 1, model continues', async () => {
         const provider = createMockProvider([
             toolCallResponse([{ name: 'bad1', args: {} }]),       // count=1
@@ -377,7 +400,7 @@ describe('Confusion Limits', () => {
         const { engine } = createEngine(provider, registry, dir);
 
         // Pre-set count to 8, this turn adds 1 → total 9
-        (engine as any).sessionConfusionCount = 8;
+        (engine as EngineWithSessionConfusionCount).sessionConfusionCount = 8;
 
         await engine.executeTurn(makeConfig(), 'Test', []);
 
@@ -400,7 +423,7 @@ describe('Confusion Limits', () => {
         const { engine } = createEngine(provider, registry, dir);
 
         // Pre-set count to 9, this turn adds 1 → total 10
-        (engine as any).sessionConfusionCount = 9;
+        (engine as EngineWithSessionConfusionCount).sessionConfusionCount = 9;
 
         await engine.executeTurn(makeConfig(), 'Test', []);
 
@@ -522,18 +545,19 @@ describe('Confusion Limits', () => {
     });
 
     it('non-confusion error in batch breaks the consecutive confusion chain', async () => {
-        // Single batch with 5 calls: [bad, exec_fail, bad, bad, bad]
-        // exec_fail is a non-confusion error that resets the consecutive counter.
-        // Counter: bad(1) → exec_fail(0) → bad(1) → bad(2) → bad(3) → threshold at index 4
-        // Without the reset fix, counter would be: bad(1) → exec_fail(1) → bad(2) → bad(3) → threshold at index 3
+        // Mixed batch: [bad, exec_fail, bad, bad, bad]
+        // The execution failure is a real non-confusion result, so the whole
+        // assistant attempt should be treated as recoverable rather than an
+        // immediate llm.confused abort.
         const provider = createMockProvider([
             toolCallResponse([
-                { name: 'bad1', args: {} },      // confusion, count=1
-                { name: 'exec_fail', args: {} }, // non-confusion error, count→0
-                { name: 'bad2', args: {} },      // confusion, count=1
-                { name: 'bad3', args: {} },      // confusion, count=2
-                { name: 'bad4', args: {} },      // confusion, count=3 → threshold
+                { name: 'bad1', args: {} },
+                { name: 'exec_fail', args: {} },
+                { name: 'bad2', args: {} },
+                { name: 'bad3', args: {} },
+                { name: 'bad4', args: {} },
             ]),
+            textResponse('Recovered after mixed batch'),
         ]);
         registerEchoTool(registry);
         registerExecutionFailTool(registry);
@@ -541,15 +565,12 @@ describe('Confusion Limits', () => {
 
         const result = await engine.executeTurn(makeConfig(), 'Test', []);
 
-        expect(result.turn.outcome).toBe('tool_error');
+        expect(result.turn.outcome).toBe('assistant_final');
         const toolResults = getToolResults(result.items);
         expect(toolResults).toHaveLength(5);
-        // llm.confused on the 5th call (index 4) — NOT the 4th,
-        // because exec_fail broke the chain
-        expect(toolResults[4].output.error?.code).toBe('llm.confused');
-        expect(toolResults[3].output.error?.code).toBe('tool.not_found');
-        // All 4 confusion events counted (no early break)
-        expect(engine.getSessionConfusionCount()).toBe(4);
+        expect(toolResults[1].output.error?.code).toBe('tool.permission');
+        expect(toolResults.filter(r => r.output.error?.code === 'tool.not_found')).toHaveLength(4);
+        expect(engine.getSessionConfusionCount()).toBe(0);
     });
 
     // --- Constants exported correctly ---

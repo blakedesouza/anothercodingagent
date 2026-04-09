@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
 import {
@@ -7,6 +10,7 @@ import {
     runDescribe,
     checkVersionCompatibility,
     parseInvokeRequest,
+    resolveInvokeWorkspaceRoot,
     buildErrorResponse,
     buildSuccessResponse,
     EXIT_SUCCESS,
@@ -66,11 +70,14 @@ describe('Executor Mode', () => {
             };
 
             expect(schema.properties.context.properties).toHaveProperty('model');
+            expect(schema.properties.context.properties).toHaveProperty('cwd');
             expect(schema.properties.context.properties).toHaveProperty('profile');
             expect(JSON.stringify(schema.properties.context.properties.profile)).toContain('rp-researcher');
             expect(schema.properties.context.properties).toHaveProperty('temperature');
             expect(schema.properties.context.properties).toHaveProperty('top_p');
             expect(schema.properties.context.properties).toHaveProperty('thinking');
+            expect(schema.properties.context.properties).toHaveProperty('response_format');
+            expect(schema.properties.context.properties).toHaveProperty('system_messages');
             expect(JSON.stringify(descriptor.input_schema)).toContain('required_output_paths');
             expect(JSON.stringify(descriptor.input_schema)).toContain('fail_on_rejected_tool_calls');
         });
@@ -167,10 +174,13 @@ describe('Executor Mode', () => {
                 input: { file: 'auth.ts' },
                 context: {
                     project: 'myapp',
+                    cwd: '/tmp/project-root',
                     profile: 'rp-researcher',
                     temperature: 1,
                     top_p: 0.95,
                     thinking: { type: 'enabled' },
+                    response_format: { type: 'json_object' },
+                    system_messages: [{ role: 'system', content: 'Return Markdown only.' }],
                 },
                 constraints: {
                     max_steps: 10,
@@ -193,10 +203,13 @@ describe('Executor Mode', () => {
                 expect(req.input).toEqual({ file: 'auth.ts' });
                 expect(req.context).toEqual({
                     project: 'myapp',
+                    cwd: '/tmp/project-root',
                     profile: 'rp-researcher',
                     temperature: 1,
                     top_p: 0.95,
                     thinking: { type: 'enabled' },
+                    response_format: { type: 'json_object' },
+                    system_messages: [{ role: 'system', content: 'Return Markdown only.' }],
                 });
                 expect(req.constraints?.max_steps).toBe(10);
                 expect(req.constraints?.max_tool_calls).toBe(4);
@@ -426,6 +439,59 @@ describe('Executor Mode', () => {
             if ('request' in result) {
                 expect(result.request.context).toBeDefined();
                 expect(result.request.context!.model).toBe('minimax/minimax-m2.7');
+            }
+        });
+
+        it('preserves context.cwd for workspace override', () => {
+            const raw = JSON.stringify({
+                contract_version: '1.0.0',
+                schema_version: '1.0.0',
+                task: 'review this code',
+                context: { cwd: '/tmp/rp-project' },
+            });
+            const result = parseInvokeRequest(raw);
+            expect('request' in result).toBe(true);
+            if ('request' in result) {
+                expect(result.request.context).toBeDefined();
+                expect(result.request.context!.cwd).toBe('/tmp/rp-project');
+            }
+        });
+    });
+
+    describe('resolveInvokeWorkspaceRoot', () => {
+        it('uses launch cwd when context.cwd is absent', () => {
+            expect(resolveInvokeWorkspaceRoot('/tmp/base', undefined)).toEqual({
+                workspaceRoot: '/tmp/base',
+            });
+        });
+
+        it('resolves a relative context.cwd against launch cwd', () => {
+            const root = mkdtempSync(join(tmpdir(), 'aca-invoke-root-'));
+            try {
+                const nested = join(root, 'rp-project');
+                writeFileSync(join(root, 'marker.txt'), 'x');
+                mkdirSync(nested);
+                expect(resolveInvokeWorkspaceRoot(root, { cwd: 'rp-project' })).toEqual({
+                    workspaceRoot: nested,
+                });
+            } finally {
+                rmSync(root, { recursive: true, force: true });
+            }
+        });
+
+        it('returns protocol error for non-directory context.cwd', () => {
+            const root = mkdtempSync(join(tmpdir(), 'aca-invoke-root-'));
+            try {
+                const filePath = join(root, 'not-a-dir.txt');
+                writeFileSync(filePath, 'x');
+                const result = resolveInvokeWorkspaceRoot(root, { cwd: filePath });
+                expect('error' in result).toBe(true);
+                if ('error' in result) {
+                    expect(result.exitCode).toBe(EXIT_PROTOCOL);
+                    expect(result.error.errors?.[0].code).toBe('protocol.invalid_context_cwd');
+                }
+            } finally {
+                rmSync(root, { recursive: true, force: true });
             }
         });
     });
