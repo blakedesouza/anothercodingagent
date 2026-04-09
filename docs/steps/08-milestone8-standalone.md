@@ -18,7 +18,7 @@ Get ACA from "all tests pass" to "actually runs and completes real tasks." This 
 - [x] `node dist/index.js --help` prints help and exits
 - [x] `aca describe --json` outputs valid capability descriptor (fast path, no config loading)
 - [x] Fix any build-time issues (missing exports, circular deps, native module bundling for better-sqlite3/shiki)
-- [x] Verify `npx tsx src/index.ts --version` also works (dev mode)
+- [x] Verify `node --import tsx src/index.ts --version` also works (dev mode)
 
 **Tests:**
 - Build output exists at `dist/index.js` and is non-empty

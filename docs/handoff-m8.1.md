@@ -18,7 +18,7 @@ Build and package ACA into a runnable CLI.
 - `node dist/index.js --help` prints help and exits
 - `aca describe --json` outputs valid capability descriptor
 - Fix any build-time issues (missing exports, circular deps, native module bundling for better-sqlite3/shiki)
-- Verify `npx tsx src/index.ts --version` also works (dev mode)
+- Verify `node --import tsx src/index.ts --version` also works (dev mode)
 
 ### Known Risks
 - **Native modules:** better-sqlite3 and shiki WASM may not bundle correctly with tsup. May need `external` config in tsup.config.ts.

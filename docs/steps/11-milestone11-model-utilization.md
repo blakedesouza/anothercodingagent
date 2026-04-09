@@ -1,6 +1,6 @@
 # ACA Implementation Steps — Milestone 11: Dynamic Model Utilization
 
-Every model ACA delegates to was being massively under-utilized. Qwen3-Coder has 65K max output — we gave it 4K. MiniMax M2.7 has 131K — we gave it 8K. The coder agent couldn't even finish writing a single file before being cut off.
+Every model ACA delegates to was being massively under-utilized. Qwen3-Coder has 65K max output — we gave it 4K. The witness-ring models also had much higher ceilings than the old 8K-32K caps. The coder agent couldn't even finish writing a single file before being cut off.
 
 This milestone made ACA query actual model limits at runtime so delegation could stop under-utilizing capable models. Later guardrail work treats these limits as capability data, not permission to run unbounded.
 
@@ -11,7 +11,7 @@ This milestone made ACA query actual model limits at runtime so delegation could
 
 ## Why This Matters
 
-From the NanoGPT API (`GET /api/v1/models?detailed=true`), the actual ceilings:
+From the NanoGPT subscription catalog (`GET /subscription/v1/models?detailed=true`), the actual ceilings:
 
 | Model | Role | Context | Max Output | We Were Giving |
 |-------|------|---------|------------|----------------|
@@ -20,6 +20,8 @@ From the NanoGPT API (`GET /api/v1/models?detailed=true`), the actual ceilings:
 | moonshotai/kimi-k2.5 | Witness | 256,000 | 65,536 | 32,000 |
 | qwen/qwen3.5-397b-a17b | Witness | 258,048 | 65,536 | 32,000 |
 | google/gemma-4-31b-it | Witness | 262,144 | 131,072 | 32,000 |
+
+Current canonical ACA witness lineup is `deepseek/kimi/qwen/gemma`. Earlier milestone notes referenced a pre-M10 MiniMax witness slot; the audited product witness set now lives in `src/config/witness-models.ts` and `aca witnesses --json`.
 
 The coder agent was operating at **6%** of its output capacity. That's why delegation failed — the model started working, ran out of output tokens, and got cut off mid-thought.
 
@@ -40,7 +42,7 @@ Build a catalog interface that fetches model capabilities at runtime. NanoGPT an
 
 - [x] Define `ModelCatalogEntry` type: `{ id, contextLength, maxOutputTokens, capabilities: { vision, toolCalling, reasoning, structuredOutput }, pricing? }`
 - [x] Define `ModelCatalog` interface: `{ fetch(): Promise<void>, getModel(id): ModelCatalogEntry | null, isLoaded: boolean }`
-- [x] Implement `NanoGptCatalog`: calls `GET <baseUrl>/api/v1/models?detailed=true` with auth header. Maps response fields: `context_length` → `contextLength`, `max_output_tokens` → `maxOutputTokens`, `capabilities.tool_calling` → `toolCalling`
+- [x] Implement `NanoGptCatalog`: calls `GET <baseUrl>/subscription/v1/models?detailed=true` with auth header. Maps response fields: `context_length` → `contextLength`, `max_output_tokens` → `maxOutputTokens`, `capabilities.tool_calling` → `toolCalling`
 - [x] Implement `OpenRouterCatalog`: calls `GET https://openrouter.ai/api/v1/models`. Maps response fields: `context_length` → `contextLength`, `max_completion_tokens` → `maxOutputTokens` (falls back to `top_provider.max_completion_tokens`)
 - [x] Implement `StaticCatalog`: wraps existing `models.json` data for Anthropic/OpenAI or offline fallback
 - [x] Session-scoped cache: fetch once per session, reuse. Lazy init — first `getModel()` call triggers fetch
@@ -95,15 +97,15 @@ The idle timeout fix (reset timer on each SSE event) was implemented during M10.
 
 ### M11.5 — Witness Limit Uplift
 
-Update witness configurations to use actual model ceilings. Pull witness config into ACA so it's not scattered across a separate Python script.
+Update witness configurations to use actual model ceilings. Pull witness config into ACA so it's not scattered across separate Python tooling.
 
-- [x] Update `consult_ring.py` WITNESSES dict: set `max_tokens` to each model's actual `max_output_tokens` from the API (minimax: 131072, kimi: 65536, qwen: 65536, gemma: 131072). Add comment noting source: NanoGPT `/api/v1/models?detailed=true` queried 2026-04-05
-- [x] **Pull witness config into ACA:** Create `src/config/witness-models.ts` (or similar) that defines the witness model list and their configs. `consult_ring.py` can read this via `aca describe --json` or a new `aca witnesses --json` command, so there's a single source of truth inside ACA
+- [x] **Pull witness config into ACA:** `src/config/witness-models.ts` is the canonical witness source of truth, with the current ACA-native lineup `deepseek/kimi/qwen/gemma` and ceilings sourced from NanoGPT `/subscription/v1/models?detailed=true` (queried 2026-04-05)
+- [x] Expose the ACA-native witness config via `aca witnesses --json` so external tooling can read the current product witness set instead of copying values by hand
 - [x] Verify ACA-mode witnesses (via `aca invoke`) inherit the catalog limits from M11.2
 - [x] Test: ACA-mode witness invocation uses catalog limits, not old hardcoded values
 
 **Files:** `src/config/witness-models.ts` (new), `~/.claude/skills/consult/consult_ring.py`
-**Tests:** unit tests for witness-models.ts; manual verification for consult_ring.py integration
+**Tests:** unit tests for witness-models.ts; manual verification for `aca witnesses --json`
 
 ### M11.6 — Invoke Prompt Assembly
 

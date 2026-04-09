@@ -16,7 +16,7 @@ This project is still experimental, so entries before a tagged release are group
 
 ### Changed
 
-- Default ACA-native consult triage moved to GLM-5 for no-tools aggregation after live smoke testing.
+- Default ACA-native consult triage moved to GLM-5 for no-tools aggregation after GLM-5.1 disappeared from the live NanoGPT subscription catalog.
 - Witness and packed-review workflows now favor bounded context-request/finalization patterns over open-ended live tool loops.
 - RP research is moving toward dynamic discovery/research/write passes with exact output paths and model-specific budgets.
 

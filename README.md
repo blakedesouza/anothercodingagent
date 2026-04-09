@@ -75,7 +75,7 @@ export NANOGPT_API_KEY=...
 Initialize local config:
 
 ```bash
-npx tsx src/index.ts init
+node --import tsx src/index.ts init
 ```
 
 After building, the CLI entry point is:
@@ -125,22 +125,32 @@ aca serve
 - `triage`: aggregation and prioritization.
 - `rp-researcher`: anime, manga, VN, and RP lore research/write workflows.
 
+`rp-researcher` is tuned for RP compendiums: discover the cast/topic plan first,
+then run one deep research/write task per character or world file. Default
+character-file ceilings are middle-ground depth rather than mini-wikis: up to
+16-20 KB for main characters, 8-12 KB for side characters, and 4-8 KB
+for minor/supporting characters. These are ceilings, not floors; sparse
+characters should not be padded. Relationship
+sections should stay compact: important dynamics only, usually 1-2 sentences
+each. Original-language text is avoided unless needed to disambiguate an
+ability, skill, or magic name.
+
 Example:
 
 ```json
 {
   "contract_version": "1.0.0",
   "schema_version": "1.1.0",
-  "task": "Research a compact RP lore brief and write only the assigned Markdown file.",
+  "task": "Research Arata Kasuga deeply and write only series/world/characters/arata-kasuga.md.",
   "context": {
     "profile": "rp-researcher",
     "model": "zai-org/glm-5",
     "cwd": "/path/to/project"
   },
   "constraints": {
-    "allowed_tools": ["fetch_mediawiki_page", "fetch_mediawiki_category", "write_file"],
+    "allowed_tools": ["fetch_mediawiki_page", "fetch_mediawiki_category", "fetch_url", "make_directory", "write_file"],
     "max_tool_calls": 100,
-    "required_output_paths": ["series/research/source-brief.md"]
+    "required_output_paths": ["series/world/characters/arata-kasuga.md"]
   }
 }
 ```

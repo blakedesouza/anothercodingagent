@@ -57,8 +57,8 @@ Update `fundamentals.md` to propagate Block 17-20 surfaces into earlier blocks:
 **Tests:**
 - `npm run build` completes without errors
 - `npm test` runs and passes (zero test files, `passWithNoTests: true`)
-- `npx tsx src/index.ts --help` exits cleanly (requires the CLI stub above)
-- `npx tsx src/index.ts --version` outputs version from package.json
+- `node --import tsx src/index.ts --help` exits cleanly (requires the CLI stub above)
+- `node --import tsx src/index.ts --version` outputs version from package.json
 
 ### 0.3 — Test Infrastructure
 > Ref: Cross-Cutting, all milestones
