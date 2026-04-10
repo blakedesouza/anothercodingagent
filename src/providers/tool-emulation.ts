@@ -430,6 +430,20 @@ function stripJsonMarkdownFence(text: string): string {
  * This ensures the agent loop always sees uniform StreamEvent regardless of
  * whether tool calling is native or emulated.
  */
+/**
+ * Strip proxy-injected chain-of-thought preamble from model text.
+ *
+ * Some proxies (e.g. NanoGPT for Qwen) convert the model's internal reasoning
+ * into a "Thinking...\n> ..." markdown-blockquote prefix inside delta.content
+ * rather than a separate reasoning_content field. This must be removed from
+ * every surface where buffered model text is handed back to the agent loop —
+ * both the tool-call preamble path and the no-tool-calls result path.
+ */
+function stripModelPreamble(text: string): string {
+    const stripped = text.replace(/^Thinking\.\.\.\n(>.*\n)*\n*/, '');
+    return stripped.length > 0 ? stripped : text;
+}
+
 export async function* wrapStreamWithToolEmulation(
     inner: AsyncIterable<StreamEvent>,
 ): AsyncGenerator<StreamEvent> {
@@ -451,7 +465,10 @@ export async function* wrapStreamWithToolEmulation(
             }
 
             if (result.preamble.length > 0) {
-                yield { type: 'text_delta', text: result.preamble };
+                const cleanPreamble = stripModelPreamble(result.preamble);
+                if (cleanPreamble.length > 0) {
+                    yield { type: 'text_delta', text: cleanPreamble };
+                }
             }
             for (let i = 0; i < result.calls.length; i++) {
                 yield {
@@ -480,12 +497,7 @@ export async function* wrapStreamWithToolEmulation(
         if (debugMode) {
             process.stderr.write(`[NANOGPT_DEBUG] emulation buffer at stream end (no tool calls extracted):\n${bufferedText}\n---\n`);
         }
-        // Some proxies (e.g. NanoGPT for Qwen) emit the model's chain-of-thought
-        // as a "Thinking...\n> ..." markdown-blockquote prefix inside delta.content
-        // rather than a separate reasoning_content field. Strip it before handing
-        // the text back to the agent loop so it never leaks into invoke results.
-        const stripped = bufferedText.replace(/^Thinking\.\.\.\n(>.*\n)*\n*/, '');
-        yield { type: 'text_delta', text: stripped.length > 0 ? stripped : bufferedText };
+        yield { type: 'text_delta', text: stripModelPreamble(bufferedText) };
     }
 
     if (doneEvent) {
