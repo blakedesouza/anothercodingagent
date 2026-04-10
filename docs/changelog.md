@@ -2925,3 +2925,22 @@ Tool emulation (`wrapStreamWithToolEmulation`) and turn engine (`normalizeStream
 | qwen3.5-27b:thinking | thinking | ✓ | — |
 
 **C8.6 tool-use result:** `qwen/qwen3-coder` given a workspace with a buggy `math.py` (subtraction instead of addition). Model emitted thinking tokens, called `read_file`, called `edit_file`, produced correct final response. File was fixed correctly. Tool emulation handled the thinking preamble transparently.
+
+## 2026-04-09: C8 Follow-up — GLM `delta.reasoning` capture (C8.8)
+
+**Root cause discovered via live investigation:** After C8 landed, `zai-org/glm-5:thinking` intermittently failed with `llm.malformed` on multi-step tool-use tasks (specifically on the second LLM call after a tool result was returned). Direct API inspection revealed the issue:
+
+- GLM-5 and GLM-4.x models (ZhipuAI format) emit thinking tokens in **`delta.reasoning`** (not `delta.reasoning_content`)
+- The C8 fix only captured `delta.reasoning_content` (Qwen3/DeepSeek/OpenAI format)
+- When the model tried to call a tool on step 2 but `tool_choice: "none"` blocked it, the model emitted only `delta.reasoning` with no `delta.content` → `assistantParts.length === 0` → `llm.malformed`
+
+**Investigation steps:**
+1. Captured actual request body via env-var debug log — confirmed `tool_choice: "none"` + `role: "tool"` in second turn
+2. Direct curl test confirmed: after tool result, GLM-5:thinking returns `finish_reason: "tool_calls"` but only in `delta.reasoning`, with empty `delta.content`
+3. Identified two field names in use: `delta.reasoning_content` (Qwen/DeepSeek) and `delta.reasoning` (GLM)
+
+**Fix (`src/providers/nanogpt-driver.ts`):** Added `delta.reasoning` capture alongside the existing `delta.reasoning_content` block. Comment explains both field names and which models use each.
+
+**New test:** `test/providers/nanogpt-driver.test.ts` — "captures delta.reasoning as text_delta (GLM ZhipuAI format)"
+
+**Live validation:** `zai-org/glm-5:thinking` with `read_file` tool use — 5/5 consecutive passes (was intermittently failing before fix). 210 unit tests pass.

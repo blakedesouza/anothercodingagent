@@ -685,6 +685,31 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             expect(errorEvents).toHaveLength(0);
         });
 
+        it('captures delta.reasoning as text_delta (GLM ZhipuAI format)', async () => {
+            // GLM-5 / GLM-4.x use delta.reasoning instead of delta.reasoning_content.
+            // Must be captured so GLM thinking responses are not treated as empty.
+            const glmReasoningChunk = JSON.stringify({
+                id: 'test', object: 'chat.completion.chunk',
+                choices: [{ index: 0, delta: { content: '', reasoning: 'I found the bug.' }, finish_reason: null }],
+            });
+            const rawBody = [
+                `data: ${glmReasoningChunk}`,
+                `data: ${makeDoneChunk()}`,
+                'data: [DONE]',
+            ].join('\n\n') + '\n\n';
+            server.addResponse({ type: 'raw_stream', rawBody });
+
+            const events = await collectEvents(driver.stream(makeRequest()));
+
+            const textDeltas = events.filter(e => e.type === 'text_delta');
+            expect(textDeltas.length).toBeGreaterThan(0);
+            const fullText = textDeltas.map(e => e.type === 'text_delta' ? e.text : '').join('');
+            expect(fullText).toBe('I found the bug.');
+
+            const errorEvents = events.filter(e => e.type === 'error');
+            expect(errorEvents).toHaveLength(0);
+        });
+
         it('reasoning preamble does not corrupt tool emulation JSON parsing', async () => {
             // Thinking model emits reasoning first, then tool call JSON.
             // wrapStreamWithToolEmulation treats reasoning as preamble text,
