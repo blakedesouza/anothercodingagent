@@ -7,6 +7,7 @@ import {
     appendSharedContextPack,
     buildContextRequestPrompt,
     buildContextRequestRetryPrompt,
+    buildContinuationPrompt,
     buildFinalizationPrompt,
     buildFinalizationRetryPrompt,
     buildSharedContextRequestPrompt,
@@ -15,6 +16,8 @@ import {
     fulfillContextRequests,
     parseContextRequests,
     truncateUtf8,
+    type ContextRequest,
+    type ContextRequestLimits,
     type ContextSnippet,
 } from '../consult/context-request.js';
 import { WITNESS_MODELS, type WitnessModelConfig } from '../config/witness-models.js';
@@ -40,6 +43,7 @@ export interface ConsultOptions {
     maxContextSnippets?: number;
     maxContextLines?: number;
     maxContextBytes?: number;
+    maxContextRounds?: number;
     sharedContext?: boolean;
     sharedContextModel?: string;
     sharedContextMaxSnippets?: number;
@@ -293,6 +297,7 @@ function classifyWitnessFirstPass(
         maxSnippets: limits.maxContextSnippets,
         maxLines: limits.maxContextLines,
         maxBytes: limits.maxContextBytes,
+        maxRounds: 1,
     });
     if (requests.length > 0) return { status: 'needs_context', requests };
 
@@ -508,88 +513,162 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     maxContextSnippets: number;
     maxContextLines: number;
     maxContextBytes: number;
+    maxContextRounds: number;
 }): Promise<WitnessResult> {
     const responsePath = join(tmpdir(), `aca-consult-${witness.name}-response-${suffix}.md`);
     const requestPath = join(tmpdir(), `aca-consult-${witness.name}-context-request-${suffix}.md`);
     const finalRawPath = join(tmpdir(), `aca-consult-${witness.name}-final-raw-${suffix}.md`);
-    const firstPrompt = buildContextRequestPrompt(prompt, {
+    const limitsObj: ContextRequestLimits = {
         maxSnippets: limits.maxContextSnippets,
         maxLines: limits.maxContextLines,
         maxBytes: limits.maxContextBytes,
-    });
+        maxRounds: limits.maxContextRounds,
+    };
+    const maxRounds = limits.maxContextRounds;
+
+    // Accumulated state across rounds.
+    const allSnippets: ContextSnippet[] = [];
+    const allRequests: ContextRequest[] = [];
+    const roundSafeties: Array<{ context_request?: InvokeSafety; context_request_retry?: InvokeSafety }> = [];
+    const allInvokeResponses: Array<InvokeResponse | undefined> = [];
+
+    // Build and issue the round-1 context-request prompt.
+    const firstPrompt = buildContextRequestPrompt(prompt, limitsObj, maxRounds, maxRounds);
     const firstAttempt = await invoke(witness.model, firstPrompt, projectDir, {
         maxSteps: 1,
         maxTotalTokens: 30_000,
         outPath: requestPath,
         systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
     });
-    const first = firstAttempt;
-    if (first.response.status !== 'success') {
+    allInvokeResponses.push(firstAttempt.response);
+
+    if (firstAttempt.response.status !== 'success') {
         return {
             name: witness.name,
             model: witness.model,
             status: 'error',
-            error: errorMessage(first.response, first.stderr),
+            error: errorMessage(firstAttempt.response, firstAttempt.stderr),
             response_path: null,
             raw_request_path: requestPath,
             triage_input_path: null,
-            usage: usageOrNull(first.response),
-            safety: first.response.safety ?? null,
+            usage: usageOrNull(firstAttempt.response),
+            safety: firstAttempt.response.safety ?? null,
             context_requests: [],
             context_snippets: [],
         };
     }
-    const firstClassification = classifyWitnessFirstPass(first.response.result ?? '', limits);
-    let firstRetry: { response: InvokeResponse; stderr: string } | null = null;
-    let effectiveFirst = first.response;
-    if (firstClassification.status === 'invalid' && firstClassification.retryable) {
-        firstRetry = await invoke(
-            witness.model,
-            buildContextRequestRetryPrompt(prompt, first.response.result ?? '', {
-                maxSnippets: limits.maxContextSnippets,
-                maxLines: limits.maxContextLines,
-                maxBytes: limits.maxContextBytes,
-            }),
-            projectDir,
-            {
+
+    // The multi-round loop.  Each iteration:
+    //   1. Classify the current response.
+    //   2. If invalid+retryable, one retry per round.
+    //   3. If report → break (voluntary finalization).
+    //   4. If invalid (unrecoverable) → break and return error.
+    //   5. If needs_context → fulfill snippets, push to allSnippets/allRequests.
+    //   6. If rounds remain → build continuation prompt and continue.
+    //   7. If rounds exhausted → break and fall through to forced finalization.
+    let roundsUsed = 0;
+    let currentResponse = firstAttempt.response;
+    let lastEffectiveResponseText = currentResponse.result ?? '';
+    let lastClassification: WitnessFirstPassClassification | null = null;
+
+    while (roundsUsed < maxRounds) {
+        roundsUsed++;
+        const roundText = currentResponse.result ?? '';
+
+        let classification = classifyWitnessFirstPass(roundText, limits);
+        let retryResponse: { response: InvokeResponse; stderr: string } | null = null;
+
+        if (classification.status === 'invalid' && classification.retryable) {
+            const retryPrompt = buildContextRequestRetryPrompt(prompt, roundText, limitsObj);
+            retryResponse = await invoke(witness.model, retryPrompt, projectDir, {
                 maxSteps: 1,
                 maxTotalTokens: 30_000,
                 systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
-            },
-        );
-        const retryClassification = firstRetry.response.status === 'success'
-            ? classifyWitnessFirstPass(firstRetry.response.result ?? '', limits)
-            : null;
-        if (retryClassification?.status === 'report' || retryClassification?.status === 'needs_context') {
-            effectiveFirst = firstRetry.response;
+            });
+            allInvokeResponses.push(retryResponse.response);
+            if (retryResponse.response.status === 'success') {
+                const retryClass = classifyWitnessFirstPass(retryResponse.response.result ?? '', limits);
+                if (retryClass.status === 'report' || retryClass.status === 'needs_context') {
+                    classification = retryClass;
+                    lastEffectiveResponseText = retryResponse.response.result ?? '';
+                }
+            }
+        } else {
+            lastEffectiveResponseText = roundText;
         }
+
+        roundSafeties.push({
+            context_request: currentResponse.safety,
+            context_request_retry: retryResponse?.response.safety,
+        });
+
+        lastClassification = classification;
+
+        if (classification.status === 'report') {
+            writeFileSync(responsePath, classification.report);
+            break;
+        }
+
+        if (classification.status === 'invalid') {
+            // Unrecoverable — report error immediately.
+            return {
+                name: witness.name,
+                model: witness.model,
+                status: 'error',
+                error: classification.error,
+                response_path: null,
+                raw_request_path: requestPath,
+                triage_input_path: requestPath,
+                usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+                safety: buildRoundSafeties(roundSafeties),
+                context_requests: allRequests,
+                context_snippets: allSnippets.map(({ text: _text, ...snippet }) => snippet),
+            };
+        }
+
+        // needs_context: fulfill and accumulate.
+        const roundRequests = classification.requests;
+        allRequests.push(...roundRequests);
+        const roundSnippets = fulfillContextRequests(roundRequests, projectDir, limitsObj);
+        allSnippets.push(...roundSnippets);
+
+        if (roundsUsed >= maxRounds) {
+            // All context-request rounds exhausted — fall through to forced finalization.
+            break;
+        }
+
+        // Build continuation prompt for the next round.
+        const roundsRemaining = maxRounds - roundsUsed;
+        const continuationPrompt = buildContinuationPrompt(prompt, allSnippets, roundsRemaining, limitsObj, witness.model);
+        const nextAttempt = await invoke(witness.model, continuationPrompt, projectDir, {
+            maxSteps: 1,
+            maxTotalTokens: 30_000,
+            systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
+        });
+        allInvokeResponses.push(nextAttempt.response);
+
+        if (nextAttempt.response.status !== 'success') {
+            // Provider error in continuation — return error immediately.
+            return {
+                name: witness.name,
+                model: witness.model,
+                status: 'error',
+                error: errorMessage(nextAttempt.response, nextAttempt.stderr),
+                response_path: null,
+                raw_request_path: requestPath,
+                triage_input_path: null,
+                usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+                safety: buildRoundSafeties(roundSafeties),
+                context_requests: allRequests,
+                context_snippets: allSnippets.map(({ text: _text, ...snippet }) => snippet),
+            };
+        }
+
+        currentResponse = nextAttempt.response;
     }
 
-    const effectiveFirstClassification = classifyWitnessFirstPass(effectiveFirst.result ?? '', limits);
-    if (effectiveFirstClassification.status === 'invalid') {
-        const firstPassError = firstClassification.status === 'invalid'
-            ? firstClassification.error
-            : effectiveFirstClassification.error;
-        return {
-            name: witness.name,
-            model: witness.model,
-            status: 'error',
-            error: firstPassError,
-            response_path: null,
-            raw_request_path: requestPath,
-            triage_input_path: requestPath,
-            usage: mergeUsage(first.response.usage, firstRetry?.response.usage),
-            safety: {
-                context_request: first.response.safety,
-                context_request_retry: firstRetry?.response.safety,
-            },
-            context_requests: [],
-            context_snippets: [],
-        };
-    }
-
-    if (effectiveFirstClassification.status === 'report') {
-        writeFileSync(responsePath, effectiveFirstClassification.report);
+    // If the witness finalized voluntarily, return immediately.
+    if (lastClassification?.status === 'report') {
         return {
             name: witness.name,
             model: witness.model,
@@ -598,30 +677,22 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
             response_path: responsePath,
             raw_request_path: requestPath,
             triage_input_path: responsePath,
-            usage: mergeUsage(first.response.usage, firstRetry?.response.usage),
-            safety: {
-                context_request: first.response.safety,
-                context_request_retry: firstRetry?.response.safety,
-            },
-            context_requests: [],
-            context_snippets: [],
+            usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+            safety: buildRoundSafeties(roundSafeties),
+            context_requests: allRequests,
+            context_snippets: allSnippets.map(({ text: _text, ...snippet }) => snippet),
         };
     }
 
-    const requests = effectiveFirstClassification.requests;
-
-    const snippets = fulfillContextRequests(requests, projectDir, {
-        maxSnippets: limits.maxContextSnippets,
-        maxLines: limits.maxContextLines,
-        maxBytes: limits.maxContextBytes,
-    });
-    const finalPrompt = buildFinalizationPrompt(prompt, effectiveFirst.result ?? '', snippets, witness.model);
+    // Witness kept requesting context until rounds were exhausted — force finalization.
+    const finalPrompt = buildFinalizationPrompt(prompt, lastEffectiveResponseText, allSnippets, witness.model);
     const final = await invoke(witness.model, finalPrompt, projectDir, {
         maxSteps: 1,
         maxTotalTokens: 30_000,
         outPath: finalRawPath,
         systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
     });
+    allInvokeResponses.push(final.response);
     const finalResponse = final.response;
     const finalClassification = finalResponse.status === 'success'
         ? classifyWitnessFinal(finalResponse.result ?? '')
@@ -631,7 +702,7 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     if (finalResponse.status === 'success' && finalClassification?.status === 'invalid' && finalClassification.retryable) {
         finalRetry = await invoke(
             witness.model,
-            buildFinalizationRetryPrompt(prompt, effectiveFirst.result ?? '', snippets, finalResponse.result ?? '', witness.model),
+            buildFinalizationRetryPrompt(prompt, lastEffectiveResponseText, allSnippets, finalResponse.result ?? '', witness.model),
             projectDir,
             {
                 maxSteps: 1,
@@ -639,11 +710,12 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
                 systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
             },
         );
+        allInvokeResponses.push(finalRetry.response);
         if (finalRetry.response.status === 'success') {
-            const retryClassification = classifyWitnessFinal(finalRetry.response.result ?? '');
-            if (retryClassification.status === 'report') {
-                effectiveFinalClassification = retryClassification;
-                writeFileSync(responsePath, retryClassification.report);
+            const retryClass = classifyWitnessFinal(finalRetry.response.result ?? '');
+            if (retryClass.status === 'report') {
+                effectiveFinalClassification = retryClass;
+                writeFileSync(responsePath, retryClass.report);
             }
         }
     } else if (finalResponse.status === 'success' && finalClassification?.status === 'report') {
@@ -652,6 +724,11 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
 
     const finalSucceeded = finalResponse.status === 'success'
         && effectiveFinalClassification?.status === 'report';
+    const roundsSafety = buildRoundSafeties(roundSafeties);
+    const finalSafety = typeof roundsSafety === 'object' && roundsSafety !== null && 'context_request' in roundsSafety
+        ? { ...roundsSafety, final: final.response.safety, final_retry: finalRetry?.response.safety }
+        : { context_request: undefined, final: final.response.safety, final_retry: finalRetry?.response.safety };
+
     return {
         name: witness.name,
         model: witness.model,
@@ -664,16 +741,31 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
         response_path: finalSucceeded ? responsePath : null,
         raw_request_path: requestPath,
         triage_input_path: finalResponse.result ? (finalSucceeded ? responsePath : finalRawPath) : null,
-        usage: mergeUsage(first.response.usage, firstRetry?.response.usage, final.response.usage, finalRetry?.response.usage),
-        safety: {
-            context_request: first.response.safety,
-            context_request_retry: firstRetry?.response.safety,
-            final: final.response.safety,
-            final_retry: finalRetry?.response.safety,
-        },
-        context_requests: requests,
-        context_snippets: snippets.map(({ text: _text, ...snippet }) => snippet),
+        usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+        safety: finalSafety,
+        context_requests: allRequests,
+        context_snippets: allSnippets.map(({ text: _text, ...snippet }) => snippet),
     };
+}
+
+/**
+ * Build a safety record from per-round safety data. For single-round runs,
+ * preserves the original `context_request`/`context_request_retry` shape for
+ * backward compatibility. For multi-round, adds `extra_rounds` for rounds 2+.
+ */
+function buildRoundSafeties(
+    roundSafeties: Array<{ context_request?: InvokeSafety; context_request_retry?: InvokeSafety }>,
+): WitnessResult['safety'] {
+    if (roundSafeties.length === 0) return null;
+    const [first, ...extra] = roundSafeties;
+    const result: WitnessResult['safety'] & { extra_rounds?: typeof extra } = {
+        context_request: first.context_request,
+        context_request_retry: first.context_request_retry,
+    };
+    if (extra.length > 0) {
+        (result as Record<string, unknown>)['extra_rounds'] = extra;
+    }
+    return result;
 }
 
 async function buildSharedContext(prompt: string, projectDir: string, suffix: string, options: {
@@ -687,6 +779,7 @@ async function buildSharedContext(prompt: string, projectDir: string, suffix: st
         maxSnippets: options.maxSnippets,
         maxLines: options.maxLines,
         maxBytes: options.maxBytes,
+        maxRounds: 1,
     });
     const scout = await invokeWithFallbackModels(options.models, scoutPrompt, projectDir, {
         maxSteps: 1,
@@ -728,11 +821,13 @@ async function buildSharedContext(prompt: string, projectDir: string, suffix: st
         maxSnippets: options.maxSnippets,
         maxLines: options.maxLines,
         maxBytes: options.maxBytes,
+        maxRounds: 1,
     });
     const snippets = fulfillContextRequests(requests, projectDir, {
         maxSnippets: options.maxSnippets,
         maxLines: options.maxLines,
         maxBytes: options.maxBytes,
+        maxRounds: 1,
     });
 
     return {
@@ -845,6 +940,7 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
         maxContextSnippets: options.maxContextSnippets ?? 3,
         maxContextLines: options.maxContextLines ?? 120,
         maxContextBytes: options.maxContextBytes ?? 8_000,
+        maxContextRounds: options.maxContextRounds ?? 3,
     };
     const witnessEntries = await Promise.all(
         witnesses.map(async witness => [witness.name, await runWitness(witness, promptForWitnesses, projectDir, suffix, limits)] as const),

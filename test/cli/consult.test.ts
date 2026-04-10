@@ -275,6 +275,7 @@ describe('runConsult', () => {
             question: 'Review the change.',
             projectDir: tmpProjectDir(),
             witnesses: 'deepseek',
+            maxContextRounds: 1,
         });
 
         expect(contextRetries).toBe(1);

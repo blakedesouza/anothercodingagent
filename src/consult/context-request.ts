@@ -140,7 +140,13 @@ export function containsProtocolEnvelopeJson(text: string): boolean {
     return Array.isArray(data?.files) || Array.isArray(data?.read);
 }
 
-export function buildContextRequestPrompt(prompt: string, limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS): string {
+export function buildContextRequestPrompt(
+    prompt: string,
+    limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS,
+    roundsRemaining?: number,
+    totalRounds?: number,
+): string {
+    const roundStatusLine = buildRoundStatusLine(roundsRemaining, totalRounds);
     return `${prompt.trimEnd()}
 
 ## Witness Context Request Protocol
@@ -148,7 +154,7 @@ export function buildContextRequestPrompt(prompt: string, limits: ContextRequest
 You are in ACA-native context-request mode.
 ${NO_NATIVE_FUNCTION_CALLING}
 ${NO_PROTOCOL_DELIBERATION}
-
+${roundStatusLine}
 First decide whether the available evidence is enough. If it is enough, return your final findings directly in Markdown.
 Assume you know nothing beyond the prompt text and any ACA-appended evidence. If the task asks for a concrete repo fact that is not shown verbatim, request the minimal supporting snippet instead of guessing.
 Missing snippets, ENOENT paths, or omitted files are not evidence that a file, feature, or configuration is absent.
@@ -159,11 +165,21 @@ If one narrow follow-up is needed before finalizing, return only this JSON objec
 {
   "needs_context": [
     {
+      "type": "file",
       "path": "relative/path.ts",
       "line_start": 1,
       "line_end": 120,
       "reason": "short concrete reason"
     }
+  ]
+}
+\`\`\`
+
+To explore a directory before requesting specific files, use \`"type": "tree"\` — ACA returns a 2-level listing:
+\`\`\`json
+{
+  "needs_context": [
+    { "type": "tree", "path": "src/providers", "line_start": 0, "line_end": 0, "reason": "find driver file names" }
   ]
 }
 \`\`\`
@@ -180,14 +196,83 @@ Use "action": "final" with an empty needs_context array when no follow-up is nee
 When in doubt, prefer the simple needs_context form. The structured action form is only required if ACA explicitly signals structured output for this request.
 
 Limits:
-- Request at most ${limits.maxSnippets} snippets.
-- Each snippet should be at most ${limits.maxLines} lines.
+- Request at most ${limits.maxSnippets} snippets per round.
+- Each file snippet should be at most ${limits.maxLines} lines.
 - Request only repo-relative paths.
+- Use \`type: 'tree'\` for a 2-level directory listing when you are unsure of exact file names. Do not request whole-repo searches.
 - Only request file paths that are explicitly mentioned in the provided evidence or clearly derivable from the task description. Do not infer paths from common project conventions or assumed directory structure — an ENOENT result wastes one of your ${limits.maxSnippets} context-request slots and provides no useful information.
-- Do not request broad directories or whole-repo searches.
 - Tools are disabled in this pass. Do not emit tool-call markup or tool-call intent.
 - Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, <read_file>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
 - If you need more context, use only the needs_context JSON object above. ACA will read accepted snippets deterministically.
+`;
+}
+
+function buildRoundStatusLine(roundsRemaining?: number, totalRounds?: number): string {
+    if (roundsRemaining === undefined) return '';
+    if (roundsRemaining <= 0) {
+        return 'This is your final context-request round. After receiving snippets, produce your final answer immediately.\n';
+    }
+    const total = totalRounds !== undefined ? `/${totalRounds}` : '';
+    return `You have ${roundsRemaining}${total} context-request round(s) remaining. Use an early round for directory exploration (\`type: "tree"\`) if unsure of file paths.\n`;
+}
+
+/**
+ * Build the continuation prompt for rounds 2+. Shows the original task,
+ * all snippets fulfilled so far, and the context-request protocol with
+ * updated round status.
+ */
+export function buildContinuationPrompt(
+    originalPrompt: string,
+    priorSnippets: ContextSnippet[],
+    roundsRemaining: number,
+    limits: ContextRequestLimits,
+    model?: string,
+): string {
+    const hints = model ? getModelHints(model) : [];
+    const hintSection = hints.length > 0
+        ? `\n<model_hints>\n${hints.join('\n')}\n</model_hints>\n`
+        : '';
+    const roundStatusLine = buildRoundStatusLine(roundsRemaining, limits.maxRounds);
+    const snippetSection = priorSnippets.length > 0
+        ? `\n## Context Snippets From Prior Rounds\n\nACA fulfilled your previous context request(s). The following snippets are available:\n\n${renderContextSnippets(priorSnippets)}\n`
+        : '';
+
+    return `${originalPrompt.trimEnd()}
+${snippetSection}
+## Witness Context Request Protocol (Continuation)
+
+You are in ACA-native context-request mode — continuation round.
+${NO_NATIVE_FUNCTION_CALLING}
+${NO_PROTOCOL_DELIBERATION}
+${hintSection}
+${roundStatusLine}
+Review the fulfilled snippets above and decide if you need more context or can finalize.
+If the available snippets are sufficient, return your final findings directly in Markdown.
+If the evidence cannot support a claim, leave it as an open question rather than guessing.
+
+If additional context is still needed, return only this JSON object and no Markdown:
+\`\`\`json
+{
+  "needs_context": [
+    {
+      "type": "file",
+      "path": "relative/path.ts",
+      "line_start": 1,
+      "line_end": 120,
+      "reason": "short concrete reason"
+    }
+  ]
+}
+\`\`\`
+
+Use \`"type": "tree"\` for a directory listing if you still need to explore a directory.
+
+Limits:
+- Request at most ${limits.maxSnippets} snippets per round.
+- Each file snippet should be at most ${limits.maxLines} lines.
+- Request only repo-relative paths.
+- Use \`type: 'tree'\` for 2-level directory listings. Do not request whole-repo searches.
+- Tools are disabled. Do not emit tool-call markup or tool-call intent.
 `;
 }
 
