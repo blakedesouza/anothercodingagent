@@ -5,7 +5,9 @@ import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 export const makeDirectorySpec: ToolSpec = {
     name: 'make_directory',
-    description: 'Create a directory and all parent directories. Returns whether the directory was newly created.',
+    description:
+        'Create a directory and all necessary parent directories in one operation. ' +
+        'If the directory already exists the call succeeds and returns created=false; it is safe to call unconditionally as an idempotent setup step.',
     inputSchema: {
         type: 'object',
         properties: {

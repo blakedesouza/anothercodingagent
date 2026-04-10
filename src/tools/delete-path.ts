@@ -6,7 +6,10 @@ import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 export const deletePathSpec: ToolSpec = {
     name: 'delete_path',
-    description: 'Delete a file or directory. Requires recursive=true for non-empty directories.',
+    description:
+        'Delete a file or directory at the given path. ' +
+        'Pass recursive=true to delete a non-empty directory and all its contents; omitting it causes an error if the target is a non-empty directory. ' +
+        'The deletion is permanent and cannot be undone.',
     inputSchema: {
         type: 'object',
         properties: {

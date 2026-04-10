@@ -7,7 +7,11 @@ import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 export const writeFileSpec: ToolSpec = {
     name: 'write_file',
-    description: 'Create or fully replace a file with the given content. Creates parent directories if needed.',
+    description:
+        'Write UTF-8 content to a file, creating it or fully replacing its existing contents. ' +
+        'Parent directories are created automatically if they do not exist. ' +
+        'Set mode=\'create\' to fail atomically if the file already exists (safe first-write); mode=\'overwrite\' (default) replaces any existing file unconditionally. ' +
+        'Prefer edit_file when making targeted changes to an existing file — write_file always replaces the entire content.',
     inputSchema: {
         type: 'object',
         properties: {

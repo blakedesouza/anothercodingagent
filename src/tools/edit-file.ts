@@ -17,7 +17,11 @@ interface Reject {
 
 export const editFileSpec: ToolSpec = {
     name: 'edit_file',
-    description: 'Apply surgical edits to an existing file using search/replace pairs. Optionally verify file hash before editing.',
+    description:
+        'Apply surgical search/replace edits to an existing file. ' +
+        'Each edit in the edits array supplies an exact search string and its replacement — the search text must match exactly once in the file (ambiguous or duplicate matches cause that edit to be rejected). ' +
+        'Multiple edits are applied left-to-right as a single atomic operation; the file is only written if all edits succeed. ' +
+        'Supply expectedHash to guard against editing a file that changed since it was last read.',
     inputSchema: {
         type: 'object',
         properties: {

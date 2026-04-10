@@ -9,7 +9,10 @@ const MAX_LIMIT = 200;
 
 export const findPathsSpec: ToolSpec = {
     name: 'find_paths',
-    description: 'Find files or directories matching a glob pattern. Hard max 200 matches, default limit 50.',
+    description:
+        'Find files or directories matching a glob pattern under a root directory. ' +
+        'Supports **, *, and ? wildcards; use type to filter to \'file\', \'directory\', or \'any\' (default). ' +
+        'Returns up to limit matches (default 50, hard max 200).',
     inputSchema: {
         type: 'object',
         properties: {

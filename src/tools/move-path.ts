@@ -5,7 +5,10 @@ import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 export const movePathSpec: ToolSpec = {
     name: 'move_path',
-    description: 'Move or rename a file or directory. Sets conflict=true if the destination already existed.',
+    description:
+        'Move or rename a file or directory to a new path. ' +
+        'The operation is atomic; if a file already existed at the destination it is overwritten and the response includes conflict=true. ' +
+        'Both source and destination must be within the workspace sandbox.',
     inputSchema: {
         type: 'object',
         properties: {

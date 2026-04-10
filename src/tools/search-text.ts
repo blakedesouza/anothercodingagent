@@ -9,7 +9,11 @@ const MAX_LIMIT = 200;
 
 export const searchTextSpec: ToolSpec = {
     name: 'search_text',
-    description: 'Search for a regex or exact text pattern across files. Hard max 200 matches, default limit 50.',
+    description:
+        'Search for a regex (default) or literal text pattern across files under the given root directory. ' +
+        'Filter by filename with file_globs (e.g. [\'*.ts\', \'src/**/*.json\']); omit to search all files. ' +
+        'Each result includes the file path, line number, and matching line; set context_lines (0–10) to include surrounding lines. ' +
+        'Returns up to limit matches (default 50, hard max 200); set exact=true to treat the pattern as a literal string instead of a regex.',
     inputSchema: {
         type: 'object',
         properties: {

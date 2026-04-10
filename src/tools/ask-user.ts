@@ -5,7 +5,10 @@ import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.
 
 export const askUserSpec: ToolSpec = {
     name: 'ask_user',
-    description: 'Ask the user a question or present choices. Yields the turn with awaiting_user outcome.',
+    description:
+        'Ask the user a freeform question or present a list of choices and wait for their response. ' +
+        'Set format=\'choice\' and provide a choices array to restrict the user to one of the listed options; omit choices or use format=\'freeform\' for an open-ended answer. ' +
+        'The current agent turn is suspended until the user replies.',
     inputSchema: {
         type: 'object',
         properties: {

@@ -5,7 +5,10 @@ import { checkZone, resolveToolPath } from './workspace-sandbox.js';
 
 export const statPathSpec: ToolSpec = {
     name: 'stat_path',
-    description: 'Get metadata about a file or directory without reading its contents.',
+    description:
+        'Get metadata about a file or directory without reading its contents. ' +
+        'Returns type (file/directory/symlink), size in bytes, permissions, and modification time. ' +
+        'Use this to check existence or inspect properties before performing a read or write operation.',
     inputSchema: {
         type: 'object',
         properties: {

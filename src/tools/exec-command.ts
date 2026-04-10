@@ -15,8 +15,10 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 export const execCommandSpec: ToolSpec = {
     name: 'exec_command',
     description:
-        'Execute a shell command and capture stdout, stderr, exit code, and duration. ' +
-        '64 KiB combined output cap with head+tail preservation. Default timeout 60s.',
+        'Execute a shell command and capture stdout, stderr, exit code, and wall-clock duration. ' +
+        'Combined output is capped at ~62 KiB; oversized output is preserved head+tail with an omission marker in the middle. ' +
+        'Default timeout is 60 seconds; pass a custom timeout in milliseconds to override. ' +
+        'Use cwd to set the working directory and env to inject additional environment variables on top of the inherited process environment.',
     inputSchema: {
         type: 'object',
         properties: {

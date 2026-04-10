@@ -48,7 +48,11 @@ const MIME_MAP: Record<string, string> = {
 
 export const readFileSpec: ToolSpec = {
     name: 'read_file',
-    description: 'Read the contents of a file at the given path. Supports optional line range selection.',
+    description:
+        'Read the contents of a text file at the given path. ' +
+        'Use line_start and line_end to request a specific line range; output is capped at 2,000 lines or 64 KiB regardless of range. ' +
+        'Binary files (images, archives, executables) are detected by extension and returned as a base64 data URI instead of text. ' +
+        'Files larger than 10 MiB are rejected with a size error.',
     inputSchema: {
         type: 'object',
         properties: {
