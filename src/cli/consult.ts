@@ -24,6 +24,8 @@ import type { ModelResponseFormat } from '../types/provider.js';
 import { extractFindingsFromMarkdown } from '../review/markdown-adapter.js';
 import { aggregateReviews } from '../review/aggregator.js';
 import { buildReport, renderReportText } from '../review/report.js';
+import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
+import { getModelHints } from '../prompts/model-hints.js';
 
 export interface ConsultOptions {
     question?: string;
@@ -110,7 +112,6 @@ const TRIAGE_MODEL = 'zai-org/glm-5';
 const TRIAGE_MODEL_CANDIDATES = [
     TRIAGE_MODEL,
     'moonshotai/kimi-k2.5',
-    'qwen/qwen3-coder-next',
 ] as const;
 const DEFAULT_SHARED_CONTEXT_SNIPPETS = 8;
 const DEFAULT_SHARED_CONTEXT_LINES = 160;
@@ -404,23 +405,28 @@ ${question}
 `;
 }
 
-function buildNoToolsConsultSystemMessages(mode: 'witness' | 'shared_context' | 'triage'): InvokeSystemMessage[] {
+function buildNoToolsConsultSystemMessages(mode: 'witness' | 'shared_context' | 'triage', model?: string): InvokeSystemMessage[] {
     const modeInstruction = mode === 'shared_context'
         ? 'You are the shared raw evidence scout. Select raw snippets only. Do not produce review findings.'
         : mode === 'triage'
             ? 'You are the triage pass. Aggregate only the supplied witness evidence. Do not perform a fresh review.'
             : 'You are a witness review pass. Review the supplied task and context only.';
+    const hints = model ? getModelHints(model) : [];
+    const hintSection = hints.length > 0
+        ? `\n<model_hints>\n${hints.join('\n')}\n</model_hints>`
+        : '';
     return [{
         role: 'system',
         content: `You are running a bounded ACA consult pass, not the normal autonomous ACA invoke workflow.
-Tools are unavailable for this request.
+${NO_NATIVE_FUNCTION_CALLING}
+${NO_PROTOCOL_DELIBERATION}
 Do not call tools, ask to call tools, emit tool-call JSON, or emit XML/function markup such as <tool_call>, <call>, <function_calls>, or <invoke>.
 Follow the user prompt's protocol exactly.
 If the prompt asks for Markdown, return Markdown only.
 If the prompt asks for JSON, return JSON only.
 If more context is needed, use only the exact request format described in the prompt.
 Do not add extra wrappers, agent narration, or next-step instructions outside the requested output.
-${modeInstruction}`,
+${modeInstruction}${hintSection}`,
     }];
 }
 
@@ -515,7 +521,7 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
         maxSteps: 1,
         maxTotalTokens: 30_000,
         outPath: requestPath,
-        systemMessages: buildNoToolsConsultSystemMessages('witness'),
+        systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
     });
     const first = firstAttempt;
     if (first.response.status !== 'success') {
@@ -548,7 +554,7 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
             {
                 maxSteps: 1,
                 maxTotalTokens: 30_000,
-                systemMessages: buildNoToolsConsultSystemMessages('witness'),
+                systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
             },
         );
         const retryClassification = firstRetry.response.status === 'success'
@@ -609,12 +615,12 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
         maxLines: limits.maxContextLines,
         maxBytes: limits.maxContextBytes,
     });
-    const finalPrompt = buildFinalizationPrompt(prompt, effectiveFirst.result ?? '', snippets);
+    const finalPrompt = buildFinalizationPrompt(prompt, effectiveFirst.result ?? '', snippets, witness.model);
     const final = await invoke(witness.model, finalPrompt, projectDir, {
         maxSteps: 1,
         maxTotalTokens: 30_000,
         outPath: finalRawPath,
-        systemMessages: buildNoToolsConsultSystemMessages('witness'),
+        systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
     });
     const finalResponse = final.response;
     const finalClassification = finalResponse.status === 'success'
@@ -625,12 +631,12 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     if (finalResponse.status === 'success' && finalClassification?.status === 'invalid' && finalClassification.retryable) {
         finalRetry = await invoke(
             witness.model,
-            buildFinalizationRetryPrompt(prompt, effectiveFirst.result ?? '', snippets, finalResponse.result ?? ''),
+            buildFinalizationRetryPrompt(prompt, effectiveFirst.result ?? '', snippets, finalResponse.result ?? '', witness.model),
             projectDir,
             {
                 maxSteps: 1,
                 maxTotalTokens: 30_000,
-                systemMessages: buildNoToolsConsultSystemMessages('witness'),
+                systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
             },
         );
         if (finalRetry.response.status === 'success') {
@@ -754,13 +760,16 @@ function buildTriagePrompt(witnesses: Record<string, WitnessResult>): string {
     }).join('\n\n---\n\n');
     return `# ACA Consult Triage
 
-You are an aggregation-only triage pass. Tools are disabled.
+You are an aggregation-only triage pass.
+${NO_NATIVE_FUNCTION_CALLING}
+${NO_PROTOCOL_DELIBERATION}
 The witness reports below are your only evidence. Do not do a fresh code review.
 Do not request files, list directories, call tools, or emit XML/function/tool markup such as <call>, <tool_call>, <function_calls>, or <invoke>.
 Do not quote or reproduce literal pseudo-tool markup from witness reports; refer to it generically as pseudo-tool-call markup.
 If evidence is missing, mark it as an open question instead of trying to fetch more context.
 Some witness sections may contain degraded raw output captured before ACA could normalize it into a clean report. Treat those sections as weak evidence, note uncertainty, and do not over-index on malformed markup.
 Do not promote claims based only on missing-file errors, ENOENT snippets, or "not present in the provided evidence" language into consensus findings. Keep those as open questions or likely false positives unless a witness cites positive source evidence.
+A witness claiming "X is not implemented", "X is absent", "X is missing", or "X is not present" without quoting explicit positive source evidence (exact file path + line numbers, or a filled snippet confirming the gap) is an un-evidenced absence claim — classify it as a likely false positive or open question, not a consensus finding, unless at least two independent witnesses independently cite direct evidence.
 
 Return a concise Markdown report with:
 - consensus findings

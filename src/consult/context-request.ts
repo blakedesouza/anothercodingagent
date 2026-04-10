@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve, isAbsolute, relative } from 'node:path';
+import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
+import { getModelHints } from '../prompts/model-hints.js';
 
 export interface ContextRequest {
     path: string;
@@ -63,11 +65,15 @@ function stripMarkdownCode(text: string): string {
         .replace(/`[^`\n]*`/g, '');
 }
 
+function stripMarkdownBlockquotes(text: string): string {
+    return text.split('\n').filter(line => !/^>/.test(line)).join('\n');
+}
+
 const ACA_TOOL_NAMES = 'read_file|write_file|edit_file|delete_path|move_path|make_directory|stat_path|find_paths|search_text|exec_command|open_session|session_io|close_session|ask_user|confirm_action|estimate_tokens|lsp_query|web_search|fetch_url|lookup_docs';
 
 export function containsPseudoToolCall(text: string): boolean {
     if (containsActiveFencedToolCall(text) || containsToolCallJsonArray(text)) return true;
-    const inspectableText = stripMarkdownCode(text);
+    const inspectableText = stripMarkdownCode(stripMarkdownBlockquotes(text));
     return /<\s*(?:[\w-]+:)?(tool_call|function_calls?|call)\b/i.test(inspectableText)
         || /\[\s*\/?\s*(?:[\w-]+:)?(tool_call|function_calls?|call)\s*\]/i.test(inspectableText)
         || /<\s*invoke\b/i.test(inspectableText)
@@ -131,6 +137,8 @@ export function buildContextRequestPrompt(prompt: string, limits: ContextRequest
 ## Witness Context Request Protocol
 
 You are in ACA-native context-request mode.
+${NO_NATIVE_FUNCTION_CALLING}
+${NO_PROTOCOL_DELIBERATION}
 
 First decide whether the available evidence is enough. If it is enough, return your final findings directly in Markdown.
 Assume you know nothing beyond the prompt text and any ACA-appended evidence. If the task asks for a concrete repo fact that is not shown verbatim, request the minimal supporting snippet instead of guessing.
@@ -160,11 +168,13 @@ If ACA enforces structured output for this request, return the same decision usi
 }
 \`\`\`
 Use "action": "final" with an empty needs_context array when no follow-up is needed, and put the report in findings_markdown.
+When in doubt, prefer the simple needs_context form. The structured action form is only required if ACA explicitly signals structured output for this request.
 
 Limits:
 - Request at most ${limits.maxSnippets} snippets.
 - Each snippet should be at most ${limits.maxLines} lines.
 - Request only repo-relative paths.
+- Only request file paths you are confident exist in this repository. If you are not certain a path exists, omit it — an ENOENT result wastes one of your ${limits.maxSnippets} context-request slots.
 - Do not request broad directories or whole-repo searches.
 - Tools are disabled in this pass. Do not emit tool-call markup or tool-call intent.
 - Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, <read_file>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
@@ -194,7 +204,9 @@ export function buildSharedContextRequestPrompt(prompt: string, limits: ContextR
 
 ## Shared Raw Evidence Scout Protocol
 
-You are selecting raw code ranges for a shared witness evidence pack. Tools are disabled.
+You are selecting raw code ranges for a shared witness evidence pack.
+${NO_NATIVE_FUNCTION_CALLING}
+${NO_PROTOCOL_DELIBERATION}
 The final evidence pack will be assembled by ACA, not by you: ACA will read accepted snippets directly from disk after your response.
 Assume you know nothing beyond the prompt text and any ACA-appended evidence.
 If the task asks for a concrete repo fact that is not already shown verbatim, request the minimal supporting snippets needed to verify it.
@@ -372,7 +384,11 @@ export function renderContextSnippets(snippets: ContextSnippet[]): string {
     }).join('\n\n');
 }
 
-export function buildFinalizationPrompt(originalPrompt: string, requestText: string, snippets: ContextSnippet[]): string {
+export function buildFinalizationPrompt(originalPrompt: string, requestText: string, snippets: ContextSnippet[], model?: string): string {
+    const hints = model ? getModelHints(model) : [];
+    const hintSection = hints.length > 0
+        ? `\n<model_hints>\n${hints.join('\n')}\n</model_hints>\n`
+        : '';
     return `${originalPrompt.trimEnd()}
 
 ## Witness Context Request
@@ -385,8 +401,10 @@ ${extractJsonPayload(requestText)}
 
 ## Fulfilled Context Snippets
 
-ACA read the accepted snippets deterministically. Tools are now disabled.
-
+ACA read the accepted snippets deterministically.
+${NO_NATIVE_FUNCTION_CALLING}
+${NO_PROTOCOL_DELIBERATION}
+${hintSection}
 ${renderContextSnippets(snippets)}
 
 ## Finalization
@@ -400,8 +418,8 @@ Do not emit tool-call markup or tool-call intent. Invalid examples include <tool
 `;
 }
 
-export function buildFinalizationRetryPrompt(originalPrompt: string, requestText: string, snippets: ContextSnippet[], invalidResponse: string): string {
-    return `${buildFinalizationPrompt(originalPrompt, requestText, snippets)}
+export function buildFinalizationRetryPrompt(originalPrompt: string, requestText: string, snippets: ContextSnippet[], invalidResponse: string, model?: string): string {
+    return `${buildFinalizationPrompt(originalPrompt, requestText, snippets, model)}
 
 ## Invalid Previous Finalization
 
