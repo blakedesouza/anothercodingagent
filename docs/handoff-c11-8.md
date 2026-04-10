@@ -77,11 +77,21 @@ Also updated "2-level listing" text to "3-level listing" throughout both prompts
 
 | # | Question target | Target file | Score | Notes |
 |---|-----------------|-------------|-------|-------|
-| 1 | Hard-rejected tool call error code | `src/cli/invoke-output-validation.ts` | 3/4 | kimi found confusion tracking (`tool.validation`, `turn-engine.ts`) instead |
+| 1 | Hard-rejected tool call error code | `src/cli/invoke-output-validation.ts` | 3/4 | kimi wrong file — see diagnosis below |
 | 2 | TOOL_NAMES constant + MediaWiki entries | `src/cli/tool-names.ts` | 4/4 | Unanimous; both `fetch_mediawiki_page` + `fetch_mediawiki_category` exact |
-| 3 | Runtime context system message logic | `src/cli/invoke-runtime-state.ts` | 3/4 | qwen emitted deliberation only (no findings); deepseek/kimi/gemma correct |
+| 3 | Runtime context system message logic | `src/cli/invoke-runtime-state.ts` | 3/4 | qwen protocol violation — see diagnosis below |
 
 **Navigation mechanism verified (test 2):** DeepSeek opened with `{ "type": "tree", "path": "." }`, the 3-level root listing exposed `src/cli/tool-names.ts` directly, and it navigated to the correct file without any ENOENT. Pre-fix this file would have been invisible in the root tree.
+
+### Failure diagnosis — test 1 (kimi)
+
+Kimi requested `{ "type": "tree", "path": "src" }`. A tree of `src/` at maxDepth=3 DOES show `src/cli/invoke-output-validation.ts` at depth 2 within the listing. **The navigation fix worked — kimi saw the file.** Kimi then chose to read `src/core/turn-engine.ts` instead, because "hard-rejected tool calls" triggered its association with confusion tracking (`CONFUSION_ERROR_CODES`), which also involves tool error rejection semantics. This is a wrong-file-choice failure, not a path navigation failure.
+
+### Failure diagnosis — test 3 (qwen)
+
+Qwen produced extensive chain-of-thought deliberation wrapped in `>` blockquote syntax across all rounds. Within the blockquotes it did formulate a valid `needs_context` JSON tree request, but the entire response violated `NO_PROTOCOL_DELIBERATION` — the final artifact is deliberation prose, not findings. This is a **new failure mode**: qwen3.5-397b-a17b externalizes its reasoning as blockquoted content, which the current `NO_PROTOCOL_DELIBERATION` guard does not catch (the guard targets tool-call markup, not reasoning prose). Previously (C11 S3 baseline) qwen's consult responses were clean; this appears to be context-length or question-complexity triggered. Not a regression of the depth fix.
+
+**Outstanding issue:** qwen deliberation-in-blockquotes is not tracked in `docs/c11/failure-catalog.md`. Needs a new catalog entry and model hint.
 
 ---
 
