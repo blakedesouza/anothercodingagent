@@ -174,7 +174,7 @@ Limits:
 - Request at most ${limits.maxSnippets} snippets.
 - Each snippet should be at most ${limits.maxLines} lines.
 - Request only repo-relative paths.
-- Only request file paths you are confident exist in this repository. If you are not certain a path exists, omit it — an ENOENT result wastes one of your ${limits.maxSnippets} context-request slots.
+- Only request file paths that are explicitly mentioned in the provided evidence or clearly derivable from the task description. Do not infer paths from common project conventions or assumed directory structure — an ENOENT result wastes one of your ${limits.maxSnippets} context-request slots and provides no useful information.
 - Do not request broad directories or whole-repo searches.
 - Tools are disabled in this pass. Do not emit tool-call markup or tool-call intent.
 - Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, <read_file>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
