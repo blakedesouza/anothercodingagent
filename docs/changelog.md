@@ -26,6 +26,8 @@ This project is still experimental, so entries before a tagged release are group
 - Added hard caps for total tool calls, per-tool calls, aggregate tool-result bytes, estimated input tokens, and repeated overlapping reads.
 - Fixed invoke-mode tool visibility so prompts and API schemas only expose actually available tools.
 - Fixed Gemma/NanoGPT parallel tool-call reconstruction when provider deltas reuse `index: 0` with distinct tool call IDs.
+- Fixed `extractJsonPayload` heuristic misfiring on `{}` inside inline backtick code spans (C11.8 Bug 2).
+- Increased `buildDirectoryTree` depth from 2→3 so root trees expose files inside second-level subdirectories (e.g. `src/cli/consult.ts` now visible without a follow-up tree request); added prompt guidance to explore `cli/`-style sibling dirs when a domain dir doesn't contain the target file (C11.8 Bug 1).
 
 ### Notes
 

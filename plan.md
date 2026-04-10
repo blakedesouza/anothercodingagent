@@ -27,7 +27,14 @@
 - C11.6 (tool emulation hardening): **NEXT** — worked JSON example + model-specific anti-patterns in tool-emulation.ts
 - C11.7 (regression tests + validation matrix): pending — structural tests + C11.1 battery re-run
 
-**Next:** C11.6 — tool emulation prompt hardening (worked JSON example, model anti-patterns).
+**C11.8 (classification bug): FIXED (commit 9da83a0).** `extractJsonPayload` heuristic misfired on `{}` inside inline backtick code spans. Fix: blank inline spans before scanning. Live-validated 7 runs; gemma forced-trigger confirmed. 2630 tests passing.
+
+**C11.8 remaining open:**
+- Continuation round responses not persisted to disk (open)
+
+**C11.8 Bug 1 FIXED (commit `0912435`):** `buildDirectoryTree` default maxDepth 2→3; "3-level listing" text updates; prompt guidance about `cli/`-style sibling dirs added to both prompts. 2 regression tests. 2632 passing.
+
+**Next:** Continuation round disk persistence — write each round's response to `/tmp/aca-consult-{witness}-round-{n}-{suffix}.md` in `runWitness()`. See `docs/handoff-c11-8.md`.
 
 **C11.7 (multi-round context-request loop + tree support): COMPLETE.**
 - All 9 steps committed; 2630 passing / 14 pre-existing failures
