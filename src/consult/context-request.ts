@@ -175,7 +175,7 @@ If one narrow follow-up is needed before finalizing, return only this JSON objec
 }
 \`\`\`
 
-To explore a directory before requesting specific files, use \`"type": "tree"\` — ACA returns a 2-level listing:
+To explore a directory before requesting specific files, use \`"type": "tree"\` — ACA returns a 3-level listing:
 \`\`\`json
 {
   "needs_context": [
@@ -199,7 +199,8 @@ Limits:
 - Request at most ${limits.maxSnippets} snippets per round.
 - Each file snippet should be at most ${limits.maxLines} lines.
 - Request only repo-relative paths.
-- Use \`type: 'tree'\` for a 2-level directory listing when you are unsure of exact file names. Do not request whole-repo searches.
+- Use \`type: 'tree'\` for a 3-level directory listing when you are unsure of exact file names. Do not request whole-repo searches.
+- If a domain-named directory (e.g., \`consult/\`) doesn't appear to contain the expected file, request a tree of sibling generically-named directories (\`cli/\`, \`cmd/\`, \`commands/\`, \`bin/\`) before concluding it is absent — entry-point orchestration code often lives in those directories and delegates to domain modules.
 - Only request file paths that are explicitly mentioned in the provided evidence or clearly derivable from the task description. Do not infer paths from common project conventions or assumed directory structure — an ENOENT result wastes one of your ${limits.maxSnippets} context-request slots and provides no useful information.
 - Tools are disabled in this pass. Do not emit tool-call markup or tool-call intent.
 - Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, <read_file>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
@@ -271,7 +272,8 @@ Limits:
 - Request at most ${limits.maxSnippets} snippets per round.
 - Each file snippet should be at most ${limits.maxLines} lines.
 - Request only repo-relative paths.
-- Use \`type: 'tree'\` for 2-level directory listings. Do not request whole-repo searches.
+- Use \`type: 'tree'\` for 3-level directory listings. Do not request whole-repo searches.
+- If a domain-named directory (e.g., \`consult/\`) doesn't contain the expected file, request a tree of sibling generically-named directories (\`cli/\`, \`cmd/\`, \`commands/\`, \`bin/\`) — entry-point code often lives there.
 - Tools are disabled. Do not emit tool-call markup or tool-call intent.
 `;
 }
@@ -384,7 +386,7 @@ function normalizeContextRequests(rawRequests: unknown[], limits: ContextRequest
  * directories. Used to satisfy `type: "tree"` context requests so witnesses
  * can orient themselves before requesting specific files.
  */
-function buildDirectoryTree(root: string, relPath: string, maxDepth = 2): string {
+function buildDirectoryTree(root: string, relPath: string, maxDepth = 3): string {
     const absPath = resolve(root, relPath);
     const lines: string[] = [`${relPath}/`];
 

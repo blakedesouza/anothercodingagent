@@ -260,6 +260,46 @@ describe('consult context requests', () => {
         expect(snippets[0].error).toContain('not a directory');
     });
 
+    it('root tree at default depth exposes files inside second-level subdirectories (depth-3 fix)', () => {
+        // Regression: before the fix, a tree of "." only went 2 levels deep, so
+        // src/cli/consult.ts was invisible — the model could see "src/cli/" as a
+        // directory but not its contents.  With maxDepth=3 the file is now listed.
+        const dir = mkdtempSync(join(tmpdir(), 'aca-tree-depth3-'));
+        mkdirSync(join(dir, 'src'));
+        mkdirSync(join(dir, 'src', 'cli'));
+        mkdirSync(join(dir, 'src', 'consult'));
+        writeFileSync(join(dir, 'src', 'cli', 'consult.ts'), '// stub');
+        writeFileSync(join(dir, 'src', 'consult', 'context-request.ts'), '// stub');
+
+        const snippets = fulfillContextRequests([
+            { type: 'tree', path: '.', line_start: 0, line_end: 0, reason: 'explore root' },
+        ], dir, { maxSnippets: 1, maxLines: 100, maxBytes: 50_000, maxRounds: 1 });
+
+        expect(snippets).toHaveLength(1);
+        expect(snippets[0].status).toBe('ok');
+        // Both files must be visible directly in the root tree
+        expect(snippets[0].text).toContain('consult.ts');           // src/cli/consult.ts
+        expect(snippets[0].text).toContain('context-request.ts');   // src/consult/context-request.ts
+    });
+
+    it('root tree does not descend beyond 3 levels', () => {
+        // walk depths: root=1, src=2, src/a=3 (visible), src/a/b=4 (blocked)
+        const dir = mkdtempSync(join(tmpdir(), 'aca-tree-maxdepth-'));
+        mkdirSync(join(dir, 'src', 'a', 'b'), { recursive: true });
+        writeFileSync(join(dir, 'src', 'a', 'visible.ts'), '// depth-3');  // walk-depth 3 → visible
+        writeFileSync(join(dir, 'src', 'a', 'b', 'hidden.ts'), '// depth-4'); // walk-depth 4 → blocked
+
+        const snippets = fulfillContextRequests([
+            { type: 'tree', path: '.', line_start: 0, line_end: 0, reason: 'depth cap test' },
+        ], dir, { maxSnippets: 1, maxLines: 100, maxBytes: 50_000, maxRounds: 1 });
+
+        expect(snippets[0].status).toBe('ok');
+        // walk-depth 3 file (src/a/visible.ts) must appear
+        expect(snippets[0].text).toContain('visible.ts');
+        // walk-depth 4 file (src/a/b/hidden.ts) must NOT appear
+        expect(snippets[0].text).not.toContain('hidden.ts');
+    });
+
     it('renders tree snippets with ### tree: heading (no line range)', () => {
         const treeSnippet: ContextSnippet = {
             type: 'tree',
