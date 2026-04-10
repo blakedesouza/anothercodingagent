@@ -38,6 +38,8 @@
 
 **Symbol-lookup: COMPLETE (2026-04-10, commit `a1f1042`).** `src/consult/symbol-lookup.ts` (extractCodeIdentifiers + resolveSymbolLocations), `<symbol_locations>` block injected into `buildContextRequestPrompt`, wired in `runWitness()`. 9 new tests. 3/3 live tests: all 4 witnesses navigated directly to the correct `src/cli/` file (previously kimi/gemma declared functions absent). 2641 tests passing.
 
+**C11.6 handoff written (2026-04-10).** Two-part: (A) `stripBlockquoteMarkers` exported from `context-request.ts`, wired into `classifyWitnessFirstPass` call sites in `runWitness()` — fixes qwen/qwen3.5 blockquote-wrapped needs_context being silently swallowed; (B) worked JSON example + anti-patterns added to `buildToolSchemaPrompt` in `tool-emulation.ts`. Pre-written tests + live test in `docs/handoff-c11.6.md`. Prompt: `docs/handoff-c11.6-prompt.md`.
+
 **Also open:** Continuation round disk persistence — in `runWitness()` in `src/cli/consult.ts`, write each extra round's response to `/tmp/aca-consult-{witness}-round-{n}-{suffix}.md` so post-mortem debugging is possible when a witness fails mid-loop.
 
 **C11.7 (multi-round context-request loop + tree support): COMPLETE.**
@@ -278,7 +280,8 @@ Codex high-severity findings (21) applied to step files. M7 reordered and split 
 
 - `/fundamentals.md` — Complete spec (source of truth)
 - `/docs/changelog.md` — Design decision history
-- `/docs/handoff-c11.md` — **C11 handoff (START HERE)**
+- `/docs/handoff-c11.md` — C11 handoff (C11.1–C11.5 history)
+- `/docs/handoff-c11.6.md` — **C11.6 handoff (START HERE)**
 - `/docs/handoff-phase0.md` — Phase 0 handoff (historical)
 - `/docs/handoff.md` — Pre-implementation review handoff (historical)
 - `/docs/handoff-test-audit.md` — Test audit task list (all resolved)
