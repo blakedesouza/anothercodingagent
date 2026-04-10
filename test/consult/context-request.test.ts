@@ -7,21 +7,24 @@ import {
     appendSharedContextPack,
     buildContextRequestRetryPrompt,
     buildContextRequestPrompt,
+    buildContinuationPrompt,
     buildFinalizationPrompt,
     buildFinalizationRetryPrompt,
     buildSharedContextRequestPrompt,
     fulfillContextRequests,
+    renderContextSnippets,
     containsProtocolEnvelopeJson,
     containsPseudoToolCall,
     parseContextRequests,
     truncateUtf8,
+    type ContextSnippet,
 } from '../../src/consult/context-request.js';
 
 describe('consult context requests', () => {
     it('parses and caps context requests', () => {
         const requests = parseContextRequests(
             '{"needs_context":[{"path":"src/index.ts","line_start":5,"line_end":500,"reason":"verify"}]}',
-            { maxSnippets: 1, maxLines: 25, maxBytes: 1000 },
+            { maxSnippets: 1, maxLines: 25, maxBytes: 1000, maxRounds: 1 },
         );
 
         expect(requests).toEqual([{
@@ -40,7 +43,7 @@ describe('consult context requests', () => {
         const snippets = fulfillContextRequests([
             { path: 'src/file.ts', line_start: 2, line_end: 2, reason: 'needed' },
             { path: '../outside.ts', line_start: 1, line_end: 1, reason: 'escape' },
-        ], dir, { maxSnippets: 2, maxLines: 10, maxBytes: 3 });
+        ], dir, { maxSnippets: 2, maxLines: 10, maxBytes: 3, maxRounds: 1 });
 
         expect(snippets[0].status).toBe('ok');
         expect(snippets[0].text).toBe('é');
@@ -124,7 +127,7 @@ describe('consult context requests', () => {
         const prompt = buildContextRequestRetryPrompt(
             'Review the code.',
             '[TOOL_CALL] read_file [/TOOL_CALL]',
-            { maxSnippets: 2, maxLines: 50, maxBytes: 1000 },
+            { maxSnippets: 2, maxLines: 50, maxBytes: 1000, maxRounds: 1 },
         );
 
         expect(prompt).toContain('Invalid Previous Context Request');
@@ -136,7 +139,7 @@ describe('consult context requests', () => {
     it('parses alternate file-list context requests from routed models', () => {
         const requests = parseContextRequests(
             '{"status":"success","data":{"files":[{"path":"src/providers/nanogpt-driver.ts","lines":"140-220"}]}}',
-            { maxSnippets: 1, maxLines: 40, maxBytes: 1000 },
+            { maxSnippets: 1, maxLines: 40, maxBytes: 1000, maxRounds: 1 },
         );
 
         expect(requests).toEqual([{
@@ -161,6 +164,7 @@ describe('consult context requests', () => {
             maxSnippets: 4,
             maxLines: 80,
             maxBytes: 2000,
+            maxRounds: 1,
         });
 
         expect(prompt).toContain('Shared Raw Evidence Scout Protocol');
@@ -194,5 +198,173 @@ describe('consult context requests', () => {
         expect(packed).toContain('ACA read the file contents deterministically from disk');
         expect(packed).toContain('src/core/turn-engine.ts:47-55');
         expect(packed).toContain("const FALLBACK_TRIGGER_CODES = new Set(['llm.rate_limit']);");
+    });
+
+    // C11.7 — tree requests, multi-round prompts, continuation
+
+    it('parses type:tree context request from witness JSON', () => {
+        const requests = parseContextRequests(
+            '{"needs_context":[{"type":"tree","path":"src/providers","line_start":0,"line_end":0,"reason":"find driver files"}]}',
+            { maxSnippets: 2, maxLines: 100, maxBytes: 5000, maxRounds: 3 },
+        );
+
+        expect(requests).toHaveLength(1);
+        expect(requests[0].type).toBe('tree');
+        expect(requests[0].path).toBe('src/providers');
+        expect(requests[0].line_start).toBe(0);
+        expect(requests[0].line_end).toBe(0);
+        expect(requests[0].reason).toBe('find driver files');
+    });
+
+    it('fulfills a tree request against a real temporary directory', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'aca-tree-'));
+        mkdirSync(join(dir, 'src'));
+        mkdirSync(join(dir, 'src', 'providers'));
+        writeFileSync(join(dir, 'src', 'providers', 'nanogpt-driver.ts'), '// stub');
+        writeFileSync(join(dir, 'src', 'providers', 'sse-parser.ts'), '// stub');
+
+        const snippets = fulfillContextRequests([
+            { type: 'tree', path: 'src/providers', line_start: 0, line_end: 0, reason: 'find drivers' },
+        ], dir, { maxSnippets: 1, maxLines: 100, maxBytes: 10_000, maxRounds: 1 });
+
+        expect(snippets).toHaveLength(1);
+        expect(snippets[0].status).toBe('ok');
+        expect(snippets[0].type).toBe('tree');
+        expect(snippets[0].text).toContain('src/providers/');
+        expect(snippets[0].text).toContain('nanogpt-driver.ts');
+        expect(snippets[0].text).toContain('sse-parser.ts');
+    });
+
+    it('returns an error snippet for a tree request on a non-existent path', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'aca-tree-enoent-'));
+
+        const snippets = fulfillContextRequests([
+            { type: 'tree', path: 'src/nonexistent', line_start: 0, line_end: 0, reason: 'missing dir' },
+        ], dir, { maxSnippets: 1, maxLines: 100, maxBytes: 10_000, maxRounds: 1 });
+
+        expect(snippets).toHaveLength(1);
+        expect(snippets[0].status).toBe('error');
+        expect(snippets[0].error).toBeTruthy();
+    });
+
+    it('returns an error snippet for a tree request targeting a file (not a directory)', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'aca-tree-notdir-'));
+        writeFileSync(join(dir, 'somefile.ts'), '// content');
+
+        const snippets = fulfillContextRequests([
+            { type: 'tree', path: 'somefile.ts', line_start: 0, line_end: 0, reason: 'should be dir' },
+        ], dir, { maxSnippets: 1, maxLines: 100, maxBytes: 10_000, maxRounds: 1 });
+
+        expect(snippets).toHaveLength(1);
+        expect(snippets[0].status).toBe('error');
+        expect(snippets[0].error).toContain('not a directory');
+    });
+
+    it('renders tree snippets with ### tree: heading (no line range)', () => {
+        const treeSnippet: ContextSnippet = {
+            type: 'tree',
+            path: 'src/providers',
+            line_start: 0,
+            line_end: 0,
+            reason: 'directory listing',
+            status: 'ok',
+            error: null,
+            bytes: 50,
+            truncated: false,
+            text: 'src/providers/\n  nanogpt-driver.ts\n  sse-parser.ts',
+        };
+
+        const rendered = renderContextSnippets([treeSnippet]);
+        expect(rendered).toContain('### tree: src/providers');
+        expect(rendered).not.toContain(':0-0');
+        expect(rendered).toContain('nanogpt-driver.ts');
+    });
+
+    it('renders file snippets with line range in heading', () => {
+        const fileSnippet: ContextSnippet = {
+            type: 'file',
+            path: 'src/index.ts',
+            line_start: 1,
+            line_end: 10,
+            reason: 'check exports',
+            status: 'ok',
+            error: null,
+            bytes: 80,
+            truncated: false,
+            text: 'export * from "./cli.js";',
+        };
+
+        const rendered = renderContextSnippets([fileSnippet]);
+        expect(rendered).toContain('### src/index.ts:1-10');
+    });
+
+    it('buildContextRequestPrompt includes type:tree example and round status', () => {
+        const prompt = buildContextRequestPrompt(
+            'Analyze the providers.',
+            { maxSnippets: 4, maxLines: 200, maxBytes: 16_000, maxRounds: 3 },
+            3,
+            3,
+        );
+
+        expect(prompt).toContain('"type": "tree"');
+        expect(prompt).toContain('type: \'tree\'');
+        expect(prompt).toContain('3');
+        expect(prompt).toContain('directory');
+        expect(prompt).toContain('Request at most 4 snippets');
+        expect(prompt).toContain('Witness Context Request Protocol');
+    });
+
+    it('buildContextRequestPrompt shows final-round warning when roundsRemaining=0', () => {
+        const prompt = buildContextRequestPrompt(
+            'Analyze.',
+            { maxSnippets: 4, maxLines: 200, maxBytes: 16_000, maxRounds: 3 },
+            0,
+            3,
+        );
+
+        expect(prompt).toContain('final context-request round');
+        expect(prompt).toContain('produce your final answer');
+    });
+
+    it('buildContinuationPrompt shows prior snippets and remaining rounds', () => {
+        const priorSnippet: ContextSnippet = {
+            type: 'tree',
+            path: 'src/providers',
+            line_start: 0,
+            line_end: 0,
+            reason: 'find drivers',
+            status: 'ok',
+            error: null,
+            bytes: 40,
+            truncated: false,
+            text: 'src/providers/\n  nanogpt-driver.ts',
+        };
+
+        const prompt = buildContinuationPrompt(
+            'Review the drivers.',
+            [priorSnippet],
+            2,
+            { maxSnippets: 4, maxLines: 200, maxBytes: 16_000, maxRounds: 3 },
+        );
+
+        expect(prompt).toContain('Review the drivers.');
+        expect(prompt).toContain('Context Snippets From Prior Rounds');
+        expect(prompt).toContain('### tree: src/providers');
+        expect(prompt).toContain('nanogpt-driver.ts');
+        expect(prompt).toContain('Witness Context Request Protocol (Continuation)');
+        expect(prompt).toContain('2');
+        expect(prompt).toContain('continuation round');
+    });
+
+    it('buildContinuationPrompt with roundsRemaining=0 shows final-round warning', () => {
+        const prompt = buildContinuationPrompt(
+            'Analyze.',
+            [],
+            0,
+            { maxSnippets: 4, maxLines: 200, maxBytes: 16_000, maxRounds: 3 },
+        );
+
+        expect(prompt).toContain('final context-request round');
+        expect(prompt).toContain('produce your final answer');
     });
 });

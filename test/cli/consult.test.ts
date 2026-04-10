@@ -399,4 +399,108 @@ describe('runConsult', () => {
         expect(failedGlmCalls.length).toBeGreaterThanOrEqual(2);
         expect(kimiCalls.length).toBeGreaterThanOrEqual(2);
     });
+
+    // C11.7 — multi-round context-request loop
+
+    it('witness voluntarily finalizes in round 1 (backward compat)', async () => {
+        let round1Calls = 0;
+
+        runAcaInvokeMock.mockImplementation(async (task: string) => {
+            if (task.includes('Witness Context Request Protocol') && !task.includes('Continuation')) {
+                round1Calls += 1;
+                return makeInvokeSuccess('## Findings\n\nDirect finalization.');
+            }
+            if (task.includes('# ACA Consult Triage')) {
+                return makeInvokeSuccess(VALID_TRIAGE_REPORT);
+            }
+            throw new Error(`unexpected prompt: ${task.slice(0, 80)}`);
+        });
+
+        const result = await runConsult({
+            question: 'What is the config schema?',
+            projectDir: tmpProjectDir(),
+            witnesses: 'deepseek',
+        });
+
+        expect(round1Calls).toBe(1);
+        expect(result.witnesses.deepseek.status).toBe('ok');
+        expect(result.witnesses.deepseek.context_requests).toHaveLength(0);
+        expect(result.witnesses.deepseek.context_snippets).toHaveLength(0);
+    });
+
+    it('multi-round: needs_context rounds 1+2, voluntary finalization on round 3', async () => {
+        let round1Calls = 0;
+        let continuationCalls = 0;
+
+        runAcaInvokeMock.mockImplementation(async (task: string) => {
+            if (task.includes('Invalid Previous Context Request')) {
+                throw new Error('unexpected retry in multi-round test');
+            }
+            if (task.includes('Witness Context Request Protocol (Continuation)')) {
+                continuationCalls += 1;
+                if (continuationCalls === 1) {
+                    // Round 2: request another file
+                    return makeInvokeSuccess('{"needs_context":[{"path":"src/cli/consult.ts","line_start":1,"line_end":10,"reason":"see imports"}]}');
+                }
+                // Round 3: finalize voluntarily
+                return makeInvokeSuccess('## Findings\n\nFull analysis complete.');
+            }
+            if (task.includes('Witness Context Request Protocol')) {
+                round1Calls += 1;
+                // Round 1: request a file
+                return makeInvokeSuccess('{"needs_context":[{"path":"src/consult/context-request.ts","line_start":1,"line_end":10,"reason":"check imports"}]}');
+            }
+            if (task.includes('# ACA Consult Triage')) {
+                return makeInvokeSuccess(VALID_TRIAGE_REPORT);
+            }
+            throw new Error(`unexpected prompt: ${task.slice(0, 100)}`);
+        });
+
+        const result = await runConsult({
+            question: 'Explain the context-request pipeline.',
+            projectDir: tmpProjectDir(),
+            witnesses: 'deepseek',
+            maxContextRounds: 3,
+        });
+
+        expect(round1Calls).toBe(1);
+        expect(continuationCalls).toBe(2);
+        expect(result.witnesses.deepseek.status).toBe('ok');
+        // Both rounds' requests should be accumulated
+        expect(result.witnesses.deepseek.context_requests).toHaveLength(2);
+    });
+
+    it('round cap: witness keeps requesting past maxRounds → forced finalization', async () => {
+        let contextRounds = 0;
+        let finalizationCalls = 0;
+
+        runAcaInvokeMock.mockImplementation(async (task: string) => {
+            if (task.includes('## Finalization')) {
+                finalizationCalls += 1;
+                return makeInvokeSuccess('## Findings\n\nForced finalization.');
+            }
+            if (task.includes('Witness Context Request Protocol')) {
+                // Always request more context (never finalizes voluntarily)
+                contextRounds += 1;
+                return makeInvokeSuccess(`{"needs_context":[{"path":"src/index.ts","line_start":1,"line_end":5,"reason":"round ${contextRounds}"}]}`);
+            }
+            if (task.includes('# ACA Consult Triage')) {
+                return makeInvokeSuccess(VALID_TRIAGE_REPORT);
+            }
+            throw new Error(`unexpected prompt: ${task.slice(0, 80)}`);
+        });
+
+        const result = await runConsult({
+            question: 'Analyze everything.',
+            projectDir: tmpProjectDir(),
+            witnesses: 'deepseek',
+            maxContextRounds: 2,
+        });
+
+        // 2 context-request rounds used, then forced finalization
+        expect(contextRounds).toBe(2);
+        expect(finalizationCalls).toBe(1);
+        expect(result.witnesses.deepseek.status).toBe('ok');
+        expect(result.witnesses.deepseek.context_requests).toHaveLength(2);
+    });
 });
