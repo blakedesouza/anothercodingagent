@@ -153,6 +153,13 @@ export class NanoGptDriver implements ProviderDriver {
             timer = setTimeout(() => controller.abort(), this.timeout);
         };
 
+        if (process.env.NANOGPT_DEBUG) {
+            const debugBody = { ...body, messages: (body.messages as unknown[]).length + ' messages' };
+            process.stderr.write(`[NANOGPT_DEBUG] REQUEST body (summary): ${JSON.stringify(debugBody)}\n`);
+            process.stderr.write(`[NANOGPT_DEBUG] REQUEST has tools: ${JSON.stringify((body as Record<string,unknown>).tools ?? null)}\n`);
+            process.stderr.write(`[NANOGPT_DEBUG] REQUEST tool_choice: ${JSON.stringify((body as Record<string,unknown>).tool_choice ?? null)}\n`);
+        }
+
         let response: Response;
         try {
             response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -188,9 +195,15 @@ export class NanoGptDriver implements ProviderDriver {
         let finishReason = 'stop';
         let streamError: StreamErrorEvent | null = null;
 
+        const debugMode = process.env.NANOGPT_DEBUG === '1';
+
         try {
             for await (const sseEvent of parseSSE(response)) {
                 resetIdleTimer();
+
+                if (debugMode) {
+                    process.stderr.write(`[NANOGPT_DEBUG] SSE data: ${sseEvent.data}\n`);
+                }
 
                 if (sseEvent.data === '[DONE]') {
                     break;
@@ -285,11 +298,23 @@ export class NanoGptDriver implements ProviderDriver {
         // otherwise fall back to whatever the caller specified
         const maxTokens = this.getMaxOutputForModel(request.model) ?? request.maxTokens;
 
+        // Emulation mode: no tool schemas are sent to the API; the model generates
+        // tool calls as plain JSON text which we extract locally. In this mode we
+        // must NOT re-serialize those extracted calls back as native tool_calls in
+        // subsequent turns, because models like DeepSeek will then respond with
+        // native function calls that NanoGPT rejects (502 malformed_tool_call).
+        // Detect emulation mode by the absence of a tool schema on the request.
+        const isEmulationMode = !request.tools || request.tools.length === 0;
+
         const body: Record<string, unknown> = {
             model: request.model,
             messages: request.messages.map(msg => {
+                // In emulation mode, tool results must be role:user. Sending them
+                // as role:tool without a matching native tool schema in the request
+                // causes strict models to attempt (and fail) native function calls.
+                const effectiveRole = isEmulationMode && msg.role === 'tool' ? 'user' : msg.role;
                 const out: Record<string, unknown> = {
-                    role: msg.role,
+                    role: effectiveRole,
                 };
                 if (typeof msg.content === 'string') {
                     out.content = msg.content;
@@ -303,18 +328,31 @@ export class NanoGptDriver implements ProviderDriver {
 
                     const toolCallParts = msg.content.filter(p => p.type === 'tool_call');
                     if (toolCallParts.length > 0) {
-                        out.tool_calls = toolCallParts.map((p, i) => ({
-                            id: p.toolCallId,
-                            type: 'function',
-                            index: i,
-                            function: {
-                                name: p.toolName,
-                                arguments: JSON.stringify(p.arguments ?? {}),
-                            },
-                        }));
+                        if (isEmulationMode) {
+                            // Re-encode as emulation JSON text so the model sees its
+                            // own output format rather than a native tool_calls field
+                            // that has no corresponding tool schema in this request.
+                            const emulationJson = JSON.stringify({
+                                tool_calls: toolCallParts.map(p => ({
+                                    name: p.toolName,
+                                    arguments: p.arguments ?? {},
+                                })),
+                            }, null, 4);
+                            out.content = textParts ? `${textParts}\n${emulationJson}` : emulationJson;
+                        } else {
+                            out.tool_calls = toolCallParts.map((p, i) => ({
+                                id: p.toolCallId,
+                                type: 'function',
+                                index: i,
+                                function: {
+                                    name: p.toolName,
+                                    arguments: JSON.stringify(p.arguments ?? {}),
+                                },
+                            }));
+                        }
                     }
                 }
-                if (msg.toolCallId) {
+                if (!isEmulationMode && msg.toolCallId) {
                     out.tool_call_id = msg.toolCallId;
                 }
                 return out;

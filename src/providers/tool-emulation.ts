@@ -1,4 +1,5 @@
 import type { ModelRequest, RequestMessage, ToolDefinition, StreamEvent } from '../types/provider.js';
+import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
 
 /**
  * A parsed emulated tool call (arguments stored as a JSON string, matching
@@ -27,16 +28,21 @@ export function buildToolSchemaPrompt(tools: ToolDefinition[]): string {
 
     return [
         '',
-        'ACA is emulating tools for this provider.',
-        'Any assistant message that uses tools must be ONLY the JSON tool-call object.',
-        'Do not restate the goal, add prose before the JSON, or add commentary after the JSON in a tool-using reply.',
-        'You have access to the following tools. When you need to use a tool, respond',
-        'ONLY with a JSON object in exactly this format (no surrounding text):',
+        '## TOOL USE — MANDATORY',
+        '',
+        NO_NATIVE_FUNCTION_CALLING,
+        NO_PROTOCOL_DELIBERATION,
+        'The ONLY way to invoke a tool is by writing the JSON object below directly into your response text.',
+        '',
+        'When you need a tool, your entire response must be ONLY this JSON object:',
         '{"tool_calls":[{"name":"<tool_name>","arguments":{<arguments>}}]}',
-        'Do not wrap the JSON in Markdown fences.',
-        'If you need multiple tools, include multiple entries in the single "tool_calls" array.',
-        'Do not emit XML, HTML, or pseudo-tool wrappers such as <tool_call>, <tool_calls>, <function_calls>, <invoke>, <function=...>, <parameter=...>, <arg_key>, or <arg_value>.',
-        'After tool results arrive, either emit another JSON tool-call object or a normal final text reply with no pseudo-tool markup.',
+        '',
+        '- Do NOT use the API\'s native tool_calls mechanism — it is disabled here.',
+        '- Do not wrap the JSON in Markdown fences or any XML/HTML tags.',
+        '- Do not add prose, explanation, or commentary before or after the JSON.',
+        '- Do not emit <tool_call>, <function_calls>, <invoke>, or similar wrappers.',
+        '- For multiple tools, include multiple entries in the "tool_calls" array.',
+        '- After tool results arrive, call another tool or give your final text answer.',
         '',
         'Available tools:',
         toolList,
@@ -431,12 +437,18 @@ export async function* wrapStreamWithToolEmulation(
     let emittedToolCalls = false;
     let doneEvent: Extract<StreamEvent, { type: 'done' }> | null = null;
 
+    const debugMode = process.env.NANOGPT_DEBUG === '1';
+
     for await (const event of inner) {
         if (event.type === 'text_delta') {
             if (emittedToolCalls) continue;
             bufferedText += event.text;
             const result = parseEmulatedToolCalls(bufferedText);
             if (!result || result.calls.length === 0) continue;
+
+            if (debugMode) {
+                process.stderr.write(`[NANOGPT_DEBUG] emulation buffer at parse success:\n${bufferedText}\n---\n`);
+            }
 
             if (result.preamble.length > 0) {
                 yield { type: 'text_delta', text: result.preamble };
@@ -465,7 +477,15 @@ export async function* wrapStreamWithToolEmulation(
     }
 
     if (!emittedToolCalls && bufferedText.length > 0) {
-        yield { type: 'text_delta', text: bufferedText };
+        if (debugMode) {
+            process.stderr.write(`[NANOGPT_DEBUG] emulation buffer at stream end (no tool calls extracted):\n${bufferedText}\n---\n`);
+        }
+        // Some proxies (e.g. NanoGPT for Qwen) emit the model's chain-of-thought
+        // as a "Thinking...\n> ..." markdown-blockquote prefix inside delta.content
+        // rather than a separate reasoning_content field. Strip it before handing
+        // the text back to the agent loop so it never leaks into invoke results.
+        const stripped = bufferedText.replace(/^Thinking\.\.\.\n(>.*\n)*\n*/, '');
+        yield { type: 'text_delta', text: stripped.length > 0 ? stripped : bufferedText };
     }
 
     if (doneEvent) {
