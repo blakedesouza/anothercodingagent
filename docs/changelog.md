@@ -2849,3 +2849,35 @@ Fixed three bugs preventing tool execution in delegated ACA sessions (via `aca i
 **4-witness consultation:** 1 P2 fix applied (empty-array deny-all test). 1 P1 rejected (MiniMax claimed ToolOutput has 'partial' status — false, type is `'success' | 'error'` only).
 
 **Tests:** 6 new (autoConfirm+indeterminate success/error, allowedTools deny/allow/null/empty-array). 2202 total passing.
+
+---
+
+## 2026-04-09: M7A.5 Wiring + reasoning_content Fix
+
+### M7A.5: Markdown-to-Structured Adapter + Consult Pipeline Wiring
+
+**What changed:** `src/review/*` (M7A.5.1-M7A.5.4, 4 files, ~1000 lines, 128 tests) was verified to have zero runtime callers via independent Opus re-audit. It was tree-shaken from dist/ and never wired into the consult pipeline despite being marked COMPLETE.
+
+**New file: `src/review/markdown-adapter.ts`** — heuristic adapter that extracts `WitnessReview` objects from freeform witness Markdown output:
+- Section-based strategy: splits on `##`/`###` headings, detects severity keywords (critical/high/medium/low/info), extracts claim/evidence/file:line/recommendedAction
+- Bullet-based fallback: when no real headings present, scans bullet items for severity keywords
+- Conservative extraction: under-extract rather than hallucinate; missing fields left absent
+- Meta-section filter: Summary/Overview/Conclusion/Dissent/etc. excluded
+
+**`src/cli/consult.ts` wiring:** Aggregation block inserted between `triageableCount` and `triage` init. For each witness with a `triage_input_path`, extracts markdown → WitnessReview → aggregateReviews → buildReport → renderReportText. Writes both `.md` and `.json` artifacts to `/tmp/`. Entire block wrapped in try/catch — cannot break existing LLM triage flow.
+
+**`ConsultResult` type:** New `structured_review` field (ok/error/null union) added.
+
+**Tests:** 16 new in `test/review/markdown-adapter.test.ts` (no_findings cases, heading-based extraction, bullet fallback, real-world witness shapes, metadata). 141 total review tests.
+
+**Live validation:** Tested across 4 witnesses (kimi, deepseek, qwen, gemma). `structured_review.status: "ok"` confirmed. Cluster count and finding attribution correct.
+
+### NanoGPT Driver: Qwen3 reasoning_content Fix
+
+**Root cause diagnosed via session forensics:** Qwen3 thinking models (qwen3-coder-next, Qwen3-Next-80B etc.) emit chain-of-thought tokens in `delta.reasoning_content` rather than `delta.content`. ACA's NanoGPT driver only read `delta.content`, so thinking-only responses produced `assistantParts.length === 0` → `llm.malformed` abort.
+
+**Evidence:** C7 probe session `ses_01KNSWTTVP` showed `outputTokens: 20, outputSeqs: []` — the model responded but nothing was captured.
+
+**Fix (`src/providers/nanogpt-driver.ts`):** Added `delta.reasoning_content` capture alongside `delta.content`. When both are present, both are emitted as `text_delta`. This ensures thinking-model responses are never treated as empty.
+
+**Verified:** Alibaba Cloud Model Studio streaming docs confirm `reasoning_content` is the correct field for Qwen3. Ollama uses `reasoning` (different provider, not affected).
