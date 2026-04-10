@@ -21,6 +21,9 @@ import { WITNESS_MODELS, type WitnessModelConfig } from '../config/witness-model
 import { parseInvokeOutput, runAcaInvoke } from '../mcp/server.js';
 import type { InvokeResponse, InvokeSafety, InvokeSystemMessage, InvokeUsage } from './executor.js';
 import type { ModelResponseFormat } from '../types/provider.js';
+import { extractFindingsFromMarkdown } from '../review/markdown-adapter.js';
+import { aggregateReviews } from '../review/aggregator.js';
+import { buildReport, renderReportText } from '../review/report.js';
 
 export interface ConsultOptions {
     question?: string;
@@ -90,6 +93,17 @@ interface ConsultResult {
         usage: InvokeUsage | null;
         safety: InvokeSafety | null;
     };
+    structured_review: {
+        status: 'ok';
+        path: string;
+        json_path: string;
+        cluster_count: number;
+        finding_count: number;
+        disagreement_count: number;
+    } | {
+        status: 'error';
+        error: string;
+    } | null;
 }
 
 const TRIAGE_MODEL = 'zai-org/glm-5';
@@ -830,6 +844,41 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
     const successCount = Object.values(witnessResults).filter(result => result.status === 'ok').length;
     const triageableCount = Object.values(witnessResults).filter(result => result.triage_input_path !== null).length;
 
+    // --- Structured review aggregation (M7A.5 pipeline) ---
+    // Runs deterministic Jaccard-clustering aggregation on witness markdown output.
+    // Additive artifact — does not replace or affect the LLM triage pass below.
+    let structuredReview: ConsultResult['structured_review'] = null;
+    try {
+        const reviews = Object.entries(witnessResults)
+            .filter(([, result]) => result.triage_input_path !== null)
+            .map(([name, result]) => {
+                const markdown = readFileSync(result.triage_input_path!, 'utf8');
+                return extractFindingsFromMarkdown(name, result.model, markdown);
+            });
+        if (reviews.length > 0) {
+            const aggregated = aggregateReviews(reviews);
+            const report = buildReport(aggregated, reviews);
+            const reportText = renderReportText(report);
+            const reportPath = join(tmpdir(), `aca-consult-structured-review-${suffix}.md`);
+            const reportJsonPath = join(tmpdir(), `aca-consult-structured-review-${suffix}.json`);
+            writeFileSync(reportPath, reportText, 'utf8');
+            writeFileSync(reportJsonPath, JSON.stringify(report, null, 2), 'utf8');
+            structuredReview = {
+                status: 'ok',
+                path: reportPath,
+                json_path: reportJsonPath,
+                cluster_count: aggregated.clusters.length,
+                finding_count: aggregated.totalFindings,
+                disagreement_count: aggregated.disagreements.length,
+            };
+        }
+    } catch (err) {
+        structuredReview = {
+            status: 'error',
+            error: err instanceof Error ? err.message : String(err),
+        };
+    }
+
     let triage: ConsultResult['triage'] = {
         status: 'skipped',
         model: null,
@@ -915,6 +964,7 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
         } : {}),
         witnesses: witnessResults,
         triage,
+        structured_review: structuredReview,
     };
     writeFileSync(resultPath, JSON.stringify(result, null, 2));
     return result;

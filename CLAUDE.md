@@ -41,6 +41,29 @@ After completing each milestone or substep:
 - Update the handoff doc status (e.g., `docs/handoff-phase0.md` → COMPLETE)
 - Create the next handoff doc if entering a new milestone
 
+## Testing Philosophy (MANDATORY)
+
+**Most tests must be live. Local tests are the minority.**
+
+Live tests run the built `aca` binary against real NanoGPT models and prove actual behavior. Local tests (unit, integration with mocks) are useful but secondary — they can pass while live behavior is broken.
+
+**Rules:**
+- For any runtime-facing change, live validation is required before the work is considered done
+- Run live tests across multiple models (kimi, deepseek, qwen, gemma minimum) — models are volatile and behave differently
+- One live run on one model is not sufficient proof
+- Local test pass is not a completion signal — it is only a sanity check
+- Report live results first; mention local tests second if at all
+
+**Live test format:**
+- Use a temp HOME: `HOME=$(mktemp -d -t aca-<feature>-XXXXXX)`
+- Run the built dist: `node dist/index.js <command>`
+- Write durable artifacts to `/tmp/` with timestamped names
+- Inspect actual model output, not just exit codes
+
+**When local-only tests are acceptable:**
+- Pure deterministic logic with no model dependency (parsers, validators, aggregators)
+- Tests that explicitly mock the provider layer and only test non-model code paths
+
 ## Changelog
 
 `docs/changelog.md` is a living document. After completing any meaningful work (gap resolutions, block definitions, implementation milestones, refactors), append a dated entry summarizing what changed, why, and how.
