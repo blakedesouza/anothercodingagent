@@ -1,7 +1,7 @@
 # C11 Handoff
 
 **Date:** 2026-04-10 (end of session)
-**Status:** C11.1–C11.4 COMPLETE. C11.5 is next.
+**Status:** C11.1–C11.5 COMPLETE. C11.6 is next.
 
 ---
 
@@ -25,8 +25,8 @@ C11.1 → C11.2 → C11.3/4/5/6 (partly parallel) → C11.7
 | C11.2 | Per-model hint infrastructure | **COMPLETE** |
 | C11.3 | Driver fixes for C11.1 P1/P2 failures | **COMPLETE** |
 | C11.4 | Tool description enrichment | **COMPLETE** |
-| C11.5 | Consult surface hardening | **NEXT** |
-| C11.6 | Tool emulation prompt hardening | pending |
+| C11.5 | Consult surface hardening | **COMPLETE** |
+| C11.6 | Tool emulation prompt hardening | **NEXT** |
 | C11.7 | Regression tests + final validation matrix | pending |
 
 **Test count:** 2617 passing, 14 pre-existing live-integration failures (require real API credentials), 1 skipped.
@@ -134,40 +134,49 @@ When fixing a driver/parser bug: fix at the single choke point all calls pass th
 
 ---
 
-## C11.5 — NEXT: Consult Surface Hardening
+## C11.5 — COMPLETE: Consult Surface Hardening
 
-**Goal:** Harden the consult pipeline's prompt surfaces.
+### What was done
 
-### Surfaces to touch
+**Commit:** `c6f1fe8`
 
-| Surface | File | What to change |
-|---------|------|---------------|
-| `buildNoToolsConsultSystemMessages` | `src/cli/consult.ts:407` | Wire model hints using `witness.model` (already passed at call sites from C11.2) |
-| `buildContextRequestPrompt` | `src/consult/context-request.ts:133` | Add a concrete bad-vs-good JSON example to the format instructions — Qwen's deliberation on context-request format was partly caused by ambiguous instructions |
-| `buildTriagePrompt` | (find in consult.ts or consult/) | Harden against false-positive "un-evidenced claim" patterns |
-| `buildFinalizationPrompt` | (find in consult.ts) | Add model hints |
+| Surface | Change |
+|---------|--------|
+| `buildContextRequestPrompt` | Added path-confidence guard to Limits: "Only request paths you are confident exist; ENOENT wastes a context-request slot." — addresses DeepSeek S3 hallucinated-path finding |
+| `buildTriagePrompt` | Added un-evidenced-absence clause: "X is not implemented/absent/missing" without positive source evidence is explicitly classified as a likely false positive, not a consensus finding |
+| `buildFinalizationPrompt` | Added `model?: string` param + `<model_hints>` injection via `getModelHints()` |
+| `buildFinalizationRetryPrompt` | Threaded `model?` through |
+| consult.ts call sites | Both `buildFinalizationPrompt` and `buildFinalizationRetryPrompt` now pass `witness.model` |
+| `buildNoToolsConsultSystemMessages` | Already wired from C11.2 — no changes needed |
 
-### How to approach C11.5
+### Live validation
 
-1. Read `src/cli/consult.ts` and `src/consult/context-request.ts` in full — understand each prompt surface
-2. Read `docs/c11/failure-catalog.md` S3 findings — specifically which witnesses had consult issues
-3. Run a baseline consult: `node dist/index.js consult --question "Should an agent retry tool calls immediately or wait for user input?" --out /tmp/c11-5-baseline.json`
-4. Make changes (start with `buildContextRequestPrompt` — highest impact from C11.1 data)
-5. Run live consult validation (all 4 witnesses, 2+ runs)
-6. Acceptance: zero pseudo-tool-call failures across 6 consult runs
+2 full consult runs (same question as C11.1 S3). Results:
+- All 4 witnesses: 0 tool calls, status ok
+- Triage (glm-5): 0 tool calls, status ok
+- Triage correctly classified kimi/gemma ENOENT-based absence claims as "Likely False Positives" (new guidance working)
+- Acceptance criterion met: zero pseudo-tool-call failures
 
-### What C11.2 already wired for C11.5
+---
 
-`model` is already passed to `buildNoToolsConsultSystemMessages` at all witness call sites in `consult.ts`. `getModelHints()` is ready to use — `MODEL_HINTS` registry just needs entries added if per-model hints are needed. The `<model_hints>` XML block will auto-inject when hints exist.
+## C11.6 — NEXT: Tool Emulation Prompt Hardening
 
-### Key files for C11.5
+**Goal:** Harden `buildToolSchemaPrompt` in `src/providers/tool-emulation.ts` against model-specific anti-patterns.
+
+### Targets
+
+- Add a worked JSON example (good format, bad format) to the tool-call emulation schema prompt
+- Per-model anti-patterns: MiniMax prose interleaved with emulation JSON (S1 P3 from failure catalog)
+
+### Key file
 
 ```
-src/cli/consult.ts            — witness invocation, triage, buildNoToolsConsultSystemMessages
-src/consult/context-request.ts — buildContextRequestPrompt (context-request pass)
-src/prompts/model-hints.ts    — MODEL_HINTS registry (currently empty)
-src/prompts/prompt-guardrails.ts — NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION
+src/providers/tool-emulation.ts    — buildToolSchemaPrompt (line ~24)
 ```
+
+### Acceptance
+
+- 0 tool-schema-format failures across kimi/qwen/deepseek/gemma in a fresh S4-style invoke battery
 
 ---
 

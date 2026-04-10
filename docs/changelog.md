@@ -3194,3 +3194,15 @@ Expanded all 11 tool descriptions from 1-sentence stubs to Anthropic-guideline l
 **Secondary tools** (stat_path, move_path, delete_path, make_directory, find_paths, ask_user) expanded from single sentences to 2-3 sentences covering key behaviors and failure modes.
 
 New test `test/tools/tool-descriptions.test.ts` enforces minimums: 3+ sentences for priority tools, 2+ for all others (16 assertions). 2617 tests passing.
+
+## 2026-04-10 — C11.5: Consult Surface Hardening
+
+Three targeted changes to the consult pipeline's prompt surfaces, driven by C11.1 S3 findings (DeepSeek hallucinated paths, potential triage false-positive promotion):
+
+**`buildContextRequestPrompt`** (`src/consult/context-request.ts`): Added path-confidence guard to the Limits section — witnesses must only request file paths they are confident exist; an ENOENT result wastes one of the context-request slots. Addresses DeepSeek's S3 hallucinated path requests (`src/core/agent/tool-call-handler.ts` etc.).
+
+**`buildTriagePrompt`** (`src/cli/consult.ts`): Added explicit un-evidenced-absence classification. Any witness claim of "X is not implemented / absent / missing" without positive source evidence (quoted code, exact line/file confirmation) is now explicitly classified as a likely false positive, not a consensus finding. Extends the existing missing-file/ENOENT guard to cover the broader pattern.
+
+**`buildFinalizationPrompt` + `buildFinalizationRetryPrompt`** (`src/consult/context-request.ts`): Added `model?: string` param and `<model_hints>` injection via `getModelHints()`. Both call sites in `consult.ts` now pass `witness.model`, so per-model hints apply during the finalization pass where witnesses produce their final report.
+
+Live validated: 2 consult runs, 4 witnesses + triage, 0 tool calls in any pass. Triage correctly promoted kimi/gemma ENOENT-based absence claims to "Likely False Positives" rather than consensus findings. 2617 tests passing.

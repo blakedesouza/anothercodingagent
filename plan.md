@@ -1,5 +1,34 @@
 # Another Coding Agent — Plan
 
+## Current State (2026-04-09, updated)
+
+**C9: COMPLETE (2026-04-10).**
+- C9.1–C9.3: Three prompt tiers + dispatcher live. ✓
+- C9.4: Unit tests complete. 72/72 pass. ✓
+- C9.5 (live matrix): MiniMax ✓, Qwen 397B ✓, GLM-5 ✓. ✓
+- C9.6 (consult pipeline verify): 6/6 consults 4/4 witnesses, Qwen pseudo-tool-call fixed. ✓
+- C9.7 (changelog): Written. ✓
+
+**C10: CLOSED — original premise was wrong; MiniMax passes cleanly.**
+- MiniMax 2.7 passes both file and conceptual tasks (15/15 live). C9 live matrix was tainted by hardcoded Qwen3-Coder-Next default (fixed last session), not by a MiniMax bug.
+- GLM-5 issue discovered and fixed this session: NanoGPT routes `zai-org/glm-5:thinking` to multiple backends with different streaming formats. Root cause: on short-thinking path, GLM-5 attempts native tool calls; `tool_choice:none` blocks them, producing empty content. Fix: strengthened `buildToolSchemaPrompt` in `tool-emulation.ts` — explicit "native API tool calling is NOT available" instruction. Result: 3/15 → 15/15 pass rate.
+- GLM-5 conceptual task: 5/5 pass (no regressions from prompt strengthening). ✓
+
+**Other changes this session:**
+- `[aca] model: <model>` echoed to stderr at start of every invoke path (one-shot + executor).
+- `NANOGPT_DEBUG` request body logging added to `nanogpt-driver.ts` (request summary, tools, tool_choice).
+
+**C11: IN PROGRESS — System Prompt Edge-Case Hardening & Per-Model Tuning.**
+- C11.1 (stress-test battery, baseline): **COMPLETE** — 5 scenarios × 6 models run; docs/c11/failure-catalog.md written. Key findings: (1) DeepSeek `llm.malformed` after 62KB tool results (S4, P1); (2) Qwen `reasoning_content` leaks into invoke results (P2); (3) MiniMax result-narration confirmed (P3). All stall-prone models passed S1; consult pipeline clean (S3).
+- C11.2 (per-model hint infrastructure): **COMPLETE** — `InvokePromptOptions.model?` added; `src/prompts/model-hints.ts` created (`MODEL_HINTS` registry + `getModelHints` prefix-matcher); `<model_hints>` injected into all 3 builders; wired in cli-main.ts, agent-runtime.ts, consult.ts (4 witness call sites). 17 new tests. 2601 passing.
+- C11.3 (driver fixes + preamble strip): **COMPLETE** — DeepSeek emulation protocol fix + Qwen preamble strip at all yield sites
+- C11.4 (tool description enrichment): **COMPLETE** — 3-4 sentence descriptions for 5 priority tools, 2-3 for 6 secondary tools
+- C11.5 (consult surface hardening): **COMPLETE** — buildContextRequestPrompt path-confidence guard; buildTriagePrompt un-evidenced-absence hardening; buildFinalizationPrompt model hints support. Verified: 2 clean consult runs, 0 tool calls across 4 witnesses + triage.
+- C11.6 (tool emulation hardening): **NEXT** — worked JSON example + model-specific anti-patterns in tool-emulation.ts
+- C11.7 (regression tests + validation matrix): pending — structural tests + C11.1 battery re-run
+
+**Next:** C11.6 — tool emulation prompt hardening (worked JSON example, model anti-patterns).
+
 ## Current State (2026-03-30)
 
 **Phase 0: COMPLETE.** Scaffolding + test infrastructure committed (`7f65065`).
@@ -227,7 +256,8 @@ Codex high-severity findings (21) applied to step files. M7 reordered and split 
 
 - `/fundamentals.md` — Complete spec (source of truth)
 - `/docs/changelog.md` — Design decision history
-- `/docs/handoff-phase0.md` — **Phase 0 handoff (START HERE)**
+- `/docs/handoff-c11.md` — **C11 handoff (START HERE)**
+- `/docs/handoff-phase0.md` — Phase 0 handoff (historical)
 - `/docs/handoff.md` — Pre-implementation review handoff (historical)
 - `/docs/handoff-test-audit.md` — Test audit task list (all resolved)
 - `/docs/handoff-m1.6.md` — M1.6 handoff (historical)
@@ -285,7 +315,7 @@ Codex high-severity findings (21) applied to step files. M7 reordered and split 
 - `/docs/handoff-m7.15.md` — M7.15 handoff (historical)
 - `/docs/handoff-m8.3.md` — M8.3 handoff (historical)
 - `/docs/handoff-m9.2.md` — M9.2 handoff (historical)
-- `/docs/handoff-m9.2b.md` — **M9.2b handoff (START HERE)**
+- `/docs/handoff-m9.2b.md` — M9.2b handoff (historical)
 - `/docs/handoff-m9.3.md` — M9.3 handoff (historical)
 - `/docs/handoff-m9.3b.md` — M9.3b handoff (historical)
 - `/docs/handoff-m10.1b.md` — M10.1b handoff (historical)
@@ -293,7 +323,7 @@ Codex high-severity findings (21) applied to step files. M7 reordered and split 
 - `/docs/handoff-m11.3.md` — M11.3 handoff (historical)
 - `/docs/handoff-m11.4.md` — M11.4 handoff (historical)
 - `/docs/handoff-m11.7.md` — M11.7 handoff (historical)
-- `/docs/handoff-m10.2.md` — **M10.2 handoff (START HERE)**
+- `/docs/handoff-m10.2.md` — M10.2 handoff (historical)
 - `/docs/handoff-m9-review.md` — M9 Post-Milestone Review (pending)
 - `/docs/handoff-m7-review.md` — M7 Post-Milestone Review (historical)
 - `/docs/handoff-m4.3.md` — M4.3 handoff (historical)
