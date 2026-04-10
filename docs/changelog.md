@@ -3206,3 +3206,19 @@ Three targeted changes to the consult pipeline's prompt surfaces, driven by C11.
 **`buildFinalizationPrompt` + `buildFinalizationRetryPrompt`** (`src/consult/context-request.ts`): Added `model?: string` param and `<model_hints>` injection via `getModelHints()`. Both call sites in `consult.ts` now pass `witness.model`, so per-model hints apply during the finalization pass where witnesses produce their final report.
 
 Live validated: 2 consult runs, 4 witnesses + triage, 0 tool calls in any pass. Triage correctly promoted kimi/gemma ENOENT-based absence claims to "Likely False Positives" rather than consensus findings. 2617 tests passing.
+
+## 2026-04-10 — C11.5 Post-Session Bug Fixes
+
+Two bugs identified during C11.5 live testing, fixed and committed in the next session.
+
+**evidence-pack.ts — truncation marker wording** (`676f6a0`): Replaced the silent `[truncated]` marker with an actionable message that includes the byte limit value and explicitly instructs witnesses to use `needs_context` with specific line ranges. Previously witnesses had no guidance on how to recover truncated content.
+
+**tool-emulation.ts + nanogpt-driver.ts — preamble strip for no-tools path** (`12d52f4`): Three fixes in `wrapStreamWithPreambleStrip`:
+
+1. **Root cause fix**: NanoGPT driver no-tools else-branch was calling `rawStream` directly, bypassing preamble stripping. Consult witnesses (`allowedTools: []`) received raw Qwen `"Thinking...\n> ..."` blocks. Fix: else-branch now calls `wrapStreamWithPreambleStrip`.
+
+2. **Regex tightening (Kimi flag, Q4)**: `PREAMBLE_RE` changed from `(>.*\n)*` to `(>.*\n)+` requiring at least one blockquote line. The `*` form would strip bare `"Thinking...\n"` from legitimate model content that happens to start with "Thinking...".
+
+3. **Done-before-text ordering bug (Qwen+Kimi flag, Q8)**: The `done` event previously passed through immediately while `decided === false`, causing the cleanup path to yield `text_delta` after `done`. Fix: `heldDone` holds the done event until the prefix buffer is flushed. Verified by code trace (Gemma's "no risk" assessment was incorrect).
+
+Consult: 4/4 witnesses reviewed. Q4 and Q8 bugs flagged by Kimi/Qwen, confirmed by code trace. 2617 tests passing.
