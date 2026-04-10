@@ -13,7 +13,7 @@ import type {
 import { getModelCapabilitiesOrDefaults } from './model-registry.js';
 import type { ModelCatalog } from './model-catalog.js';
 import { parseSSE } from './sse-parser.js';
-import { injectToolsIntoRequest, wrapStreamWithToolEmulation } from './tool-emulation.js';
+import { injectToolsIntoRequest, wrapStreamWithToolEmulation, wrapStreamWithPreambleStrip } from './tool-emulation.js';
 import { DEFAULT_API_TIMEOUT_MS } from '../config/schema.js';
 
 export interface NanoGptDriverOptions {
@@ -134,7 +134,9 @@ export class NanoGptDriver implements ProviderDriver {
         if (needsEmulation) {
             yield* wrapStreamWithToolEmulation(this.rawStream(effectiveRequest));
         } else {
-            yield* this.rawStream(effectiveRequest);
+            // No tools, but still strip model preambles (e.g. Qwen's
+            // "Thinking...\n> ..." thinking blocks) from the raw stream.
+            yield* wrapStreamWithPreambleStrip(this.rawStream(effectiveRequest));
         }
     }
 

@@ -444,6 +444,93 @@ function stripModelPreamble(text: string): string {
     return stripped.length > 0 ? stripped : text;
 }
 
+/**
+ * Streaming-safe preamble stripper for no-tools NanoGPT responses.
+ *
+ * Some models (e.g. Qwen via NanoGPT) emit a "Thinking...\n> ..." thinking
+ * block at the very start of every response, regardless of whether tool
+ * emulation is active. wrapStreamWithToolEmulation handles this for the
+ * tools path, but that wrapper buffers the full response before yielding.
+ * For no-tools requests (e.g. consult witnesses) we need a pass-through that
+ * only buffers during the preamble detection window, then streams normally.
+ *
+ * Algorithm:
+ * - Buffer text_delta events until we can determine whether a preamble is
+ *   present (i.e. until the prefix no longer matches "Thinking...\n> ...")
+ * - If the preamble ends (blank line after blockquote), strip it and emit
+ *   the remainder; stream all subsequent events immediately.
+ * - If the prefix never starts with "Thinking...", emit it immediately and
+ *   stop buffering.
+ * - Safety valve at 8 KiB: stop buffering and emit as-is.
+ * - Non-text events (tool_call_delta, done, error, etc.) always pass through
+ *   immediately regardless of buffer state.
+ */
+// Require at least one blockquote line (>.*\n)+ so bare "Thinking...\n" followed
+// by normal content is not mistakenly treated as a preamble.
+const PREAMBLE_RE = /^Thinking\.\.\.\n(>.*\n)+\n*/;
+const MAX_PREAMBLE_BUFFER = 8_192;
+
+export async function* wrapStreamWithPreambleStrip(
+    inner: AsyncIterable<StreamEvent>,
+): AsyncGenerator<StreamEvent> {
+    let prefix = '';
+    let decided = false;
+    // The `done` event must be held until any buffered prefix is flushed;
+    // emitting `done` before a pending text_delta violates stream order.
+    let heldDone: Extract<StreamEvent, { type: 'done' }> | null = null;
+
+    for await (const event of inner) {
+        if (decided || event.type !== 'text_delta') {
+            if (!decided && event.type === 'done') {
+                // Hold done — flush buffer first (after the loop).
+                heldDone = event;
+                continue;
+            }
+            yield event;
+            continue;
+        }
+
+        prefix += event.text;
+
+        if (!prefix.startsWith('Thinking...')) {
+            // No preamble — emit all buffered text and stop buffering.
+            decided = true;
+            yield { type: 'text_delta', text: prefix };
+            continue;
+        }
+
+        const match = prefix.match(PREAMBLE_RE);
+        if (match) {
+            // Preamble complete — strip it and emit the remainder.
+            decided = true;
+            const remainder = prefix.slice(match[0].length);
+            if (remainder.length > 0) {
+                yield { type: 'text_delta', text: remainder };
+            }
+            continue;
+        }
+
+        if (prefix.length > MAX_PREAMBLE_BUFFER) {
+            // Safety valve — emit verbatim rather than buffer forever.
+            decided = true;
+            yield { type: 'text_delta', text: prefix };
+        }
+        // else: still accumulating the preamble header, keep buffering.
+    }
+
+    // Stream ended while buffering. Strip and emit whatever's left, then
+    // release any held done event so it is always the final yielded event.
+    if (!decided && prefix.length > 0) {
+        const stripped = prefix.replace(PREAMBLE_RE, '');
+        if (stripped.length > 0) {
+            yield { type: 'text_delta', text: stripped };
+        }
+    }
+    if (heldDone) {
+        yield heldDone;
+    }
+}
+
 export async function* wrapStreamWithToolEmulation(
     inner: AsyncIterable<StreamEvent>,
 ): AsyncGenerator<StreamEvent> {
