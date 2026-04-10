@@ -40,6 +40,62 @@ Living record of design and implementation work on Another Coding Agent (ACA). O
 
 ---
 
+## 2026-04-10 — C11.2 Per-Model Hint Infrastructure
+
+Added the wiring needed for model-specific system prompt hints. Zero behavioral change (registry is empty; hints are populated in C11.3).
+
+**New file:** `src/prompts/model-hints.ts`
+- `MODEL_HINTS` — exported `Record<string, string[]>` registry; key is a model ID prefix
+- `getModelHints(modelId)` — prefix-match lookup returning concatenated hints across all matching prefixes
+
+**`src/core/prompt-assembly.ts`**
+- `InvokePromptOptions.model?: string` — new optional field; propagates model ID through all three prompt builders
+- `appendModelHints(lines, model?)` — private helper; appends `<model_hints>` XML block to the lines array when hints exist
+- Injection points:
+  - `buildInvokeSystemMessages` — before closing anchor (last rule always reads last)
+  - `buildAnalyticalSystemMessages` — after `<tool_reference>` block
+  - `buildSynthesisSystemMessages` — after format/no-tools rules
+
+**Call sites wired:**
+- `src/cli-main.ts:invoke` — passes `effectiveModel`
+- `src/delegation/agent-runtime.ts` — passes `payload.profile.defaultModel ?? options.model`
+- `src/cli/consult.ts:buildNoToolsConsultSystemMessages` — new `model?` parameter; 4 witness call sites pass `witness.model`; triage/shared_context leave model undefined (selected at runtime by fallback chain)
+
+**Tests:** `test/prompts/model-hints.test.ts` — 17 new tests covering `getModelHints` prefix-matching behavior and structural `<model_hints>` injection across all 3 builders. 2601 total tests passing.
+
+---
+
+## 2026-04-10 — C11.1 Stress-Test Battery (Baseline Failure Catalog)
+
+Ran 14 live scenario runs (5 scenarios × 6 models) as baseline for C11 prompt hardening. No code changes. Results in `docs/c11/failure-catalog.md`.
+
+### What passed (no intervention needed)
+- **Stall discipline (S1):** kimi, qwen, minimax all called tools immediately and completed the read→edit→verify task. Anti-pattern example in `buildInvokeSystemMessages` is working.
+- **Tool-use bias (S2):** deepseek, qwen, gemma all answered a pure-knowledge question with 0 tool calls.
+- **No-tools consult (S3):** All 4 witnesses (deepseek, kimi, qwen, gemma) + glm-5 triage — 0 tool calls, no tool markup. `NO_PROTOCOL_DELIBERATION` fix from C9.6 still holding.
+- **Parallel reads (S4):** kimi and qwen issued all 3 `read_file` calls in a single turn.
+- **Error recovery (S5):** kimi, qwen, gemma all explained a `ENOENT` error gracefully without stalling or retrying the same path.
+
+### New findings
+
+**P1 — DeepSeek `llm.malformed` after large tool results (S4):**
+DeepSeek issued 3 parallel reads (62,402 bytes of tool results) correctly, then returned an empty response → `llm.malformed` (`retryable: true`). The invoke aborted. This failure mode was never triggered before because deepseek was only tested on conceptual/small-context tasks. Likely a context-window or generation-threshold issue at the 62KB tool-results boundary.
+
+**P2 — Qwen `reasoning_content` leaks into invoke results:**
+The C9 fix (`commit c53a77d`) to capture `delta.reasoning_content` as `text_delta` in `nanogpt-driver.ts` is correct for preserving thinking in REPL but also flows through to the invoke `result` string verbatim. Every Qwen response in invoke mode is now prefixed with:
+```
+Thinking...
+> The user is asking... According to my tool_policy, I should answer...
+>
+```
+Affects witness and coder profile invocations. The fix was right; what's missing is a downstream strip of the preamble before populating `result`.
+
+### Known findings confirmed
+- **MiniMax result-narration (P3):** Model writes its task-planning process as literal output text ("The user wants me to: 1. read_file..."). Required 3 edit attempts on S1 but completed correctly.
+- **DeepSeek context-request hallucination (P4, minor):** Requested 3 non-existent files during consult context-request phase; final answer clean.
+
+---
+
 ## 2026-04-06 — Gemma Parallel Tool-Call Index Collision Fix (unblocks M10.3)
 
 A latent provider-conformance bug in `TurnEngine.normalizeStreamEvents` was triggering `tool.validation: Malformed JSON in tool call arguments` failures on the NanoGPT `google/gemma-4-31b-it` model, causing 3-strike `llm.confused` → `tool_error` outcomes whenever gemma decided to call tools in parallel. The bug was hidden until the post-`--json`-fix consult run finally exposed it. M10.3 was blocked because witness reviews wanted gemma in the panel.
@@ -2944,3 +3000,185 @@ Tool emulation (`wrapStreamWithToolEmulation`) and turn engine (`normalizeStream
 **New test:** `test/providers/nanogpt-driver.test.ts` — "captures delta.reasoning as text_delta (GLM ZhipuAI format)"
 
 **Live validation:** `zai-org/glm-5:thinking` with `read_file` tool use — 5/5 consecutive passes (was intermittently failing before fix). 210 unit tests pass.
+
+## 2026-04-09 — C9: Per-Profile Prompt Tiers + DeepSeek Tool-Use Bias Fix
+
+### Problem
+All delegated agents (coder, witness, triage, etc.) received the same aggressive `buildInvokeSystemMessages()` system prompt regardless of role. The prompt contains three stacked tool-use mandates designed for coding agents doing multi-step file operations. When applied to analytical roles (witness, reviewer) or synthesis roles (triage), it caused models — especially deepseek/deepseek-v3.2 — to call tools unconditionally, producing `llm.malformed` failures and unnecessary tool use on conceptual questions.
+
+### Root Cause — Three Stacked Instructions
+1. **`<tool_preambles>`**: "When tools are available, that restatement must be immediately followed by tool calls" — fires even when the task doesn't require tools
+2. **`<mode>`**: "A response containing only text ENDS THE CONVERSATION IMMEDIATELY" — deepseek reaches legitimate task completion, wants to produce final summary, but has no valid exit path → produces empty/malformed response
+3. **`<persistence>`**: "Never stop when you encounter uncertainty — research using your tools" — no qualifier for when work is actually done
+
+### Fix: Three Prompt Tiers
+
+**`agentic`** — full tool mandate. For profiles doing multi-step file ops: `general`, `coder`, `rp-researcher`.
+**`analytical`** — conditional tool policy ("use tools only when task requires files/commands; answer conceptual questions directly"). For: `researcher`, `reviewer`, `witness`.
+**`synthesis`** — no tools, text-only output. For: `triage`.
+
+New builders in `src/core/prompt-assembly.ts`:
+- `buildAnalyticalSystemMessages()` — omits `<mode>` and `<persistence>` blocks entirely
+- `buildSynthesisSystemMessages()` — no-tool mandate with profile injection
+- `buildSystemMessagesForTier(tier, options)` — dispatcher
+
+The three agentic-tier mandates were also softened with explicit qualifiers:
+- `<tool_preambles>`: "when the task requires tools" (not "when tools are available")
+- `<mode>`: "ONLY valid text-only = final summary after all work done" (not categorical text = death)
+- `<persistence>`: "applies while work remains; once done, produce your final summary"
+
+### Files Modified
+- `src/types/agent.ts` — added `PromptTier` type, `promptTier?` field to `AgentProfile`
+- `src/delegation/agent-registry.ts` — tier assignments for all 7 profiles
+- `src/core/prompt-assembly.ts` — two new builders + dispatcher + agentic tier softening
+- `src/delegation/agent-runtime.ts` — routes to `buildSystemMessagesForTier()`
+- `src/cli-main.ts` — routes to `buildSystemMessagesForTier()` in invoke path
+
+### Live Validation
+| Model | Profile | Task | Tools | Outcome |
+|-------|---------|------|-------|---------|
+| deepseek/deepseek-v3.2 | coder | file-read | 1 | ✓ |
+| deepseek/deepseek-v3.2 | coder | conceptual | 0 | ✓ |
+| deepseek/deepseek-v3.2 | witness | conceptual | 0 | ✓ |
+| zai-org/glm-5:thinking | coder | file-read | 1 | ✓ |
+| zai-org/glm-5:thinking | coder | conceptual | 0 | ✓ |
+| qwen/qwen3.5-397b-a17b | coder | file-read | 1 | ✓ |
+| qwen/qwen3.5-397b-a17b | coder | conceptual | 0 | ✓ |
+| minimax/minimax-m2.7 | coder | conceptual | 0 | ✓ |
+| minimax/minimax-m2.7 | coder | file-read | 0 | ⚠ (see C10) |
+
+### Deferred
+- **C9.4**: Unit tests for `buildAnalyticalSystemMessages`, `buildSynthesisSystemMessages`, `buildSystemMessagesForTier` — bookmarked
+- **C9.5/C9.6/C9.7**: Full live matrix, consult pipeline verification, changelog — pending
+
+### C10 Finding: MiniMax Tool Emulation Parsing Bug
+MiniMax 2.7 emits prose and JSON tool call syntax interleaved in one stream. The path argument gets prose text embedded mid-string. ACA's tool emulation parser can't extract a clean call — the call never executes. Model intent is correct (it tries to call `read_file`) but format is incompatible with current emulation strategies. Separate investigation required.
+
+---
+
+## 2026-04-09 — C9.4: Prompt Tier Unit Tests
+
+Added 72 unit tests covering all three new prompt-assembly builders:
+- `buildAnalyticalSystemMessages` — confirms tool policy presence, absence of `<mode>` and `<persistence>` blocks
+- `buildSynthesisSystemMessages` — confirms no-tool mandate, absence of tool definitions
+- `buildSystemMessagesForTier` — confirms correct routing for all three tier values plus undefined default
+
+Also added C9 regression assertions that softened qualifiers (`when the task requires tools`, `ONLY valid text-only`) are present in the agentic tier output and the hard categorical strings are gone.
+
+---
+
+## 2026-04-09 — C9.5: Live Matrix Re-Validation + GLM-5 Emulation Prompt Fix
+
+Re-ran the full live matrix with all three tiers to verify correctness across models after the C9 prompt changes.
+
+### GLM-5 Bug Discovered and Fixed
+
+`zai-org/glm-5:thinking` routes across multiple NanoGPT backends with different streaming behaviors. On the short-thinking path, GLM-5 attempted native API function calls. Because `tool_choice: none` was set, these were silently blocked — the model produced no content, ACA received empty assistant parts, and the turn ended as `llm.malformed`.
+
+**Fix**: strengthened `buildToolSchemaPrompt` in `src/providers/tool-emulation.ts` with an explicit "Native/API-level function calling is NOT available in this session" instruction. Result: GLM-5 pass rate 3/15 → 15/15.
+
+### Matrix Results After Fix
+| Model | Coder (file) | Coder (conceptual) | Witness (conceptual) |
+|---|---|---|---|
+| deepseek/deepseek-v3.2 | ✓ | ✓ | ✓ |
+| qwen/qwen3.5-397b-a17b | ✓ | ✓ | ✓ |
+| zai-org/glm-5:thinking | ✓ | ✓ | ✓ |
+| minimax/minimax-m2.7 | ✓ | ✓ | ✓ |
+
+### Other Changes This Session
+- `[aca] model: <model>` echoed to stderr at start of every invoke path (one-shot + executor) for diagnostics.
+- `NANOGPT_DEBUG` env var added to `nanogpt-driver.ts` — when set, logs the request body summary (model, tools count, tool_choice) to stderr. Intentionally retained as permanent toggleable debug tooling.
+
+---
+
+## 2026-04-10 — C9.6: Consult Pipeline Verification + Qwen Pseudo-Tool-Call Fix
+
+### What Was Verified
+
+End-to-end `aca consult` pipeline confirmed working: context-request witness pass → triage (GLM-5) → structured review artifacts. All runs exit 0.
+
+### Qwen Pseudo-Tool-Call Root Cause (Two Simultaneous Issues)
+
+Pre-fix: `qwen/qwen3.5-397b-a17b` failed 2/6 consult runs with `"pseudo-tool call emitted in no-tools context-request pass"`.
+
+1. **Token budget exhaustion on chain-of-thought**: Qwen3.5's thinking burns ~2100 tokens deliberating over which JSON response format to use (simple `needs_context` vs structured `action` form). The thinking chain terminates mid-thought — no actual answer produced.
+
+2. **False positive on `containsPseudoToolCall`**: The thinking chain is emitted as `> `-prefixed blockquote lines. It quotes the prompt's own invalid-example list verbatim (e.g. `<tool_call>`, `<function_calls>`), which matched the detector regex even though Qwen was not attempting a real tool call.
+
+Raw evidence: `/tmp/aca-consult-qwen-context-request-*` files from the failing runs.
+
+### Fix: `src/prompts/prompt-guardrails.ts` (New File)
+
+Replaced `src/prompts/no-native-tools.ts` (deleted) with a broader shared constants file:
+
+```ts
+export const NO_NATIVE_FUNCTION_CALLING =
+    'Native/API-level function calling is NOT available in this session.\n' +
+    'Attempting a native API function call will produce no result — it will not execute and your task will fail silently.';
+
+export const NO_PROTOCOL_DELIBERATION =
+    'Do not deliberate over the protocol or output format in your response.\n' +
+    'Read the instructions once, decide, and produce your answer.';
+```
+
+Both constants injected into all 7 no-tools surfaces across 4 files:
+
+| File | Surface |
+|---|---|
+| `src/providers/tool-emulation.ts` | `buildToolSchemaPrompt` |
+| `src/consult/context-request.ts` | `buildContextRequestPrompt` |
+| `src/consult/context-request.ts` | `buildSharedContextRequestPrompt` |
+| `src/consult/context-request.ts` | `buildFinalizationPrompt` |
+| `src/cli/consult.ts` | `buildNoToolsConsultSystemMessages` |
+| `src/cli/consult.ts` | triage prompt (`buildTriagePrompt`) |
+| `src/core/prompt-assembly.ts` | `buildSynthesisSystemMessages` |
+
+Format disambiguation also added to `buildContextRequestPrompt`:
+> "When in doubt, prefer the simple needs_context form. The structured action form is only required if ACA explicitly signals structured output for this request."
+
+`stripMarkdownBlockquotes` added to `containsPseudoToolCall` in `src/consult/context-request.ts` — strips `> `-prefixed lines before running the regex, eliminating false positives from thinking-model chains that quote prompt examples.
+
+### C10 Closed (Tainted Premise)
+
+The original C10 finding (MiniMax tool emulation parsing bug) was traced back to a session where the live matrix used a hardcoded `qwen/qwen3-coder-next` default instead of MiniMax. Re-run with the correct model showed MiniMax 2.7 passes 15/15. C10 closed; no fix required.
+
+### Validation (6 Consults, 2 Batches)
+
+All 6 runs: 4/4 witnesses, `degraded=false`, Qwen clean, zero guardrails fired. Questions spanned easy → hard difficulty.
+
+| Run | Topic | Difficulty | Success |
+|-----|-------|-----------|---------|
+| Q1 | ULIDs vs UUIDs | Easy | 4/4 |
+| Q2 | Partial tool call error handling | Medium | 4/4 |
+| Q3 | Context window management strategy | Hard | 4/4 |
+| Q4 | Idle vs hard deadline timeout | Easy | 4/4 |
+| Q5 | Sub-agent permission escalation | Medium | 4/4 |
+| Q6 | JSONL replay attack defenses | Hard | 4/4 |
+
+Previous session (before `NO_PROTOCOL_DELIBERATION` + `stripMarkdownBlockquotes`): 2/6 Qwen failures, both on harder questions. Post-fix: 0/6 failures across all difficulties.
+
+**C9 complete.**
+
+---
+
+## 2026-04-10 — C11.3: Qwen Reasoning Preamble Strip + DeepSeek Emulation Protocol Fix
+
+### Investigation
+
+NANOGPT_DEBUG=1 re-runs of C11.1 failures (S2/Qwen, S4/DeepSeek) revealed both P1/P2 root causes were driver bugs, not addressable by prompt changes.
+
+**Qwen P2:** Chain-of-thought arrives in `delta.content` as `Thinking...\n> ...` markdown blockquote (NanoGPT proxy strips `delta.reasoning_content` and re-emits it inline). The `wrapStreamWithToolEmulation` no-tool-calls path yielded this verbatim.
+
+**DeepSeek P1 (corrected diagnosis):** NOT a context-size issue. Emulated tool calls stored as `ToolCallPart` items were being re-serialized as native `tool_calls` in turn-2 requests — despite `tools: null` in the schema. DeepSeek responded with native function calls; NanoGPT rejected them (`malformed_tool_call` 502).
+
+### Fixes
+
+**`src/providers/tool-emulation.ts`** — strip `/^Thinking\.\.\.\n(>.*\n)*\n*/` from buffered text before yielding on the no-tool-calls path.
+
+**`src/providers/nanogpt-driver.ts`** — add `isEmulationMode` check (`!request.tools || request.tools.length === 0`). In emulation mode: re-serialize `ToolCallPart` as emulation JSON text; convert `role: 'tool'` → `role: 'user'` (drop `tool_call_id`).
+
+### Verification
+
+- S2 Qwen re-run: result starts directly with answer, no preamble.
+- S4 DeepSeek re-run: `status: success`, correct 3-file synthesis, turn-2 clean.
+- 2601 tests passing.
