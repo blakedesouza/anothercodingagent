@@ -3182,3 +3182,15 @@ NANOGPT_DEBUG=1 re-runs of C11.1 failures (S2/Qwen, S4/DeepSeek) revealed both P
 - S2 Qwen re-run: result starts directly with answer, no preamble.
 - S4 DeepSeek re-run: `status: success`, correct 3-file synthesis, turn-2 clean.
 - 2601 tests passing.
+
+---
+
+## 2026-04-10 — C11.4: Tool Description Enrichment
+
+Expanded all 11 tool descriptions from 1-sentence stubs to Anthropic-guideline length (3-4 sentences for priority tools, 2-3 for secondary).
+
+**Priority tools** (read_file, edit_file, exec_command, search_text, write_file) now document: line/byte limits, binary detection, atomic operation semantics, head+tail truncation, timeout override, glob filtering, exact vs regex modes, create vs overwrite modes, and cross-tool guidance (e.g. prefer edit_file over write_file for targeted changes).
+
+**Secondary tools** (stat_path, move_path, delete_path, make_directory, find_paths, ask_user) expanded from single sentences to 2-3 sentences covering key behaviors and failure modes.
+
+New test `test/tools/tool-descriptions.test.ts` enforces minimums: 3+ sentences for priority tools, 2+ for all others (16 assertions). 2617 tests passing.

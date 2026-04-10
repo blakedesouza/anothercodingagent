@@ -33,8 +33,8 @@ C11.1 → C11.2 → C11.3/4/5/6 (partly parallel) → C11.7
 | C11.1 | Stress-test battery baseline (no code changes) | **COMPLETE** |
 | C11.2 | Per-model hint infrastructure | **COMPLETE** |
 | C11.3 | Driver fixes for P1/P2 failures | **COMPLETE** |
-| C11.4 | Tool description enrichment | **NEXT** |
-| C11.5 | Consult surface hardening | pending |
+| C11.4 | Tool description enrichment | **COMPLETE** |
+| C11.5 | Consult surface hardening | **NEXT** |
 | C11.6 | Tool emulation prompt hardening | pending |
 | C11.7 | Regression tests + final validation matrix | pending |
 
