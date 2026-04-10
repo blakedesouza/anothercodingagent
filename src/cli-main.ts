@@ -1467,9 +1467,10 @@ program
     .option('--pack-max-files <n>', 'Maximum evidence-pack files', value => Number(value), 5)
     .option('--pack-max-file-bytes <n>', 'Maximum bytes per packed file', value => Number(value), 8_000)
     .option('--pack-max-total-bytes <n>', 'Maximum total evidence-pack bytes', value => Number(value), 240_000)
-    .option('--max-context-snippets <n>', 'Maximum witness-requested snippets', value => Number(value), 3)
-    .option('--max-context-lines <n>', 'Maximum lines per witness-requested snippet', value => Number(value), 120)
-    .option('--max-context-bytes <n>', 'Maximum bytes per witness-requested snippet', value => Number(value), 8_000)
+    .option('--max-context-snippets <n>', 'Maximum witness-requested snippets per round', value => Number(value), 8)
+    .option('--max-context-lines <n>', 'Maximum lines per witness-requested snippet', value => Number(value), 300)
+    .option('--max-context-bytes <n>', 'Maximum bytes per witness-requested snippet', value => Number(value), 24_000)
+    .option('--max-context-rounds <n>', 'Maximum context-request rounds per witness before forced finalization', value => Number(value), 3)
     .option('--shared-context', 'Use a scout model to select shared raw snippets before witness invocation', false)
     .option('--shared-context-model <model>', 'Scout model for --shared-context', 'zai-org/glm-5')
     .option('--shared-context-max-snippets <n>', 'Maximum shared raw snippets selected by the scout', value => Number(value), 8)
@@ -1490,6 +1491,7 @@ program
         maxContextSnippets: number;
         maxContextLines: number;
         maxContextBytes: number;
+        maxContextRounds: number;
         sharedContext: boolean;
         sharedContextModel: string;
         sharedContextMaxSnippets: number;
