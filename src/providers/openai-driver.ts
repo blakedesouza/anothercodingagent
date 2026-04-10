@@ -190,6 +190,13 @@ export class OpenAiDriver implements ProviderDriver {
                     yield { type: 'text_delta' as const, text: delta.content };
                 }
 
+                // Reasoning/thinking models (DeepSeek R1, OpenAI o-series) emit chain-of-thought
+                // in delta.reasoning_content rather than delta.content. Capture as text so the
+                // response is not considered empty and thinking output is preserved.
+                if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
+                    yield { type: 'text_delta' as const, text: delta.reasoning_content };
+                }
+
                 const toolCalls = delta.tool_calls as Array<Record<string, unknown>> | undefined;
                 if (toolCalls) {
                     for (const tc of toolCalls) {

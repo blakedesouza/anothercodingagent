@@ -275,6 +275,61 @@ describe('M5.1 — OpenAI Driver', () => {
             expect(errorEvents).toHaveLength(0);
         }, 10_000);
 
+        it('captures delta.reasoning_content as text_delta (thinking-only response)', async () => {
+            // Reasoning models (DeepSeek R1, o-series) emit thinking in reasoning_content,
+            // not content. A reasoning-only response must not trigger the empty-response guard.
+            const chunk = JSON.stringify({
+                id: 'test', object: 'chat.completion.chunk',
+                choices: [{ index: 0, delta: { reasoning_content: 'Let me think...' }, finish_reason: null }],
+            });
+            const done = JSON.stringify({
+                id: 'test', object: 'chat.completion.chunk',
+                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+                usage: { prompt_tokens: 10, completion_tokens: 5 },
+            });
+            server.addResponse({ type: 'raw_stream', rawBody: `data: ${chunk}\n\ndata: ${done}\n\ndata: [DONE]\n\n` });
+
+            const events = await collectEvents(driver.stream(makeRequest()));
+
+            const textDeltas = events.filter(e => e.type === 'text_delta');
+            expect(textDeltas.length).toBeGreaterThan(0);
+            const fullText = textDeltas.map(e => e.type === 'text_delta' ? e.text : '').join('');
+            expect(fullText).toBe('Let me think...');
+
+            const errorEvents = events.filter(e => e.type === 'error');
+            expect(errorEvents).toHaveLength(0);
+        });
+
+        it('captures both delta.reasoning_content and delta.content when both present', async () => {
+            const thinkChunk = JSON.stringify({
+                id: 'test', object: 'chat.completion.chunk',
+                choices: [{ index: 0, delta: { reasoning_content: '<think>' }, finish_reason: null }],
+            });
+            const answerChunk = JSON.stringify({
+                id: 'test', object: 'chat.completion.chunk',
+                choices: [{ index: 0, delta: { content: 'The answer is 42.' }, finish_reason: null }],
+            });
+            const done = JSON.stringify({
+                id: 'test', object: 'chat.completion.chunk',
+                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+                usage: { prompt_tokens: 10, completion_tokens: 8 },
+            });
+            const rawBody = `data: ${thinkChunk}\n\ndata: ${answerChunk}\n\ndata: ${done}\n\ndata: [DONE]\n\n`;
+            server.addResponse({ type: 'raw_stream', rawBody });
+
+            const events = await collectEvents(driver.stream(makeRequest()));
+
+            const fullText = events
+                .filter(e => e.type === 'text_delta')
+                .map(e => e.type === 'text_delta' ? e.text : '').join('');
+            expect(fullText).toBe('<think>The answer is 42.');
+
+            const errorEvents = events.filter(e => e.type === 'error');
+            expect(errorEvents).toHaveLength(0);
+        });
+    });
+
+    describe('stream() — timeout', () => {
         it('times out when stream goes silent mid-response', async () => {
             const chunk = JSON.stringify({
                 id: 'mock-chunk',

@@ -212,7 +212,15 @@ export class AnthropicDriver implements ProviderDriver {
                         if (partialJson !== undefined) {
                             yield { type: 'tool_call_delta' as const, index, arguments: partialJson };
                         }
+                    } else if (deltaType === 'thinking_delta') {
+                        // Extended thinking — chain-of-thought streamed before the final answer.
+                        // Captured as text so the response is not considered empty.
+                        const thinking = delta?.thinking as string | undefined;
+                        if (thinking && thinking.length > 0) {
+                            yield { type: 'text_delta' as const, text: thinking };
+                        }
                     }
+                    // signature_delta carries an integrity hash — no StreamEvent needed.
                 } else if (eventType === 'message_delta') {
                     const delta = parsed.delta as Record<string, unknown> | undefined;
                     if (delta?.stop_reason) {
@@ -295,6 +303,12 @@ export class AnthropicDriver implements ProviderDriver {
                 description: t.description,
                 input_schema: t.parameters,
             }));
+        }
+
+        if (request.thinking?.type === 'enabled') {
+            // budget_tokens must be less than max_tokens; default to half.
+            const budget = Math.floor(request.maxTokens / 2);
+            body.thinking = { type: 'enabled', budget_tokens: budget };
         }
 
         return body;

@@ -618,6 +618,101 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             expect(body.response_format).toBeUndefined();
         });
     });
+
+    // --- stream(): reasoning/thinking tokens (C8) ---
+
+    describe('stream() — reasoning_content (thinking models)', () => {
+        function makeReasoningChunk(reasoningContent: string): string {
+            return JSON.stringify({
+                id: 'test', object: 'chat.completion.chunk',
+                choices: [{ index: 0, delta: { reasoning_content: reasoningContent }, finish_reason: null }],
+            });
+        }
+
+        function makeContentChunk(content: string): string {
+            return JSON.stringify({
+                id: 'test', object: 'chat.completion.chunk',
+                choices: [{ index: 0, delta: { content }, finish_reason: null }],
+            });
+        }
+
+        function makeDoneChunk(inputTokens = 10, outputTokens = 5): string {
+            return JSON.stringify({
+                id: 'test', object: 'chat.completion.chunk',
+                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+                usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens },
+            });
+        }
+
+        it('captures delta.reasoning_content as text_delta (reasoning-only response)', async () => {
+            // Thinking-only response: model emits only reasoning_content, no content.
+            // Must NOT trigger the empty-response guard (llm.malformed).
+            const rawBody = [
+                `data: ${makeReasoningChunk('Let me think...')}`,
+                `data: ${makeDoneChunk()}`,
+                'data: [DONE]',
+            ].join('\n\n') + '\n\n';
+            server.addResponse({ type: 'raw_stream', rawBody });
+
+            const events = await collectEvents(driver.stream(makeRequest()));
+
+            const textDeltas = events.filter(e => e.type === 'text_delta');
+            expect(textDeltas.length).toBeGreaterThan(0);
+            const fullText = textDeltas.map(e => e.type === 'text_delta' ? e.text : '').join('');
+            expect(fullText).toBe('Let me think...');
+
+            const errorEvents = events.filter(e => e.type === 'error');
+            expect(errorEvents).toHaveLength(0);
+        });
+
+        it('captures both reasoning_content and content when both present in stream', async () => {
+            const rawBody = [
+                `data: ${makeReasoningChunk('<think>reasoning here</think>')}`,
+                `data: ${makeContentChunk('The answer is 42.')}`,
+                `data: ${makeDoneChunk()}`,
+                'data: [DONE]',
+            ].join('\n\n') + '\n\n';
+            server.addResponse({ type: 'raw_stream', rawBody });
+
+            const events = await collectEvents(driver.stream(makeRequest()));
+
+            const fullText = events
+                .filter(e => e.type === 'text_delta')
+                .map(e => e.type === 'text_delta' ? e.text : '').join('');
+            expect(fullText).toBe('<think>reasoning here</think>The answer is 42.');
+
+            const errorEvents = events.filter(e => e.type === 'error');
+            expect(errorEvents).toHaveLength(0);
+        });
+
+        it('reasoning preamble does not corrupt tool emulation JSON parsing', async () => {
+            // Thinking model emits reasoning first, then tool call JSON.
+            // wrapStreamWithToolEmulation treats reasoning as preamble text,
+            // then correctly extracts the tool call JSON that follows.
+            const toolCallJson = JSON.stringify({
+                tool_calls: [{ name: 'read_file', arguments: { path: '/tmp/x.txt' } }],
+            });
+            const rawBody = [
+                `data: ${makeReasoningChunk('I should read the file.')}`,
+                `data: ${makeContentChunk(toolCallJson)}`,
+                `data: ${makeDoneChunk()}`,
+                'data: [DONE]',
+            ].join('\n\n') + '\n\n';
+            server.addResponse({ type: 'raw_stream', rawBody });
+
+            const request = makeRequest({
+                tools: [{ name: 'read_file', description: 'Read a file', parameters: { type: 'object' as const, properties: { path: { type: 'string' } }, required: ['path'] } }],
+            });
+            const events = await collectEvents(driver.stream(request));
+
+            // Tool call extracted despite reasoning preamble
+            const toolCallDeltas = events.filter(e => e.type === 'tool_call_delta');
+            expect(toolCallDeltas.length).toBeGreaterThan(0);
+
+            const errorEvents = events.filter(e => e.type === 'error');
+            expect(errorEvents).toHaveLength(0);
+        });
+    });
 });
 
 // --- M11.2: ModelCatalog integration ---

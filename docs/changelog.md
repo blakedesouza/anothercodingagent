@@ -2881,3 +2881,47 @@ Fixed three bugs preventing tool execution in delegated ACA sessions (via `aca i
 **Fix (`src/providers/nanogpt-driver.ts`):** Added `delta.reasoning_content` capture alongside `delta.content`. When both are present, both are emitted as `text_delta`. This ensures thinking-model responses are never treated as empty.
 
 **Verified:** Alibaba Cloud Model Studio streaming docs confirm `reasoning_content` is the correct field for Qwen3. Ollama uses `reasoning` (different provider, not affected).
+
+---
+
+## 2026-04-09 — C8: LLM Response Ingestion Audit (Thinking Tokens)
+
+Systematic audit of the full LLM response ingestion pipeline following the reactive Qwen3 `reasoning_content` fix. Goal: harden all three drivers against thinking/reasoning token formats proactively.
+
+### Findings (C8.1 baseline)
+
+| Driver | Format | Status before C8 |
+|--------|--------|-----------------|
+| nanogpt-driver | `delta.reasoning_content` | Fixed in previous session |
+| openai-driver | `delta.reasoning_content` | Silently dropped — **missing** |
+| native (claude) driver | `content_block_delta / thinking_delta` | Silently dropped — **missing** |
+| native (claude) driver | `thinking` request param | Never sent to API — **missing** |
+
+Tool emulation (`wrapStreamWithToolEmulation`) and turn engine (`normalizeStreamEvents`) were confirmed correct — thinking-as-text flows through both without changes.
+
+### Fixes applied
+
+**`src/providers/openai-driver.ts`** — Added `delta.reasoning_content` capture after `delta.content` block (same pattern as nanogpt-driver fix). Prevents `llm.malformed` on DeepSeek R1 and o-series models routed through the OpenAI driver.
+
+**`src/providers/anthropic-driver.ts`** — Two fixes:
+1. Added `thinking_delta` branch in `content_block_delta` handler. Driver declared `claude-extended-thinking` as a supported extension but silently dropped thinking blocks. Now captured as `text_delta`.
+2. `buildRequestBody` now sends `thinking: { type: 'enabled', budget_tokens: maxTokens/2 }` when `request.thinking.type === 'enabled'`. Was previously ignored.
+
+`signature_delta` events (integrity hashes emitted after thinking blocks) are explicitly ignored — no StreamEvent emitted.
+
+### Tests added (10 new, 209 total in providers/)
+
+- `openai-driver.test.ts`: reasoning-only response, mixed reasoning+content
+- `anthropic-driver.test.ts` (native): thinking_delta only, thinking+text, signature_delta ignored, request body with thinking enabled, request body without thinking
+- `nanogpt-driver.test.ts`: reasoning-only, mixed, reasoning preamble + tool emulation (tool call extracted correctly despite thinking preamble)
+
+### Live validation (C8.5/C8.6 — NanoGPT)
+
+| Model | Type | Text | Tool use |
+|-------|------|------|----------|
+| moonshotai/kimi-k2.5 | no thinking | ✓ | — |
+| deepseek/deepseek-v3.2 | no thinking | ✓ | — |
+| qwen/qwen3-coder | thinking | ✓ | ✓ |
+| qwen3.5-27b:thinking | thinking | ✓ | — |
+
+**C8.6 tool-use result:** `qwen/qwen3-coder` given a workspace with a buggy `math.py` (subtraction instead of addition). Model emitted thinking tokens, called `read_file`, called `edit_file`, produced correct final response. File was fixed correctly. Tool emulation handled the thinking preamble transparently.

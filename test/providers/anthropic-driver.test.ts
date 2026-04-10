@@ -297,6 +297,105 @@ describe('M5.1 — Anthropic Driver', () => {
         });
     });
 
+    // --- stream(): thinking content blocks (C8) ---
+
+    describe('stream() — thinking content blocks', () => {
+        function makeAnthropicSSE(events: Array<{ event: string; data: unknown }>): string {
+            return events.map(e => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n`).join('\n') + '\n';
+        }
+
+        it('captures thinking_delta as text_delta events', async () => {
+            const rawBody = makeAnthropicSSE([
+                { event: 'message_start', data: { type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', content: [], model: 'claude-test', stop_reason: null, usage: { input_tokens: 10, output_tokens: 0 } } } },
+                { event: 'content_block_start', data: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } } },
+                { event: 'content_block_delta', data: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Let me think step by step...' } } },
+                { event: 'content_block_stop', data: { type: 'content_block_stop', index: 0 } },
+                { event: 'message_delta', data: { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 8 } } },
+                { event: 'message_stop', data: { type: 'message_stop' } },
+            ]);
+            server.addResponse({ type: 'raw_stream', rawBody });
+
+            const events = await collectEvents(driver.stream(makeRequest()));
+
+            const textDeltas = events.filter(e => e.type === 'text_delta');
+            expect(textDeltas.length).toBeGreaterThan(0);
+            const fullText = textDeltas.map(e => e.type === 'text_delta' ? e.text : '').join('');
+            expect(fullText).toBe('Let me think step by step...');
+
+            const errorEvents = events.filter(e => e.type === 'error');
+            expect(errorEvents).toHaveLength(0);
+        });
+
+        it('captures thinking block followed by text block — both preserved', async () => {
+            const rawBody = makeAnthropicSSE([
+                { event: 'message_start', data: { type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', content: [], model: 'claude-test', stop_reason: null, usage: { input_tokens: 10, output_tokens: 0 } } } },
+                { event: 'content_block_start', data: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } } },
+                { event: 'content_block_delta', data: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '<reasoning>' } } },
+                { event: 'content_block_stop', data: { type: 'content_block_stop', index: 0 } },
+                { event: 'content_block_start', data: { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } } },
+                { event: 'content_block_delta', data: { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'The answer is 42.' } } },
+                { event: 'content_block_stop', data: { type: 'content_block_stop', index: 1 } },
+                { event: 'message_delta', data: { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 15 } } },
+                { event: 'message_stop', data: { type: 'message_stop' } },
+            ]);
+            server.addResponse({ type: 'raw_stream', rawBody });
+
+            const events = await collectEvents(driver.stream(makeRequest()));
+
+            const fullText = events
+                .filter(e => e.type === 'text_delta')
+                .map(e => e.type === 'text_delta' ? e.text : '').join('');
+            expect(fullText).toBe('<reasoning>The answer is 42.');
+
+            const errorEvents = events.filter(e => e.type === 'error');
+            expect(errorEvents).toHaveLength(0);
+        });
+
+        it('signature_delta events are silently ignored (no error, no text)', async () => {
+            const rawBody = makeAnthropicSSE([
+                { event: 'message_start', data: { type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', content: [], model: 'claude-test', stop_reason: null, usage: { input_tokens: 10, output_tokens: 0 } } } },
+                { event: 'content_block_start', data: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } } },
+                { event: 'content_block_delta', data: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'thought' } } },
+                { event: 'content_block_delta', data: { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'abc123' } } },
+                { event: 'content_block_stop', data: { type: 'content_block_stop', index: 0 } },
+                { event: 'content_block_start', data: { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } } },
+                { event: 'content_block_delta', data: { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'answer' } } },
+                { event: 'content_block_stop', data: { type: 'content_block_stop', index: 1 } },
+                { event: 'message_delta', data: { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 5 } } },
+                { event: 'message_stop', data: { type: 'message_stop' } },
+            ]);
+            server.addResponse({ type: 'raw_stream', rawBody });
+
+            const events = await collectEvents(driver.stream(makeRequest()));
+
+            const fullText = events
+                .filter(e => e.type === 'text_delta')
+                .map(e => e.type === 'text_delta' ? e.text : '').join('');
+            expect(fullText).toBe('thoughtanswer'); // signature not included in text
+
+            const errorEvents = events.filter(e => e.type === 'error');
+            expect(errorEvents).toHaveLength(0);
+        });
+
+        it('sends thinking parameter in request body when request.thinking is enabled', async () => {
+            server.addTextResponse('OK');
+            const request = makeRequest({ maxTokens: 4096, thinking: { type: 'enabled' } });
+            await collectEvents(driver.stream(request));
+
+            const body = server.receivedRequests[0].body as Record<string, unknown>;
+            expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 2048 }); // half of maxTokens
+        });
+
+        it('does not send thinking parameter when request.thinking is disabled', async () => {
+            server.addTextResponse('OK');
+            const request = makeRequest({ thinking: { type: 'disabled' } });
+            await collectEvents(driver.stream(request));
+
+            const body = server.receivedRequests[0].body as Record<string, unknown>;
+            expect(body.thinking).toBeUndefined();
+        });
+    });
+
     // --- stream(): timeout ---
 
     describe('stream() — timeout', () => {
