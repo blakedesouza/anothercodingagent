@@ -28,6 +28,7 @@ import { extractFindingsFromMarkdown } from '../review/markdown-adapter.js';
 import { aggregateReviews } from '../review/aggregator.js';
 import { buildReport, renderReportText } from '../review/report.js';
 import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
+import { extractCodeIdentifiers, resolveSymbolLocations } from '../consult/symbol-lookup.js';
 import { getModelHints } from '../prompts/model-hints.js';
 
 export interface ConsultOptions {
@@ -536,8 +537,18 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     const roundSafeties: Array<{ context_request?: InvokeSafety; context_request_retry?: InvokeSafety }> = [];
     const allInvokeResponses: Array<InvokeResponse | undefined> = [];
 
+    // Pre-locate any code identifiers mentioned in the question so witnesses
+    // don't need to navigate to find them.
+    const identifiers = extractCodeIdentifiers(prompt);
+    const symbolLocations = identifiers.length > 0
+        ? await resolveSymbolLocations(identifiers, projectDir)
+        : [];
+
     // Build and issue the round-1 context-request prompt.
-    const firstPrompt = buildContextRequestPrompt(prompt, limitsObj, maxRounds, maxRounds);
+    const firstPrompt = buildContextRequestPrompt(
+        prompt, limitsObj, maxRounds, maxRounds,
+        symbolLocations.length > 0 ? symbolLocations : undefined,
+    );
     const firstAttempt = await invoke(witness.model, firstPrompt, projectDir, {
         maxSteps: 1,
         maxTotalTokens: 30_000,

@@ -3,6 +3,7 @@ import { resolve, isAbsolute, relative, join } from 'node:path';
 import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
 import { getModelHints } from '../prompts/model-hints.js';
 import { IGNORE_DIRS } from './evidence-pack.js';
+import type { SymbolLocation } from './symbol-lookup.js';
 
 export interface ContextRequest {
     /** 'file' (default) reads line ranges; 'tree' returns a directory listing. */
@@ -145,10 +146,14 @@ export function buildContextRequestPrompt(
     limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS,
     roundsRemaining?: number,
     totalRounds?: number,
+    symbolLocations?: SymbolLocation[],
 ): string {
     const roundStatusLine = buildRoundStatusLine(roundsRemaining, totalRounds);
+    const symbolBlock = symbolLocations && symbolLocations.length > 0
+        ? `\n<symbol_locations>\nThe following code identifiers were found in the question. Their definition\nlocations in this project are pre-verified — use them as your starting point:\n\n${symbolLocations.map(loc => `- ${loc.identifier} → ${loc.file} line ${loc.line}`).join('\n')}\n</symbol_locations>\n`
+        : '';
     return `${prompt.trimEnd()}
-
+${symbolBlock}
 ## Witness Context Request Protocol
 
 You are in ACA-native context-request mode.
