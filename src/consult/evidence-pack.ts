@@ -164,7 +164,7 @@ export function buildEvidencePack(options: EvidencePackOptions): EvidencePack {
         }
         const text = truncateUtf8(raw, maxFileBytes);
         const truncated = text !== raw;
-        const section = `## ${rel}\n\n\`\`\`text\n${text}\n\`\`\`${truncated ? '\n\n[truncated]' : ''}\n`;
+        const section = `## ${rel}\n\n\`\`\`text\n${text}\n\`\`\`${truncated ? `\n\n[TRUNCATED — file exceeds the ${maxFileBytes}-byte pack limit. Use needs_context to request specific line ranges from this file if more context is needed.]` : ''}\n`;
         const nextBytes = Buffer.byteLength(`${sections.join('\n')}\n${section}`, 'utf8');
         if (nextBytes > maxTotalBytes) {
             omitted.push(`${rel}: total pack cap reached`);
