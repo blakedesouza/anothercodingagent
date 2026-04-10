@@ -3222,3 +3222,36 @@ Two bugs identified during C11.5 live testing, fixed and committed in the next s
 3. **Done-before-text ordering bug (Qwen+Kimi flag, Q8)**: The `done` event previously passed through immediately while `decided === false`, causing the cleanup path to yield `text_delta` after `done`. Fix: `heldDone` holds the done event until the prefix buffer is flushed. Verified by code trace (Gemma's "no risk" assessment was incorrect).
 
 Consult: 4/4 witnesses reviewed. Q4 and Q8 bugs flagged by Kimi/Qwen, confirmed by code trace. 2617 tests passing.
+
+---
+
+## 2026-04-10 — C11.7 Multi-Round Context-Request Loop + Directory Tree Support
+
+**Motivation:** DeepSeek and other witnesses hallucinate file paths when they have no way to explore the directory structure. Files capped at 120 lines caused truncation-based misanswers. Single context-request round left witnesses stuck when paths were wrong.
+
+**Changes:**
+
+`src/consult/context-request.ts`:
+- `ContextRequest.type?: 'file'|'tree'` — tree requests return a 2-level directory listing
+- `ContextSnippet.type?` propagated through to render
+- `ContextRequestLimits.maxRounds` — round governor added to limits interface
+- Default limits raised: `maxSnippets` 3→8, `maxLines` 120→300, `maxBytes` 8K→24K, `maxRounds: 3`
+- `buildDirectoryTree(root, relPath, maxDepth=2)` — 2-level listing, IGNORE_DIRS filtered
+- `fulfillContextRequests()` — branches on `type==='tree'`, stat/verify directory, returns listing
+- `renderContextSnippets()` — tree snippets get `### tree: path` heading (no `:line-line`); truncation note is now actionable
+- `buildContextRequestPrompt()` — `roundsRemaining?/totalRounds?` params, round status line, `type:"tree"` JSON example, updated directory guidance
+- `buildRoundStatusLine()` — helper for dynamic per-round status text
+- `buildContinuationPrompt()` — new export for rounds 2+; shows original prompt, accumulated snippets, round status, and context-request protocol
+
+`src/cli/consult.ts`:
+- `ConsultOptions.maxContextRounds?: number` added
+- `runWitness()` rewritten with `while (roundsUsed < maxRounds)` loop; accumulates `allSnippets`/`allRequests` across rounds; `buildContinuationPrompt` for rounds 2+; forced finalization after `maxRounds` exhausted; per-round safety tracking via `buildRoundSafeties()`
+- Limits block: `maxContextRounds: options.maxContextRounds ?? 3`
+
+`src/cli-main.ts`:
+- `--max-context-rounds <n>` flag (default 3)
+- Raised defaults: `--max-context-snippets` 3→8, `--max-context-lines` 120→300, `--max-context-bytes` 8K→24K
+
+**Tests:** 13 new tests (10 unit, 3 integration). 2630 passing.
+
+**Live validation (deepseek, 5 tests):** 4/5 ok. Tree requests used in all 5 tests. ENOENT issues on tests 3-5 are pre-existing model path-hallucination behavior, not C11.7 regressions. Test 5 (adversarial NanoGPT driver question) correctly recovered from a wrong `src/drivers` guess by exploring the `src` tree in a subsequent round.
