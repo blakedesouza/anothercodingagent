@@ -73,6 +73,16 @@ Also updated "2-level listing" text to "3-level listing" throughout both prompts
 
 **Test baseline:** 2632 passing, 14 pre-existing failures, 1 skipped.
 
+### Live validation (3 runs, all post-fix)
+
+| # | Question target | Target file | Score | Notes |
+|---|-----------------|-------------|-------|-------|
+| 1 | Hard-rejected tool call error code | `src/cli/invoke-output-validation.ts` | 3/4 | kimi found confusion tracking (`tool.validation`, `turn-engine.ts`) instead |
+| 2 | TOOL_NAMES constant + MediaWiki entries | `src/cli/tool-names.ts` | 4/4 | Unanimous; both `fetch_mediawiki_page` + `fetch_mediawiki_category` exact |
+| 3 | Runtime context system message logic | `src/cli/invoke-runtime-state.ts` | 3/4 | qwen emitted deliberation only (no findings); deepseek/kimi/gemma correct |
+
+**Navigation mechanism verified (test 2):** DeepSeek opened with `{ "type": "tree", "path": "." }`, the 3-level root listing exposed `src/cli/tool-names.ts` directly, and it navigated to the correct file without any ENOENT. Pre-fix this file would have been invisible in the root tree.
+
 ---
 
 ## Open: Continuation round responses not persisted
