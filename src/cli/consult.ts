@@ -217,8 +217,12 @@ function extractJsonPayload(text: string): string {
     if (stripped.startsWith('{')) return stripped;
     const fenced = stripped.match(/```(?:json)?\s*([\s\S]*?)```/i);
     if (fenced?.[1]) return fenced[1].trim();
-    const start = stripped.indexOf('{');
-    const end = stripped.lastIndexOf('}');
+    // Blank out inline-code spans before scanning so braces inside backtick
+    // literals (e.g. `Record<K,V> = {}`) don't fool the heuristic.  Spaces
+    // preserve character positions so the slice below uses the original text.
+    const searchable = stripped.replace(/`[^`\n]*`/g, m => ' '.repeat(m.length));
+    const start = searchable.indexOf('{');
+    const end = searchable.lastIndexOf('}');
     if (start >= 0 && end > start) return stripped.slice(start, end + 1);
     return stripped;
 }
