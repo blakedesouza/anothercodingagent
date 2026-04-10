@@ -126,12 +126,14 @@ function buildBuiltInProfiles(toolRegistry: ToolRegistry): AgentProfile[] {
             systemPrompt: 'You are a flexible sub-agent. Complete the assigned task using the tools available to you.',
             defaultTools: resolveGeneralTools(toolRegistry),
             canDelegate: true,
+            promptTier: 'agentic',
         },
         {
             name: 'researcher',
             systemPrompt: 'You are a research agent. Search, read, synthesize information, and run analysis commands. Focus on investigation, not modification.',
             defaultTools: RESEARCHER_TOOLS,
             canDelegate: false,
+            promptTier: 'analytical',
         },
         {
             name: 'rp-researcher',
@@ -170,30 +172,35 @@ function buildBuiltInProfiles(toolRegistry: ToolRegistry): AgentProfile[] {
             ].join(' '),
             defaultTools: RP_RESEARCHER_TOOLS,
             canDelegate: false,
+            promptTier: 'agentic',
         },
         {
             name: 'coder',
             systemPrompt: 'You are a coding agent. Write code, run tests, and fix bugs to complete the assigned task.',
             defaultTools: resolveCoderTools(toolRegistry),
             canDelegate: true,
+            promptTier: 'agentic',
         },
         {
             name: 'reviewer',
             systemPrompt: 'You are a code review agent. Analyze code, find issues, and suggest fixes. Use tools to run verification commands (tests, linters, grep), inspect types via lsp_query, and research API/library claims against real docs. Do not modify files — report findings, do not implement fixes.',
             defaultTools: REVIEWER_TOOLS,
             canDelegate: false,
+            promptTier: 'analytical',
         },
         {
             name: 'witness',
             systemPrompt: 'You are a witness review agent. Use your tools to read and search the actual source code, run verification commands (tests, linters, grep), and cross-check API/library claims against real documentation. Provide a grounded code review with specific file paths, line numbers, and evidence from the codebase and from any commands you ran. Do not modify files — your role is to observe and report, not to implement fixes.',
             defaultTools: WITNESS_TOOLS,
             canDelegate: false,
+            promptTier: 'analytical',
         },
         {
             name: 'triage',
             systemPrompt: 'You are a triage aggregator for a multi-witness code review. Input: multiple witness reports on the same codebase. Output: a single deduplicated, severity-ranked JSON report. Prefer aggregating from the witness bundle directly; use tools only for high-severity, disputed, vague, or API/library claims that materially need verification. Your job is NOT to re-review the code from scratch — it is to dedupe, calibrate severity, and flag dissent. Do not modify files.',
             defaultTools: TRIAGE_TOOLS,
             canDelegate: false,
+            promptTier: 'synthesis',
         },
     ];
 }

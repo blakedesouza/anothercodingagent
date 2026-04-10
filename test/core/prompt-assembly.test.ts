@@ -6,6 +6,9 @@ import {
     buildToolDefinitions,
     buildConversationMessages,
     buildInvokeSystemMessages,
+    buildAnalyticalSystemMessages,
+    buildSynthesisSystemMessages,
+    buildSystemMessagesForTier,
 } from '../../src/core/prompt-assembly.js';
 import type { PromptAssemblyOptions, CapabilityHealth, WorkingSetEntry, DurableTaskSummary } from '../../src/core/prompt-assembly.js';
 import type { ConversationItem, MessageItem, ToolResultItem } from '../../src/types/conversation.js';
@@ -764,7 +767,7 @@ describe('buildInvokeSystemMessages', () => {
         // response ends the turn. This closes the "empty end_turn" stall pattern.
         expect(content).toContain('<mode>');
         expect(content).toContain('NON-INTERACTIVE');
-        expect(content).toContain('ENDS THE CONVERSATION');
+        expect(content).toContain('ends the conversation');
     });
 
     it('includes persistence block (OpenAI GPT-5 pattern)', () => {
@@ -866,6 +869,27 @@ describe('buildInvokeSystemMessages', () => {
         expect(content).toContain('TURN ENDS, TASK FAILS');
     });
 
+    // C9 regression: softened qualifiers must be present
+    it('<mode> provides a final-summary escape hatch, not unconditional termination', () => {
+        const msgs = buildInvokeSystemMessages({ cwd: '/tmp', toolNames: ['read_file'] });
+        const content = msgs[0].content as string;
+        // The ONLY valid text-only response is the final summary — not "any text ends it"
+        expect(content).toContain('The ONLY valid text-only response is your final summary');
+    });
+
+    it('<persistence> applies while work remains (softened qualifier)', () => {
+        const msgs = buildInvokeSystemMessages({ cwd: '/tmp', toolNames: ['read_file'] });
+        const content = msgs[0].content as string;
+        expect(content).toContain('This applies while work remains');
+    });
+
+    it('<tool_preambles> gates tool use on task requirement, not unconditionally', () => {
+        const msgs = buildInvokeSystemMessages({ cwd: '/tmp', toolNames: ['read_file'] });
+        const content = msgs[0].content as string;
+        // Must say "when the task requires tools", not "whenever tools are available"
+        expect(content).toContain('When the task requires tools');
+    });
+
     it('sanitizes control characters in paths', () => {
         const msgs = buildInvokeSystemMessages({
             cwd: '/home/user/evil\ninjected line\ndir',
@@ -924,6 +948,7 @@ describe('buildInvokeSystemMessages', () => {
     });
 
     it('contains all required top-level sections in order', () => {
+
         // Section ordering is load-bearing: the operational drive (persistence,
         // tool_preambles) sits before environment so it frames the task. The
         // closing anchor is last so it is the model's final read.
@@ -963,5 +988,156 @@ describe('buildInvokeSystemMessages', () => {
         // Closing anchor must be present and after the last tagged section
         const anchorIdx = content.indexOf('Remember: a response without tool calls');
         expect(anchorIdx).toBeGreaterThan(lastIndex);
+    });
+});
+
+describe('buildAnalyticalSystemMessages', () => {
+    it('returns a single system message', () => {
+        const msgs = buildAnalyticalSystemMessages({ cwd: '/tmp', toolNames: [] });
+        expect(msgs).toHaveLength(1);
+        expect(msgs[0].role).toBe('system');
+    });
+
+    it('includes ACA identity', () => {
+        const msgs = buildAnalyticalSystemMessages({ cwd: '/tmp', toolNames: [] });
+        const content = msgs[0].content as string;
+        expect(content).toContain('ACA');
+    });
+
+    it('includes <tool_policy> block', () => {
+        const msgs = buildAnalyticalSystemMessages({ cwd: '/tmp', toolNames: ['read_file'] });
+        const content = msgs[0].content as string;
+        expect(content).toContain('<tool_policy>');
+        expect(content).toContain('Do NOT use tools to answer conceptual or general knowledge questions');
+    });
+
+    it('includes <environment> with working directory', () => {
+        const msgs = buildAnalyticalSystemMessages({ cwd: '/workspace/proj', toolNames: [] });
+        const content = msgs[0].content as string;
+        expect(content).toContain('<environment>');
+        expect(content).toContain('Working directory: /workspace/proj');
+    });
+
+    it('includes <tool_reference> when tools provided', () => {
+        const msgs = buildAnalyticalSystemMessages({
+            cwd: '/tmp',
+            toolNames: ['read_file', 'search_text'],
+        });
+        const content = msgs[0].content as string;
+        expect(content).toContain('<tool_reference>');
+        expect(content).toContain('Available tools (2): read_file, search_text');
+    });
+
+    it('omits <tool_reference> when no tools', () => {
+        const msgs = buildAnalyticalSystemMessages({ cwd: '/tmp', toolNames: [] });
+        expect(msgs[0].content as string).not.toContain('<tool_reference>');
+    });
+
+    it('does NOT contain <mode> or <persistence> (C9 regression)', () => {
+        const msgs = buildAnalyticalSystemMessages({ cwd: '/tmp', toolNames: ['read_file'] });
+        const content = msgs[0].content as string;
+        expect(content).not.toContain('<mode>');
+        expect(content).not.toContain('<persistence>');
+    });
+
+    it('injects profile when profilePrompt provided', () => {
+        const msgs = buildAnalyticalSystemMessages({
+            cwd: '/tmp',
+            toolNames: [],
+            profileName: 'reviewer',
+            profilePrompt: 'Focus on security findings only.',
+        });
+        const content = msgs[0].content as string;
+        expect(content).toContain('Active profile: reviewer');
+        expect(content).toContain('<profile>');
+        expect(content).toContain('Focus on security findings only.');
+    });
+
+    it('does NOT contain <mode> or <persistence> even with profile (C9 regression)', () => {
+        const msgs = buildAnalyticalSystemMessages({
+            cwd: '/tmp',
+            toolNames: ['read_file'],
+            profilePrompt: 'Some profile instructions.',
+        });
+        const content = msgs[0].content as string;
+        expect(content).not.toContain('<mode>');
+        expect(content).not.toContain('<persistence>');
+    });
+});
+
+describe('buildSynthesisSystemMessages', () => {
+    it('returns a single system message', () => {
+        const msgs = buildSynthesisSystemMessages({ cwd: '/tmp', toolNames: [] });
+        expect(msgs).toHaveLength(1);
+        expect(msgs[0].role).toBe('system');
+    });
+
+    it('states tools are NOT available', () => {
+        const msgs = buildSynthesisSystemMessages({ cwd: '/tmp', toolNames: [] });
+        const content = msgs[0].content as string;
+        expect(content).toContain('NOT available in this session');
+    });
+
+    it('instructs model not to emit tool-call markup', () => {
+        const msgs = buildSynthesisSystemMessages({ cwd: '/tmp', toolNames: [] });
+        const content = msgs[0].content as string;
+        expect(content).toContain('Do not call tools');
+        expect(content).toContain('<tool_call>');
+        expect(content).toContain('<function_calls>');
+    });
+
+    it('does not include <tool_reference>', () => {
+        const msgs = buildSynthesisSystemMessages({ cwd: '/tmp', toolNames: ['read_file'] });
+        expect(msgs[0].content as string).not.toContain('<tool_reference>');
+    });
+
+    it('does NOT contain <mode> or <persistence>', () => {
+        const msgs = buildSynthesisSystemMessages({ cwd: '/tmp', toolNames: [] });
+        const content = msgs[0].content as string;
+        expect(content).not.toContain('<mode>');
+        expect(content).not.toContain('<persistence>');
+    });
+
+    it('injects profile when profilePrompt provided', () => {
+        const msgs = buildSynthesisSystemMessages({
+            cwd: '/tmp',
+            toolNames: [],
+            profileName: 'triage',
+            profilePrompt: 'Aggregate findings into a ranked list.',
+        });
+        const content = msgs[0].content as string;
+        expect(content).toContain('Active profile: triage');
+        expect(content).toContain('<profile>');
+        expect(content).toContain('Aggregate findings into a ranked list.');
+    });
+});
+
+describe('buildSystemMessagesForTier', () => {
+    it("routes 'analytical' to buildAnalyticalSystemMessages", () => {
+        const msgs = buildSystemMessagesForTier('analytical', { cwd: '/tmp', toolNames: ['read_file'] });
+        const content = msgs[0].content as string;
+        expect(content).toContain('<tool_policy>');
+        expect(content).not.toContain('<mode>');
+    });
+
+    it("routes 'synthesis' to buildSynthesisSystemMessages", () => {
+        const msgs = buildSystemMessagesForTier('synthesis', { cwd: '/tmp', toolNames: [] });
+        const content = msgs[0].content as string;
+        expect(content).toContain('NOT available in this session');
+        expect(content).not.toContain('<mode>');
+    });
+
+    it("routes 'agentic' to buildInvokeSystemMessages", () => {
+        const msgs = buildSystemMessagesForTier('agentic', { cwd: '/tmp', toolNames: ['read_file'] });
+        const content = msgs[0].content as string;
+        expect(content).toContain('<mode>');
+        expect(content).toContain('<persistence>');
+    });
+
+    it('routes undefined to buildInvokeSystemMessages', () => {
+        const msgs = buildSystemMessagesForTier(undefined, { cwd: '/tmp', toolNames: ['read_file'] });
+        const content = msgs[0].content as string;
+        expect(content).toContain('<mode>');
+        expect(content).toContain('<persistence>');
     });
 });

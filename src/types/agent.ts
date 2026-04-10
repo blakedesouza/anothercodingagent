@@ -21,6 +21,17 @@ export interface AgentIdentity {
  * An agent profile defines the capabilities and constraints for an agent type.
  * Profiles are resolved once at session start and frozen for the session.
  */
+/**
+ * Controls which system prompt builder is used for delegated agents of this profile.
+ * - 'agentic'    — full <mode>/<persistence>/tool mandates. For profiles doing multi-step file ops.
+ * - 'analytical' — conditional tool policy ("use tools only when the task requires files/commands").
+ *                  For profiles that read/search but don't modify. Fixes tool-use bias on models
+ *                  like deepseek that follow aggressive mandates too literally (C9).
+ * - 'synthesis'  — no tools, text-only output. For profiles that aggregate existing content.
+ * Defaults to 'agentic' if not set.
+ */
+export type PromptTier = 'agentic' | 'analytical' | 'synthesis';
+
 export interface AgentProfile {
     /** Profile name used as the agent_type enum value. */
     name: string;
@@ -32,6 +43,11 @@ export interface AgentProfile {
     canDelegate: boolean;
     /** Optional model override for this agent type. */
     defaultModel?: string;
+    /**
+     * System prompt tier for this profile. Controls how aggressive the tool-use mandate is.
+     * Defaults to 'agentic' if not set.
+     */
+    promptTier?: PromptTier;
 }
 
 // --- Agent lifecycle (M7.1c) ---

@@ -95,7 +95,7 @@ export async function runConfigure(acaDir?: string): Promise<SetupResult> {
     const modelDefault = await input({
         message: 'Default model',
         default: (existing.model as Record<string, unknown>)?.default as string
-            ?? CONFIG_DEFAULTS.model.default,
+            ?? '',
     });
 
     // Provider

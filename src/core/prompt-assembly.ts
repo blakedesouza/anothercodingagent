@@ -12,6 +12,7 @@ import type {
     ToolDefinition,
 } from '../types/provider.js';
 import type { RegisteredTool } from '../tools/tool-registry.js';
+import type { PromptTier } from '../types/agent.js';
 import type { ProjectSnapshot } from './project-awareness.js';
 import { renderProjectContext } from './project-awareness.js';
 import {
@@ -29,6 +30,8 @@ import {
     TOOL_SCHEMA_OVERHEAD,
 } from './token-estimator.js';
 import { buildCoverageMap, visibleHistory } from './summarizer.js';
+import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
+import { getModelHints } from '../prompts/model-hints.js';
 
 // --- Capability health ---
 
@@ -503,6 +506,8 @@ export interface InvokePromptOptions {
     cwd: string;
     /** Tool names available to the agent */
     toolNames: string[];
+    /** Model ID — used to inject per-model hints (C11.2+). */
+    model?: string;
     /** Optional built-in agent profile name applied by invoke. */
     profileName?: string;
     /** Optional built-in agent profile instructions applied by invoke. */
@@ -536,6 +541,22 @@ function sanitizePath(path: string): string {
 
 function joinToolNames(names: string[]): string {
     return names.length > 0 ? names.join(', ') : 'none';
+}
+
+/**
+ * If model-specific hints exist for the given model ID, append a <model_hints>
+ * section to lines. No-op when model is absent or hints are empty.
+ */
+function appendModelHints(lines: string[], model?: string): void {
+    if (!model) return;
+    const hints = getModelHints(model);
+    if (hints.length === 0) return;
+    lines.push('');
+    lines.push('<model_hints>');
+    for (const hint of hints) {
+        lines.push(hint);
+    }
+    lines.push('</model_hints>');
 }
 
 export function buildInvokeSystemMessages(options: InvokePromptOptions): RequestMessage[] {
@@ -601,7 +622,7 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     // a tool call will end the conversation.
     lines.push('<mode>');
     lines.push('You are running in NON-INTERACTIVE delegation mode. There is no human watching this conversation and no follow-up turn unless you call a tool.');
-    lines.push('A response containing only text (no tool calls) ENDS THE CONVERSATION IMMEDIATELY. Treat this as an irreversible decision.');
+    lines.push('A text-only response (no tool calls) ends the conversation. The ONLY valid text-only response is your final summary — produced after all tool work is complete and verified. A text-only response at any other point terminates the task prematurely and is a failure.');
     lines.push('If the task instructs you to inspect, research, read, write, verify, or use named tools, your FIRST assistant message must include at least one tool call. Do not spend the first message on narration alone.');
     lines.push('You cannot ask the user questions. Make decisions yourself based on the task and available context. Document your assumptions in your final summary.');
     lines.push('</mode>');
@@ -615,7 +636,7 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     lines.push('<persistence>');
     lines.push('- You are an agent — keep going until the user\'s task is completely resolved before producing a final summary.');
     lines.push('- Only end your turn with a final text summary when you are sure the problem is solved AND verified (tests/linters run, output checked).');
-    lines.push('- Never stop when you encounter uncertainty — research or deduce the most reasonable approach using your tools and continue.');
+    lines.push('- Never stop mid-task when you encounter uncertainty — research or deduce the most reasonable approach using your tools and continue. This applies while work remains; once all work is done and verified, produce your final summary.');
     lines.push('- Do not ask for confirmation. Decide what the most reasonable assumption is, proceed with it, and document it in your final summary.');
     lines.push('- Be biased for action. If the task is somewhat ambiguous, infer the most useful interpretation and execute it rather than waiting.');
     lines.push('</persistence>');
@@ -631,7 +652,7 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     lines.push('<tool_preambles>');
     lines.push('For any multi-step task, structure your behavior as:');
     lines.push('1. Restate the goal in 1-2 sentences.');
-    lines.push('When tools are available, that restatement must be immediately followed by tool calls in the SAME assistant message. Never send the restatement by itself.');
+    lines.push('When the task requires tools, that restatement must be immediately followed by tool calls in the SAME assistant message. Never send a plan without action.');
     lines.push('If a tool result changes your next step, immediately make the next tool calls in that SAME assistant message. Do not emit an interim status update like "need to try..." or "let me also fetch..." without tool calls.');
     if (contextTools.length > 0) {
         lines.push(`2. Gather context using only available context tools: ${joinToolNames(contextTools)}. Call independent reads/searches in PARALLEL when possible.`);
@@ -806,6 +827,9 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     lines.push('</example>');
     lines.push('');
 
+    // === Model-specific hints (C11.2 infrastructure; C11.3 populates the registry) ===
+    appendModelHints(lines, options.model);
+
     // === Closing anchor (triple-repeat: this is the 3rd statement of the load-bearing rule) ===
     // Source: Cline pattern of putting operational drive LAST + Aider pattern
     // of repeating the critical rule multiple times. The rule has now appeared
@@ -813,4 +837,136 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     lines.push('Remember: a response without tool calls ENDS the conversation. Call tools to do work; only produce a final text summary when every change is made and verified. The plan lives in tool calls, not in prose.');
 
     return [{ role: 'system' as const, content: lines.join('\n') }];
+}
+
+// --- Analytical tier prompt (C9) ---
+
+/**
+ * System prompt for analytical profiles (researcher, reviewer, witness).
+ *
+ * These profiles read/search but do not modify files. They should use tools
+ * when the task requires interacting with the filesystem, but answer
+ * conceptual or general questions directly in plain text without calling tools.
+ *
+ * Deliberately omits <mode> ("text-only = ENDS CONVERSATION") and <persistence>
+ * ("never stop, keep using tools") — those mandates cause tool-use bias on
+ * models like deepseek when applied to read/report roles (C9 root cause).
+ *
+ * Proven effective in C8.5 Experiment B: deepseek zero tool calls on text
+ * questions, correct tool use on file tasks.
+ */
+export function buildAnalyticalSystemMessages(options: InvokePromptOptions): RequestMessage[] {
+    const lines: string[] = [];
+
+    lines.push('You are ACA (Another Coding Agent), an AI-powered coding assistant.');
+    lines.push('');
+
+    if (options.profilePrompt) {
+        lines.push(`Active profile: ${options.profileName ?? 'analytical'}. Follow this profile over generic defaults when they conflict.`);
+        lines.push('');
+        lines.push('<profile>');
+        lines.push(options.profilePrompt);
+        lines.push('</profile>');
+        lines.push('');
+    }
+
+    lines.push('<tool_policy>');
+    lines.push('- Use tools when the task requires reading files, running commands, or interacting with the filesystem.');
+    lines.push('- Do NOT use tools to answer conceptual or general knowledge questions — answer those directly in plain text.');
+    lines.push('- If you can answer the question from your knowledge, do so immediately without calling any tools.');
+    lines.push('- Only use tools when they are necessary to complete the task.');
+    lines.push('- When you have gathered enough evidence, produce your final answer as plain text.');
+    lines.push('</tool_policy>');
+    lines.push('');
+
+    // Environment block — same as agentic tier
+    const safeCwd = sanitizePath(options.cwd);
+    lines.push('<environment>');
+    lines.push(`Working directory: ${safeCwd}`);
+    if (options.projectSnapshot) {
+        const { stack, git, root } = options.projectSnapshot;
+        if (root !== options.cwd) {
+            lines.push(`Project root: ${sanitizePath(root)}`);
+        }
+        if (stack.length > 0) {
+            lines.push(`Stack: ${stack.join(', ')}`);
+        }
+        if (git) {
+            lines.push(`Git: branch=${git.branch}, ${git.status}${git.staged ? ', staged changes' : ''}`);
+        }
+    }
+    lines.push('</environment>');
+    lines.push('');
+
+    // Tool reference — let the model know what is available
+    if (options.toolNames.length > 0) {
+        lines.push('<tool_reference>');
+        lines.push(`Available tools (${options.toolNames.length}): ${options.toolNames.join(', ')}`);
+        lines.push('');
+        lines.push('Use tools only when necessary. Read each schema carefully before calling.');
+        lines.push('</tool_reference>');
+    }
+
+    // === Model-specific hints (C11.2 infrastructure; C11.3 populates the registry) ===
+    appendModelHints(lines, options.model);
+
+    return [{ role: 'system' as const, content: lines.join('\n') }];
+}
+
+// --- Synthesis tier prompt (C9) ---
+
+/**
+ * System prompt for synthesis profiles (triage).
+ *
+ * These profiles aggregate or combine content already provided in the prompt.
+ * No tools are available or needed. The model should answer directly from
+ * the supplied context without attempting any tool calls.
+ *
+ * Based on the existing buildNoToolsConsultSystemMessages pattern in consult.ts,
+ * extended with profile injection.
+ */
+export function buildSynthesisSystemMessages(options: InvokePromptOptions): RequestMessage[] {
+    const lines: string[] = [];
+
+    lines.push('You are ACA (Another Coding Agent).');
+    lines.push('');
+
+    if (options.profilePrompt) {
+        lines.push(`Active profile: ${options.profileName ?? 'synthesis'}.`);
+        lines.push('');
+        lines.push('<profile>');
+        lines.push(options.profilePrompt);
+        lines.push('</profile>');
+        lines.push('');
+    }
+
+    lines.push(NO_NATIVE_FUNCTION_CALLING);
+    lines.push(NO_PROTOCOL_DELIBERATION);
+    lines.push('Do not call tools, emit tool-call JSON, or emit XML/function markup such as <tool_call>, <function_calls>, or <invoke>.');
+    lines.push('Answer directly based on the context and content provided in the user prompt.');
+    lines.push('Follow the output format specified in the prompt exactly.');
+
+    // === Model-specific hints (C11.2 infrastructure; C11.3 populates the registry) ===
+    appendModelHints(lines, options.model);
+
+    return [{ role: 'system' as const, content: lines.join('\n') }];
+}
+
+// --- Tier dispatcher (C9) ---
+
+/**
+ * Route to the correct system prompt builder based on the profile's promptTier.
+ * Falls back to the agentic (full invoke) prompt when tier is undefined or 'agentic'.
+ */
+export function buildSystemMessagesForTier(
+    tier: PromptTier | undefined,
+    options: InvokePromptOptions,
+): RequestMessage[] {
+    if (tier === 'analytical') {
+        return buildAnalyticalSystemMessages(options);
+    }
+    if (tier === 'synthesis') {
+        return buildSynthesisSystemMessages(options);
+    }
+    return buildInvokeSystemMessages(options);
 }

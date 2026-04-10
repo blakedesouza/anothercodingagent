@@ -26,7 +26,7 @@ import {
 } from './cli/invoke-output-validation.js';
 import { TurnEngine } from './core/turn-engine.js';
 import type { TurnEngineConfig } from './core/turn-engine.js';
-import { buildInvokeSystemMessages } from './core/prompt-assembly.js';
+import { buildSystemMessagesForTier } from './core/prompt-assembly.js';
 import {
     applyRuntimeTurnState,
     buildRuntimePromptContext,
@@ -256,7 +256,6 @@ interface ActiveProviderRuntime {
 const RP_RESEARCHER_MODEL_CANDIDATES = [
     'zai-org/glm-5',
     'moonshotai/kimi-k2.5',
-    'qwen/qwen3-coder-next',
 ] as const;
 
 class ProviderBootstrapError extends Error {
@@ -620,7 +619,7 @@ export function buildRpRepairTurnConfig(constraints: {
 }
 
 interface MainOptions {
-    model: string;
+    model: string | undefined;
     verbose: boolean;
     confirm: boolean; // Commander: --no-confirm sets this to false (default true)
     resume?: string | true;
@@ -630,7 +629,7 @@ program
     .name('aca')
     .description('Another Coding Agent — an AI-powered coding assistant')
     .version(getVersion())
-    .option('--model <model>', 'Model to use', 'qwen/qwen3-coder-next')
+    .option('--model <model>', 'Model to use')
     .option('--verbose', 'Enable debug output on stderr', false)
     .option('--no-confirm', 'Auto-approve confirmation prompts')
     .option('-r, --resume [session]', 'Resume session (latest for workspace, or specific ID)')
@@ -703,6 +702,13 @@ program
         const configResult = await loadConfig({ workspaceRoot: cwd });
         const config = configResult.config;
 
+        // --- Resolve model (must be explicit; no config fallback) ---
+        const effectiveModel = options.model;
+        if (!effectiveModel) {
+            writeHumanStderr('Error: no model specified. Use --model <model>\n');
+            process.exit(EXIT_ONESHOT_STARTUP);
+        }
+
         if (options.verbose && configResult.warnings.length > 0) {
             for (const w of configResult.warnings) {
                 writeHumanStderr(`[config] ${w}\n`);
@@ -729,23 +735,23 @@ program
         if (
             activeProvider.kind === 'nanogpt'
             && activeProvider.catalogProbe === 'ok'
-            && !activeProvider.catalog?.getModel(options.model)
+            && !activeProvider.catalog?.getModel(effectiveModel)
         ) {
-            writeHumanStderr(`Error: model not found: ${options.model}\n`);
+            writeHumanStderr(`Error: model not found: ${effectiveModel}\n`);
             process.exit(EXIT_ONESHOT_STARTUP);
         }
         if (
             activeProvider.kind !== 'nanogpt'
-            && !providerSupportsModel(activeProvider.provider, options.model)
+            && !providerSupportsModel(activeProvider.provider, effectiveModel)
         ) {
-            writeHumanStderr(`Error: model not found: ${options.model}\n`);
+            writeHumanStderr(`Error: model not found: ${effectiveModel}\n`);
             process.exit(EXIT_ONESHOT_STARTUP);
         }
 
         if (options.verbose) {
-            const caps = activeProvider.provider.capabilities(options.model);
+            const caps = activeProvider.provider.capabilities(effectiveModel);
             writeHumanStderr(
-                `[provider] ${activeProvider.providerConfig.name}:${options.model} ` +
+                `[provider] ${activeProvider.providerConfig.name}:${effectiveModel} ` +
                 `context=${caps.maxContext} maxOutput=${caps.maxOutput}\n`,
             );
         }
@@ -929,7 +935,7 @@ program
             }
         } else {
             projection = sessionManager.create(cwd, {
-                model: options.model,
+                model: effectiveModel,
                 verbose: options.verbose,
             });
         }
@@ -988,7 +994,7 @@ program
                 const child = sessionManager.create(
                     cwd,
                     {
-                        model: options.model,
+                        model: effectiveModel,
                         mode: 'sub-agent',
                     },
                     {
@@ -1001,7 +1007,7 @@ program
             onSpawn: createDelegationLaunchHandler({
                 provider: activeProvider.provider,
                 providerName: activeProvider.providerConfig.name,
-                model: options.model,
+                model: effectiveModel,
                 autoConfirm: !options.confirm,
                 workspaceRoot: cwd,
                 shell: process.env.SHELL,
@@ -1046,7 +1052,7 @@ program
             'aca',
             {
                 workspace_id: projection.manifest.workspaceId,
-                model: options.model,
+                model: effectiveModel,
                 provider: activeProvider.providerConfig.name,
             },
         );
@@ -1100,6 +1106,7 @@ program
             });
             runtimeOutputChannel = outputChannel;
             const renderer = new Renderer({ output: outputChannel, verbose: options.verbose });
+            outputChannel.stderr(`[aca] model: ${effectiveModel}\n`);
             if (options.verbose) {
                 outputChannel.stderr(`[one-shot] Task: ${task!.slice(0, 100)}${task!.length > 100 ? '...' : ''}\n`);
             }
@@ -1168,7 +1175,7 @@ program
                 writer: projection.writer,
                 sequenceGenerator: projection.sequenceGenerator,
                 provider: activeProvider.provider,
-                model: options.model,
+                model: effectiveModel,
                 tools: toolRegistry.list(),
                 healthMap,
             });
@@ -1176,7 +1183,7 @@ program
             const promptContext = buildRuntimePromptContext(cwd, projection.manifest, healthMap);
             const turnConfig: TurnEngineConfig = {
                 sessionId: projection.manifest.sessionId,
-                model: options.model,
+                model: effectiveModel,
                 provider: activeProvider.providerConfig.name,
                 interactive: false, // 30-step limit, no consecutive tool cap
                 autoConfirm: !options.confirm, // --no-confirm → confirm=false → autoConfirm=true
@@ -1301,7 +1308,7 @@ program
             const version = getVersion();
             renderer.startup({
                 version,
-                model: options.model,
+                model: effectiveModel,
                 provider: activeProvider.providerConfig.name,
                 workspace: cwd,
             });
@@ -1327,7 +1334,7 @@ program
                 provider: activeProvider.provider,
                 providerName: activeProvider.providerConfig.name,
                 toolRegistry,
-                model: options.model,
+                model: effectiveModel,
                 verbose: options.verbose,
                 workspaceRoot: cwd,
                 scrubber,
@@ -1516,7 +1523,7 @@ program
     .option('--blank-timeline', 'Generate a timeline-neutral pack after discovery', false)
     .option('--discover-only', 'Stop after discovery and manifest generation', false)
     .option('--refresh-discovery', 'Force a fresh discovery pass even if a manifest already exists', false)
-    .option('--model <model>', 'Model override for the RP research workflow', 'zai-org/glm-5')
+    .option('--model <model>', 'Model override for the RP research workflow')
     .option('--network-mode <mode>', 'Temporarily set ACA_NETWORK_MODE for generated invoke runs (off, approved-only, open)')
     .option('--max-steps <n>', 'Override max steps for generated invoke runs', value => Number(value))
     .option('--max-tool-calls <n>', 'Override max accepted tool calls for generated invoke runs', value => Number(value))
@@ -1531,7 +1538,7 @@ program
             blankTimeline: boolean;
             discoverOnly: boolean;
             refreshDiscovery: boolean;
-            model: string;
+            model: string | undefined;
             networkMode?: RpNetworkMode;
             maxSteps?: number;
             maxToolCalls?: number;
@@ -1539,6 +1546,11 @@ program
         },
     ) => {
         try {
+            const effectiveModel = options.model;
+            if (!effectiveModel) {
+                process.stderr.write('Error: no model specified. Use --model <model>\n');
+                process.exit(EXIT_ONESHOT_STARTUP);
+            }
             const summary = await runRpResearchWorkflow({
                 series: seriesParts.join(' '),
                 projectRoot: options.projectRoot,
@@ -1548,7 +1560,7 @@ program
                 blankTimeline: options.blankTimeline,
                 discoverOnly: options.discoverOnly,
                 refreshDiscovery: options.refreshDiscovery,
-                model: options.model,
+                model: effectiveModel,
                 networkMode: options.networkMode,
                 maxSteps: options.maxSteps,
                 maxToolCalls: options.maxToolCalls,
@@ -1672,13 +1684,19 @@ program
             ? request.context.model.trim() : '';
         const contextProfile = typeof request.context?.profile === 'string'
             ? request.context.profile.trim() : '';
-        const configuredDefaultModel = config.model?.default || 'qwen/qwen3-coder-next';
+        const configuredDefaultModel = config.model?.default ?? '';
         const effectiveModel = resolveInvokeEffectiveModel(
             contextModel,
             configuredDefaultModel,
             contextProfile,
             activeProvider,
         );
+        if (!effectiveModel) {
+            process.stdout.write(JSON.stringify(
+                buildErrorResponse('system.config_error', 'No model specified. Set model.default in config or include model in request context.'),
+            ) + '\n');
+            process.exit(EXIT_RUNTIME);
+        }
         const contextTemperature = finiteNumberInRange(request.context?.temperature, 0, 2);
         const contextTopP = finiteNumberInRange(
             request.context?.top_p ?? request.context?.topP,
@@ -1719,6 +1737,8 @@ program
             ) + '\n');
             process.exit(EXIT_PROTOCOL);
         }
+
+        process.stderr.write(`[aca] model: ${effectiveModel}\n`);
 
         // --- Ephemeral session ---
         const sessionsDir = join(homedir(), '.aca', 'sessions');
@@ -1817,9 +1837,10 @@ program
             .map(t => t.spec.name)
             .filter(name => effectiveAllowedTools.includes(name));
         const initialPromptContext = buildRuntimePromptContext(cwd, projection.manifest, healthMap);
-        const baseSystemMessages: RequestMessage[] = contextSystemMessages ?? buildInvokeSystemMessages({
+        const baseSystemMessages: RequestMessage[] = contextSystemMessages ?? buildSystemMessagesForTier(activeProfile?.promptTier, {
             cwd,
             toolNames,
+            model: effectiveModel,
             profileName: activeProfile?.name,
             profilePrompt: activeProfile?.systemPrompt,
             projectSnapshot: initialPromptContext.projectSnapshot,

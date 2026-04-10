@@ -17,7 +17,7 @@ import { createAwaitAgentImpl, awaitAgentSpec } from './await-agent.js';
 import { askUserSpec } from '../tools/ask-user.js';
 import { confirmActionSpec } from '../tools/confirm-action.js';
 import { TurnEngine } from '../core/turn-engine.js';
-import { buildInvokeSystemMessages } from '../core/prompt-assembly.js';
+import { buildSystemMessagesForTier } from '../core/prompt-assembly.js';
 import { prepareInvokeTurnConfig, finalizeInvokeTurnState } from '../cli/invoke-runtime-state.js';
 import type { TurnEngineConfig } from '../core/turn-engine.js';
 
@@ -288,9 +288,10 @@ async function runChildAgent(
 
     while (nextTask) {
         tracker.updatePhase(payload.identity.id, 'thinking', null, `Working on ${payload.profile.name} task`);
-        const systemMessages = buildInvokeSystemMessages({
+        const systemMessages = buildSystemMessagesForTier(payload.profile.promptTier, {
             cwd: options.workspaceRoot,
             toolNames: [...payload.tools],
+            model: payload.profile.defaultModel ?? options.model,
             profileName: payload.profile.name,
             profilePrompt: payload.profile.systemPrompt,
         });

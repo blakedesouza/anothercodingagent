@@ -48,7 +48,7 @@ export interface ResolvedConfig {
     defaultProvider: string;
     apiTimeout: number;
     model: {
-        default: string;
+        default: string | null;
         compressionModel: string | null;
         temperature: number;
         maxOutputTokens: number;
@@ -128,11 +128,7 @@ export const CONFIG_DEFAULTS: ResolvedConfig = {
     defaultProvider: 'nanogpt',
     apiTimeout: DEFAULT_API_TIMEOUT_MS,
     model: {
-        // M10.1c (2026-04-06): chosen via executor model evaluation over 7
-        // subscription candidates. qwen/qwen3-coder-next was the only model to
-        // give a concise format-compliant final answer after multi-step tool
-        // use on the harder benchmark. See docs/changelog.md M10.1c entry.
-        default: 'qwen/qwen3-coder-next',
+        default: null,
         compressionModel: null,
         temperature: 0.1,
         maxOutputTokens: 16384,
@@ -211,7 +207,7 @@ export const configJsonSchema = {
         model: {
             type: 'object',
             properties: {
-                default: { type: 'string' },
+                default: { type: ['string', 'null'] },
                 compressionModel: { type: ['string', 'null'] },
                 temperature: { type: 'number', minimum: 0, maximum: 2 },
                 maxOutputTokens: { type: 'number', minimum: 1 },

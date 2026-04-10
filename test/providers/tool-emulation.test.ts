@@ -62,8 +62,8 @@ describe('buildToolSchemaPrompt', () => {
         expect(prompt).toContain('name');
         expect(prompt).toContain('arguments');
         expect(prompt).toContain('Do not wrap the JSON in Markdown fences');
-        expect(prompt).toContain('Do not restate the goal');
-        expect(prompt).toContain('Do not emit XML, HTML, or pseudo-tool wrappers');
+        expect(prompt).toContain('Do not deliberate over the protocol');
+        expect(prompt).toContain('NOT available in this session');
     });
 });
 
