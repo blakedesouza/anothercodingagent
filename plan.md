@@ -34,11 +34,11 @@
 
 **C11.8 Bug 1 FIXED (commit `0912435`):** `buildDirectoryTree` default maxDepth 2→3; "3-level listing" text updates; prompt guidance about `cli/`-style sibling dirs added to both prompts. 2 regression tests. 2632 passing.
 
-**Next:** Fix kimi + qwen model hints, then run the 4-test retest suite. See `docs/handoff-c11-8-retest.md`.
-- Fix A: kimi hint — anchor on literal function names, don't substitute related concepts
-- Fix B: qwen hint — no blockquote wrapping, output only JSON or Markdown
-- Then run tests 1, 3, A, B in order (not parallel)
-- After all pass: continuation round disk persistence (write each round's response to `/tmp/aca-consult-{witness}-round-{n}-{suffix}.md` in `runWitness()`)
+**Kimi/qwen model hints: COMPLETE (2026-04-10).** Both hints added to `src/prompts/model-hints.ts`. 4-test retest passed (1-retry 4/4, 3-retry 4/4, A 4/4, B 4/4). 2632 tests still passing.
+
+**Symbol-lookup: COMPLETE (2026-04-10, commit `a1f1042`).** `src/consult/symbol-lookup.ts` (extractCodeIdentifiers + resolveSymbolLocations), `<symbol_locations>` block injected into `buildContextRequestPrompt`, wired in `runWitness()`. 9 new tests. 3/3 live tests: all 4 witnesses navigated directly to the correct `src/cli/` file (previously kimi/gemma declared functions absent). 2641 tests passing.
+
+**Also open:** Continuation round disk persistence — in `runWitness()` in `src/cli/consult.ts`, write each extra round's response to `/tmp/aca-consult-{witness}-round-{n}-{suffix}.md` so post-mortem debugging is possible when a witness fails mid-loop.
 
 **C11.7 (multi-round context-request loop + tree support): COMPLETE.**
 - All 9 steps committed; 2630 passing / 14 pre-existing failures

@@ -42,6 +42,22 @@ Living record of design and implementation work on Another Coding Agent (ACA). O
 
 ---
 
+## 2026-04-10 — Symbol Lookup Injection in Consult Pipeline
+
+**Problem:** When a consult question contained a literal function name (e.g. `countHardRejectedToolCalls`), kimi and gemma would over-infer from the name, navigate to plausible-sounding but wrong files, and declare the function absent. Proved experimentally: semantic phrasing fixed navigation but literal function names reliably caused wrong-file guesses.
+
+**Fix:** Pre-locate code identifiers before witnesses start. Three new pieces:
+
+- **`src/consult/symbol-lookup.ts`** (new): `extractCodeIdentifiers` — regex extracts camelCase/PascalCase multi-word identifiers from question text, filtered to ≥6 chars, capped at 5. `resolveSymbolLocations` — greps `src/` with rg (fallback: grep) for all standard export forms, returns file:line for the first match of each identifier.
+- **`src/consult/context-request.ts`**: `buildContextRequestPrompt` gains optional `symbolLocations?` parameter. When non-empty, a `<symbol_locations>` block listing pre-verified file:line locations is injected before the navigation protocol.
+- **`src/cli/consult.ts`**: `runWitness()` calls `extractCodeIdentifiers` + `resolveSymbolLocations` before building the round-1 prompt, passes results to `buildContextRequestPrompt`.
+
+**Result:** 9 new tests. 3/3 live consult commands with literal function names across 4 witnesses each — all witnesses navigated directly to the correct `src/cli/` file. Previously kimi and gemma declared the functions absent.
+
+**Commit:** `a1f1042`
+
+---
+
 ## 2026-04-10 — C11.2 Per-Model Hint Infrastructure
 
 Added the wiring needed for model-specific system prompt hints. Zero behavioral change (registry is empty; hints are populated in C11.3).
