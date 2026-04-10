@@ -1,9 +1,12 @@
-import { readFileSync } from 'node:fs';
-import { resolve, isAbsolute, relative } from 'node:path';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { resolve, isAbsolute, relative, join } from 'node:path';
 import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
 import { getModelHints } from '../prompts/model-hints.js';
+import { IGNORE_DIRS } from './evidence-pack.js';
 
 export interface ContextRequest {
+    /** 'file' (default) reads line ranges; 'tree' returns a directory listing. */
+    type?: 'file' | 'tree';
     path: string;
     line_start: number;
     line_end: number;
@@ -11,6 +14,7 @@ export interface ContextRequest {
 }
 
 export interface ContextSnippet {
+    type?: 'file' | 'tree';
     path: string;
     line_start: number;
     line_end: number;
@@ -23,15 +27,20 @@ export interface ContextSnippet {
 }
 
 export interface ContextRequestLimits {
+    /** Max snippets (file or tree) per context-request round. */
     maxSnippets: number;
     maxLines: number;
     maxBytes: number;
+    /** Max context-request rounds before forced finalization. The round count
+     *  is the anti-runaway governor; snippet count is a per-round generosity cap. */
+    maxRounds: number;
 }
 
 export const DEFAULT_CONTEXT_REQUEST_LIMITS: ContextRequestLimits = {
-    maxSnippets: 3,
-    maxLines: 120,
-    maxBytes: 8_000,
+    maxSnippets: 8,    // per round — witnesses get the files they ask for
+    maxLines: 300,     // full file coverage, not half a file
+    maxBytes: 24_000,  // follows from maxLines
+    maxRounds: 3,      // tree → files → one more if needed → finalize
 };
 
 function extractJsonPayload(text: string): string {
@@ -266,15 +275,62 @@ function normalizeContextRequests(rawRequests: unknown[], limits: ContextRequest
         const record = raw as Record<string, unknown>;
         const path = typeof record.path === 'string' ? record.path.trim() : '';
         if (!path) continue;
+        const reason = typeof record.reason === 'string' ? record.reason.trim().slice(0, 300) : '';
+
+        // Tree requests don't use line ranges.
+        const rawType = typeof record.type === 'string' ? record.type : 'file';
+        if (rawType === 'tree') {
+            requests.push({ type: 'tree', path, line_start: 0, line_end: 0, reason });
+            continue;
+        }
+
         const rawStart = typeof record.line_start === 'number' ? record.line_start : Number(record.line_start ?? 1);
         const rawEnd = typeof record.line_end === 'number' ? record.line_end : Number(record.line_end ?? rawStart + limits.maxLines - 1);
         const lineStart = Number.isFinite(rawStart) ? Math.max(1, Math.floor(rawStart)) : 1;
         const proposedEnd = Number.isFinite(rawEnd) ? Math.floor(rawEnd) : lineStart + limits.maxLines - 1;
         const lineEnd = Math.max(lineStart, Math.min(proposedEnd, lineStart + limits.maxLines - 1));
-        const reason = typeof record.reason === 'string' ? record.reason.trim().slice(0, 300) : '';
         requests.push({ path, line_start: lineStart, line_end: lineEnd, reason });
     }
     return requests;
+}
+
+/**
+ * Build a 2-level directory tree listing for a given path, skipping ignored
+ * directories. Used to satisfy `type: "tree"` context requests so witnesses
+ * can orient themselves before requesting specific files.
+ */
+function buildDirectoryTree(root: string, relPath: string, maxDepth = 2): string {
+    const absPath = resolve(root, relPath);
+    const lines: string[] = [`${relPath}/`];
+
+    function walk(dir: string, depth: number, prefix: string): void {
+        if (depth > maxDepth) return;
+        let entries: string[];
+        try {
+            entries = readdirSync(dir).sort();
+        } catch {
+            return;
+        }
+        for (const entry of entries) {
+            if (IGNORE_DIRS.has(entry) || entry.startsWith('bug-report-')) continue;
+            const entryPath = join(dir, entry);
+            let isDir = false;
+            try {
+                isDir = statSync(entryPath).isDirectory();
+            } catch {
+                continue;
+            }
+            if (isDir) {
+                lines.push(`${prefix}  ${entry}/`);
+                walk(entryPath, depth + 1, `${prefix}  `);
+            } else {
+                lines.push(`${prefix}  ${entry}`);
+            }
+        }
+    }
+
+    walk(absPath, 1, '');
+    return lines.join('\n');
 }
 
 function parseAlternateFileRequests(payload: unknown, limits: ContextRequestLimits): ContextRequest[] {
@@ -346,6 +402,45 @@ export function fulfillContextRequests(
             });
             continue;
         }
+
+        // Tree request: return a 2-level directory listing instead of file lines.
+        if (request.type === 'tree') {
+            try {
+                const stat = statSync(resolved);
+                if (!stat.isDirectory()) {
+                    snippets.push({
+                        ...request,
+                        status: 'error',
+                        error: 'path is not a directory',
+                        bytes: 0,
+                        truncated: false,
+                        text: '',
+                    });
+                } else {
+                    const text = buildDirectoryTree(root, request.path);
+                    snippets.push({
+                        ...request,
+                        status: 'ok',
+                        error: null,
+                        bytes: Buffer.byteLength(text, 'utf8'),
+                        truncated: false,
+                        text,
+                    });
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                snippets.push({
+                    ...request,
+                    status: 'error',
+                    error: message.slice(0, 300),
+                    bytes: 0,
+                    truncated: false,
+                    text: '',
+                });
+            }
+            continue;
+        }
+
         try {
             const lines = readFileSync(resolved, 'utf8').split(/\r?\n/);
             const start = request.line_start;
@@ -377,10 +472,16 @@ export function fulfillContextRequests(
 
 export function renderContextSnippets(snippets: ContextSnippet[]): string {
     return snippets.map(snippet => {
-        const heading = `### ${snippet.path}:${snippet.line_start}-${snippet.line_end}`;
+        const isTree = snippet.type === 'tree';
+        const heading = isTree
+            ? `### tree: ${snippet.path}`
+            : `### ${snippet.path}:${snippet.line_start}-${snippet.line_end}`;
         const reason = `Reason: ${snippet.reason || '(none provided)'}`;
         if (snippet.status === 'error') return `${heading}\n${reason}\n\nERROR: ${snippet.error}`;
-        return `${heading}\n${reason}\n\n\`\`\`text\n${snippet.text}\n\`\`\`${snippet.truncated ? '\n\n[truncated]' : ''}`;
+        const truncationNote = snippet.truncated
+            ? `\n\n[TRUNCATED — content exceeds the ${snippet.bytes}-byte limit. Use needs_context to request specific line ranges from this file if more context is needed.]`
+            : '';
+        return `${heading}\n${reason}\n\n\`\`\`text\n${snippet.text}\n\`\`\`${truncationNote}`;
     }).join('\n\n');
 }
 

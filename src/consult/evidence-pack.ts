@@ -34,7 +34,7 @@ const ABSOLUTE_MAX_FILES = 10;
 const DEFAULT_MAX_FILES = 5;
 const DEFAULT_MAX_FILE_BYTES = 8_000;
 const DEFAULT_MAX_TOTAL_BYTES = 240_000;
-const IGNORE_DIRS = new Set([
+export const IGNORE_DIRS = new Set([
     '.git',
     'node_modules',
     'dist',

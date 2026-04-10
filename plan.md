@@ -29,6 +29,13 @@
 
 **Next:** C11.6 — tool emulation prompt hardening (worked JSON example, model anti-patterns).
 
+**C11.7 (multi-round context-request loop + tree support): IN PROGRESS.**
+- Step 1 ✓ — `ContextRequest.type?: 'file'|'tree'`, `ContextRequestLimits.maxRounds`, defaults raised (snippets 3→8, lines 120→300, bytes 8K→24K, rounds default 3)
+- Step 2 ✓ — `IGNORE_DIRS` exported from `evidence-pack.ts`
+- Step 3 NEXT — tree parse/fulfill/render in `context-request.ts`
+- Steps 4-9 pending (continuation prompt, loop refactor, CLI flags, tests)
+- Plan: `/home/blake/.claude/plans/tender-dazzling-sundae.md`
+
 ## Current State (2026-03-30)
 
 **Phase 0: COMPLETE.** Scaffolding + test infrastructure committed (`7f65065`).
