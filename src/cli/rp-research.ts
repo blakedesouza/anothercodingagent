@@ -531,6 +531,7 @@ function buildWorldTask(
                 'Keep it separate from the broader world synopsis.',
                 'Do not use it for narrator guidance, tone guidance, spoiler or timeline constraints, taxonomy like `normal/unusual/forbidden`, or generic genre explanation.',
             ]),
+        `Protocol: after gathering context, your next assistant turn MUST be a real \`write_file\` tool call for "${workspacePath}". A text-only response that announces intent (e.g. "Writing the file now") without making the tool call is a protocol error and will cause the task to fail.`,
     ].join('\n');
 }
 
@@ -548,8 +549,9 @@ function buildLocationTask(
         maybeReferencePath(paths.projectRoot, 'EXAMPLE/world/locations/royal_biblia_academy.txt'),
     ], 'Inspect these local references before you write the file:', 'Inspect the discovery files first if you need format guidance.');
 
+    const workspacePath = workspaceRelativeOutputPath(paths.seriesSlug, entry.path);
     return [
-        `Research "${series}" and write the location file for "${entry.name}" at "${workspaceRelativeOutputPath(paths.seriesSlug, entry.path)}".`,
+        `Research "${series}" and write the location file for "${entry.name}" at "${workspacePath}".`,
         `Assigned topic: ${entry.topic}.`,
         referenceLines,
         'This is an RP-facing location doc, not a wiki article.',
@@ -564,6 +566,7 @@ function buildLocationTask(
         'If one page lookup fails or a source title is missing, correct the next tool call or continue from the evidence already gathered. Do not stop and do not narrate fake tool calls.',
         'Describe factual location shape only. Do not add daily routine, beat-by-beat usage, or ambient fluff for its own sake.',
         'Use tools immediately, inspect only what is still needed, and write the assigned file.',
+        `Protocol: after gathering context, your next assistant turn MUST be a real \`write_file\` tool call for "${workspacePath}". A text-only response that announces intent (e.g. "Writing the file now") without making the tool call is a protocol error and will cause the task to fail.`,
     ].join('\n');
 }
 
@@ -581,8 +584,9 @@ function buildCharacterTask(
         maybeReferencePath(paths.projectRoot, 'EXAMPLE/world/characters/arata_kasuga.txt'),
     ], 'Inspect these local references before you write the file:', 'Inspect the discovery files first if you need format guidance.');
 
+    const workspacePath = workspaceRelativeOutputPath(paths.seriesSlug, entry.path);
     return [
-        `Research "${series}" and write the character file for "${entry.name}" at "${workspaceRelativeOutputPath(paths.seriesSlug, entry.path)}".`,
+        `Research "${series}" and write the character file for "${entry.name}" at "${workspacePath}".`,
         `Assigned character topic: ${entry.topic}. Tier: ${entry.tier}.`,
         referenceLines,
         'This is an RP-facing portrayal document for an LLM, not a fandom encyclopedia profile.',
@@ -608,6 +612,7 @@ function buildCharacterTask(
         'Never emit literal pseudo-tool markup such as `<tool_call>` or quoted function-call text. If you need a tool, make the real tool call instead.',
         'If one page lookup fails or a source title is missing, correct the next tool call or continue from the evidence already gathered. Do not stop and do not narrate fake tool calls.',
         'Use tools immediately, inspect only the sources needed, and write the assigned file.',
+        `Protocol: after gathering context, your next assistant turn MUST be a real \`write_file\` tool call for "${workspacePath}". A text-only response that announces intent (e.g. "Writing the file now") without making the tool call is a protocol error and will cause the task to fail.`,
     ].join('\n');
 }
 
@@ -916,7 +921,7 @@ async function runRpInvokeTask(
     const envOverride: Record<string, string> = { ACA_SESSION_TAG: sessionTag };
     if (options.networkMode) envOverride.ACA_NETWORK_MODE = options.networkMode;
 
-    const execute = () => withEnvOverride(envOverride, () => runAcaInvoke(task, {
+    const makeExecute = (t: string) => () => withEnvOverride(envOverride, () => runAcaInvoke(t, {
         cwd: projectRoot,
         profile: 'rp-researcher',
         model: options.model,
@@ -929,15 +934,22 @@ async function runRpInvokeTask(
     const sessionsDir = join(homedir(), '.aca', 'sessions');
 
     let priorErrorMessage: string | null = null;
+    let priorAttemptMissedOutputs = false;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
+        // On retry after a missing-output failure, prepend a forced-write instruction so the
+        // model does not repeat the announce-without-acting pattern.
+        const currentTask = (attempt === 2 && priorAttemptMissedOutputs)
+            ? `RETRY: a prior attempt at this task ended with a text announcement ("Writing the file now") without calling \`write_file\`. Your FIRST tool call in this session MUST be \`write_file\` for the required output path. Do not plan, do not announce, do not fetch more pages — act immediately.\n\n${task}`
+            : task;
         const priorSessionIds = snapshotSessionIds(sessionsDir);
-        const result = await execute();
+        const result = await makeExecute(currentTask)();
         const response = parseInvokeOutput(result.stdout, result.stderr, result.exitCode);
         if (response.status !== 'error') {
             return;
         }
 
         if (response.errors?.some(error => error.code === 'turn.required_outputs_missing')) {
+            priorAttemptMissedOutputs = true;
             const freshSessionDir = findFreshSessionDir(sessionsDir, priorSessionIds, projectRoot, sessionTag);
             if (freshSessionDir) {
                 const salvagedPath = salvagePseudoWriteFromSession(
@@ -1099,6 +1111,8 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
     {
         const results = await Promise.allSettled(
             manifest.world_files.map(entry => limit(async () => {
+                const fullPath = resolveSeriesFilePath(paths.seriesDir, entry.path);
+                if (existsSync(fullPath)) return fullPath;
                 const workspaceOutputPath = workspaceRelativeOutputPath(seriesSlug, entry.path);
                 await runRpInvokeTask(
                     buildWorldTask(series, paths, entry, selectedTimeline),
@@ -1112,7 +1126,7 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
                         networkMode: options.networkMode,
                     },
                 );
-                return resolveSeriesFilePath(paths.seriesDir, entry.path);
+                return fullPath;
             })),
         );
         const failures = results
@@ -1128,6 +1142,8 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
     {
         const results = await Promise.allSettled(
             manifest.location_files.map(entry => limit(async () => {
+                const fullPath = resolveSeriesFilePath(paths.seriesDir, entry.path);
+                if (existsSync(fullPath)) return fullPath;
                 const workspaceOutputPath = workspaceRelativeOutputPath(seriesSlug, entry.path);
                 await runRpInvokeTask(
                     buildLocationTask(series, paths, entry, selectedTimeline),
@@ -1141,7 +1157,7 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
                         networkMode: options.networkMode,
                     },
                 );
-                return resolveSeriesFilePath(paths.seriesDir, entry.path);
+                return fullPath;
             })),
         );
         const failures = results
@@ -1157,20 +1173,22 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
     {
         const results = await Promise.allSettled(
             manifest.character_files.map(entry => limit(async () => {
-                const workspaceOutputPath = workspaceRelativeOutputPath(seriesSlug, entry.path);
-                await runRpInvokeTask(
-                    buildCharacterTask(series, paths, entry, selectedTimeline),
-                    projectRoot,
-                    {
-                        requiredOutputPaths: [workspaceOutputPath],
-                        model,
-                        deadlineMs: invokeDeadlineMs,
-                        maxSteps: options.maxSteps ?? 22,
-                        maxToolCalls: options.maxToolCalls,
-                        networkMode: options.networkMode,
-                    },
-                );
                 const fullPath = resolveSeriesFilePath(paths.seriesDir, entry.path);
+                const workspaceOutputPath = workspaceRelativeOutputPath(seriesSlug, entry.path);
+                if (!existsSync(fullPath)) {
+                    await runRpInvokeTask(
+                        buildCharacterTask(series, paths, entry, selectedTimeline),
+                        projectRoot,
+                        {
+                            requiredOutputPaths: [workspaceOutputPath],
+                            model,
+                            deadlineMs: invokeDeadlineMs,
+                            maxSteps: options.maxSteps ?? 22,
+                            maxToolCalls: options.maxToolCalls,
+                            networkMode: options.networkMode,
+                        },
+                    );
+                }
                 const validation = validateCharacterMarkdown(readFileSync(fullPath, 'utf8'));
                 if (!validation.valid) {
                     await runRpInvokeTask(
