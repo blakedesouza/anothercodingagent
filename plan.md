@@ -24,13 +24,12 @@
 - C11.3 (driver fixes + preamble strip): **COMPLETE** — DeepSeek emulation protocol fix + Qwen preamble strip at all yield sites
 - C11.4 (tool description enrichment): **COMPLETE** — 3-4 sentence descriptions for 5 priority tools, 2-3 for 6 secondary tools
 - C11.5 (consult surface hardening): **COMPLETE** — buildContextRequestPrompt path-confidence guard; buildTriagePrompt un-evidenced-absence hardening; buildFinalizationPrompt model hints support. Verified: 2 clean consult runs, 0 tool calls across 4 witnesses + triage.
-- C11.6 (tool emulation hardening): **NEXT** — worked JSON example + model-specific anti-patterns in tool-emulation.ts
-- C11.7 (regression tests + validation matrix): pending — structural tests + C11.1 battery re-run
+- C11.6 (tool emulation hardening): **COMPLETE** — Part A: `stripBlockquoteMarkers` in `context-request.ts`, wired at both `classifyWitnessFirstPass` call sites. Part B: worked CORRECT/WRONG examples in `buildToolSchemaPrompt`. Also: pseudo-tool-call changed to `retryable:true`; identifier obfuscation (`src/consult/identifier-obfuscation.ts`) preprocesses consult questions — camelCase/PascalCase/snake_case tokens → A/B/C labels + legend, wired in `runConsult`. **Post-validation additions (2026-04-10)**: (1) context-request prompt placeholder fix — `relative/path.ts` → `src/path/to/file.ts` + explicit anti-copy instruction in all 3 prompt builders; (2) `LOADED_TERMS` blocklist in `identifier-obfuscation.ts` — hyphenated compounds (`pseudo-tool-call`, `pseudo-tool-use`, `function-call`, `tool-call`, `api-call`, `tool-use`) now obfuscated alongside camelCase/snake_case. 2661 passing, 14 pre-existing failures, 1 skipped. **All live-validated**: placeholder fix → qwen requested real path `src/consult/identifier-obfuscation.ts` (was copying template); loaded-terms fix → `classifyWitnessFirstPass`+`pseudo-tool-call` question now qwen ok/success_count 4 (was status:error).
+- C11.7 (regression tests + validation matrix): **COMPLETE** — C11.1 battery re-run 4×S1/S3/S4. P1 FIXED (DeepSeek 114KB parallel reads clean). S3 4/4 PASS after backtick-wrapping XML examples in prompts (qwen quoted them verbatim → false pseudo-tool-call detection). Gemma index=0 collision fix validated. Battery results: /tmp/c11.7-battery-results.md
 
 **C11.8 (classification bug): FIXED (commit 9da83a0).** `extractJsonPayload` heuristic misfired on `{}` inside inline backtick code spans. Fix: blank inline spans before scanning. Live-validated 7 runs; gemma forced-trigger confirmed. 2630 tests passing.
 
-**C11.8 remaining open:**
-- Continuation round responses not persisted to disk (open)
+**C11.8 remaining open:** (none — continuation round disk persistence complete 2026-04-10)
 
 **C11.8 Bug 1 FIXED (commit `0912435`):** `buildDirectoryTree` default maxDepth 2→3; "3-level listing" text updates; prompt guidance about `cli/`-style sibling dirs added to both prompts. 2 regression tests. 2632 passing.
 
@@ -38,9 +37,11 @@
 
 **Symbol-lookup: COMPLETE (2026-04-10, commit `a1f1042`).** `src/consult/symbol-lookup.ts` (extractCodeIdentifiers + resolveSymbolLocations), `<symbol_locations>` block injected into `buildContextRequestPrompt`, wired in `runWitness()`. 9 new tests. 3/3 live tests: all 4 witnesses navigated directly to the correct `src/cli/` file (previously kimi/gemma declared functions absent). 2641 tests passing.
 
+**C11 Gauntlet: COMPLETE (2026-04-10, 9/10 PASS).** 10-test end-to-end regression run. 01–08 PASS, 10 PASS. Test 09 PARTIAL FAIL → root cause found and fixed (commit `2a69263`): all 3 `buildContextRequestPrompt`/`buildContinuationPrompt`/`buildSharedContextRequestPrompt` sites had literal `"src/path/to/file.ts"` + `"short concrete reason"` in worked-example JSON blocks. qwen copied them verbatim. Fix: replaced both with angle-bracket tokens (`<real/repo/relative/path.ts>`, `<your specific reason>`) — verbatim copy now fails `JSON.parse` in `parseContextRequests` rather than silently ENOENT-ing. Live-validated: qwen re-test PASS (requested `src/consult/context-request.ts:340-380` with real reason). 2661 tests still passing.
+
 **C11.6 handoff written (2026-04-10).** Two-part: (A) `stripBlockquoteMarkers` exported from `context-request.ts`, wired into `classifyWitnessFirstPass` call sites in `runWitness()` — fixes qwen/qwen3.5 blockquote-wrapped needs_context being silently swallowed; (B) worked JSON example + anti-patterns added to `buildToolSchemaPrompt` in `tool-emulation.ts`. Pre-written tests + live test in `docs/handoff-c11.6.md`. Prompt: `docs/handoff-c11.6-prompt.md`.
 
-**Also open:** Continuation round disk persistence — in `runWitness()` in `src/cli/consult.ts`, write each extra round's response to `/tmp/aca-consult-{witness}-round-{n}-{suffix}.md` so post-mortem debugging is possible when a witness fails mid-loop.
+**Continuation round disk persistence: COMPLETE (2026-04-10).** See C11.8 remaining open above.
 
 **C11.7 (multi-round context-request loop + tree support): COMPLETE.**
 - All 9 steps committed; 2630 passing / 14 pre-existing failures

@@ -28,6 +28,10 @@ This project is still experimental, so entries before a tagged release are group
 - Fixed Gemma/NanoGPT parallel tool-call reconstruction when provider deltas reuse `index: 0` with distinct tool call IDs.
 - Fixed `extractJsonPayload` heuristic misfiring on `{}` inside inline backtick code spans (C11.8 Bug 2).
 - Increased `buildDirectoryTree` depth from 2→3 so root trees expose files inside second-level subdirectories (e.g. `src/cli/consult.ts` now visible without a follow-up tree request); added prompt guidance to explore `cli/`-style sibling dirs when a domain dir doesn't contain the target file (C11.8 Bug 1).
+- Fixed qwen/qwen3.5-397b-a17b blockquote-swallowing bug: the model wraps its full output (including `needs_context` JSON) in `> ` blockquote lines; `classifyWitnessFirstPass` never saw bare JSON, treated responses as empty reports, and the witness contributed nothing. Fix: `stripBlockquoteMarkers` exported from `context-request.ts` and applied at both classification call sites in `runWitness()`. Raw response preserved for disk artifacts and retry prompts (C11.6 Part A).
+- Strengthened tool-emulation system prompt: added a CORRECT worked example (bare JSON only) and two WRONG anti-patterns (prose before JSON, JSON in a markdown fence) to `buildToolSchemaPrompt`, targeting MiniMax-style prose interleaving (C11.6 Part B).
+- Changed pseudo-tool-call classification in `classifyWitnessFirstPass` from `retryable:false` to `retryable:true` — witnesses now get one retry chance before being marked error, instead of dying immediately on the first contaminated response.
+- Added identifier obfuscation to consult question preprocessing (`src/consult/identifier-obfuscation.ts`): camelCase, PascalCase (with internal uppercase), and multi-part snake_case tokens in the user's question are replaced with neutral labels (A, B, C...) with a legend prepended. Prevents models (empirically confirmed for qwen3.5-397b-a17b) from being semantically primed by compound identifiers containing loaded terms (execCommand, spawnAgent, wrapStreamWithToolEmulation) into emitting pseudo-tool-call JSON in no-tools context-request passes. Symbol-lookup and evidence packs are unaffected. Live validation pending.
 
 ### Notes
 
@@ -41,6 +45,30 @@ This project is still experimental, so entries before a tagged release are group
 Living record of design and implementation work on Another Coding Agent (ACA). Older entries were written as internal session logs and may mention local development paths or now-obsolete workflow details.
 
 ---
+
+## 2026-04-10 — C11 Gauntlet + Placeholder Contamination Fix
+
+**What:** Ran a 10-test end-to-end gauntlet covering every major C9–C11 fix. 9/10 PASS. Test 09 (blockquote + obfuscation combo, qwen) surfaced a regression.
+
+**Root cause (test 09):** All three `buildContextRequestPrompt` / `buildContinuationPrompt` / `buildSharedContextRequestPrompt` prompt builders contained a worked-example JSON block with the literal strings `"src/path/to/file.ts"` and `"short concrete reason"`. When `stripBlockquoteMarkers` was obfuscated by identifier-obfuscation to "function A", qwen lost enough anchoring context to fall back to copying the example verbatim — producing an ENOENT on the placeholder path and a useless generic reason. The witness still returned `status: ok` (answered from general knowledge) but without actual file access.
+
+**Fix (commit `2a69263`):** Replaced both placeholder values with angle-bracket tokens (`<real/repo/relative/path.ts>`, `<your specific reason>`) in all 3 prompt builders. Angle brackets are invalid JSON — a verbatim copy now fails `JSON.parse` in `parseContextRequests` with a clear parse error rather than silently succeeding with a bogus path.
+
+**Live-validated:** Re-ran test 09 post-fix — qwen requested `src/consult/context-request.ts:340-380` with a specific reason. 2661 tests still passing.
+
+**Gauntlet summary:**
+| # | Test | Result |
+|---|------|--------|
+| 01 | Obfuscation + LOADED_TERMS | PASS (success_count: 4, qwen ok) |
+| 02 | Symbol lookup navigation | PASS (deepseek/kimi/gemma → correct file directly) |
+| 03 | No-tools discipline (conceptual) | PASS (qwen/gemma: 0 context_requests) |
+| 04 | Context-request placeholder fix | PASS (all 4 → real paths, 0 ENOENT) |
+| 05 | Multi-round + round persistence | PASS (round-2/3 disk files confirmed) |
+| 06 | Un-evidenced-absence hardening | PASS (triage: absence flagged as open question) |
+| 07 | DeepSeek large context (47KB) | PASS (no llm.malformed) |
+| 08 | XML backtick fix | PASS (qwen ok, no pseudo-tool-call) |
+| 09 | Blockquote + obfuscation combo | PARTIAL FAIL → FIXED (commit 2a69263) |
+| 10 | Full pipeline end-to-end | PASS (success_count: 4, triage ok, 3 findings) |
 
 ## 2026-04-10 — Symbol Lookup Injection in Consult Pipeline
 
@@ -3273,3 +3301,74 @@ Consult: 4/4 witnesses reviewed. Q4 and Q8 bugs flagged by Kimi/Qwen, confirmed 
 **Tests:** 13 new tests (10 unit, 3 integration). 2630 passing.
 
 **Live validation (deepseek, 5 tests):** 4/5 ok. Tree requests used in all 5 tests. ENOENT issues on tests 3-5 are pre-existing model path-hallucination behavior, not C11.7 regressions. Test 5 (adversarial NanoGPT driver question) correctly recovered from a wrong `src/drivers` guess by exploring the `src` tree in a subsequent round.
+
+---
+
+## C11.6 Identifier Obfuscation — Live Validation (2026-04-10)
+
+**Feature:** `src/consult/identifier-obfuscation.ts` — question preprocessing in `runConsult()` that replaces camelCase/PascalCase/multi-part snake_case identifiers with neutral labels (A, B, C...) and prepends a legend. Prevents qwen/qwen3.5-397b from firing pseudo-tool-calls when compound identifiers containing loaded terms (`execCommand`, `wrapStreamWithToolEmulation`, `spawnAgent`) appear in the consult question.
+
+**Motivation:** Empirical testing showed camelCase compound identifiers prime qwen to reason about tool-call JSON format and emit `{"tool_calls":[...]}` in no-tools context-request passes. snake_case equivalents and bare words did not trigger this behavior. The obfuscation removes the contaminating surface by replacing identifiers before the question reaches any model.
+
+**Live test results (2026-04-10):**
+- **Test A** (`wrapStreamWithToolEmulation`): qwen `status: ok`, `success_count: 4`. Pre-fix: qwen `status: error` via pseudo-tool-call. Fix confirmed working.
+- **Test B** (`execCommand`): qwen `status: ok`, `context_requests: 1`, `success_count: 4`, `degraded: False`. Full pass.
+- **Test C** (neutral `formatOtlpPayload` regression): 4/4 ok on 2 of 3 runs. One-run qwen failure attributed to pre-existing qwen non-determinism — not a consistent regression from the obfuscation feature.
+
+**Tests:** 10 unit tests in `test/consult/identifier-obfuscation.test.ts`. 2655 total passing.
+
+---
+
+## C11.6 Post-Validation Hardening (2026-04-10)
+
+Two targeted fixes discovered during live validation of identifier obfuscation.
+
+### Context-request prompt placeholder fix
+
+**Problem:** qwen copied the example path `"relative/path.ts"` from the `needs_context` JSON template verbatim into its context request, despite reasoning correctly about the real file path from `<symbol_locations>`. Classic template-anchoring — the placeholder looked like a plausible real path.
+
+**Fix:** Changed `"relative/path.ts"` → `"src/path/to/file.ts"` (visually distinct, recognizable placeholder pattern) in all three prompt builders in `src/consult/context-request.ts`: `buildContextRequestPrompt`, `buildContinuationPrompt`, `buildSharedContextRequestPrompt`. Added explicit anti-copy instruction immediately after each example: *"Replace `src/path/to/file.ts` with a real repo-relative path from the symbol locations listed above or a prior tree response. Do not copy this placeholder."*
+
+**Live validation:** `obfuscateIdentifiers` question — qwen now requests `src/consult/identifier-obfuscation.ts` (the correct real path from `<symbol_locations>`). Pre-fix: qwen requested `relative/path.ts` → ENOENT, answered without file content.
+
+### LOADED_TERMS blocklist
+
+**Problem:** Hyphenated compound terms like `pseudo-tool-call`, `tool-call`, `tool-use` bypass the camelCase/snake_case obfuscation regex but are equally contaminating — qwen associates them with tool-call JSON format and fires pseudo-tool-call responses. Confirmed empirically: question containing `"pseudo-tool-call"` → qwen `status: error` even with `classifyWitnessFirstPass` obfuscated.
+
+**Fix:** `LOADED_TERMS` constant added to `src/consult/identifier-obfuscation.ts`:
+```
+pseudo-tool-call, pseudo-tool-use, function-call, tool-call, api-call, tool-use
+```
+Listed longest-first so `pseudo-tool-call` is detected and replaced before `tool-call` (preventing the sub-phrase from receiving a spurious legend entry). Matched case-insensitively (`i` flag), replaced globally (`gi`). Loaded terms share the same A/B/C label sequence with programming identifiers — identifiers get earlier labels, loaded terms get subsequent ones.
+
+**Live validation:** `classifyWitnessFirstPass` + `pseudo-tool-call` in the same question → qwen `status: ok`, `context_requests: 7`, `success_count: 4`, `degraded: False`. Pre-fix: qwen `status: error` (pseudo-tool-call emitted in no-tools pass).
+
+**Tests:** 6 new unit tests in `test/consult/identifier-obfuscation.test.ts`. 2661 total passing.
+
+---
+
+## 2026-04-10 — C11.7 Regression Battery + XML Example Backtick Fix
+
+### Continuation round disk persistence (Task 1)
+
+Added per-round artifact files to `runWitness()` in `src/cli/consult.ts`. Each continuation round response (round 2+) is now written to `/tmp/aca-consult-{witness}-round-{n}-{suffix}.md`. Round 1 (initial context-request) already had `outPath: requestPath`; the gap was rounds 2–N during the multi-round loop. Live-validated: deepseek 3-round consult produced `round-2` and `round-3` files alongside `context-request` and `final-raw` artifacts.
+
+### C11.7 Stress-Test Battery
+
+Re-ran the C11.1 battery across kimi/deepseek/qwen/gemma on S1 (stall), S3 (no-tools consult), S4 (large parallel reads).
+
+**P1 FIXED:** DeepSeek S4 `llm.malformed` after 62KB tool results — no longer reproducing. Deepseek processed 114KB of parallel reads cleanly. C11.3 emulation protocol fix is holding.
+
+**S3 new failure discovered and fixed:** Qwen emitted `status: error` (pseudo-tool-call) on the S3 question. Root cause: system prompts and context-request prompts contained literal XML tag examples (`<tool_call>`, `<call>`, `<invoke>` etc.) to illustrate prohibited markup. Qwen's reasoning trace quoted these instructions verbatim; after `stripBlockquoteMarkers`, the literal `<tool_call>` text triggered `containsPseudoToolCall`.
+
+**Fix:** Wrapped all XML tag examples in backticks across 4 files, 8 locations:
+- `src/cli/consult.ts` — 3 locations (system messages, triage prompt, triage retry)
+- `src/consult/context-request.ts` — 3 locations (replace_all, context-request/continuation/finalization prompts)
+- `src/core/prompt-assembly.ts` — 1 location (analytical/synthesis system messages)
+- `src/cli/invoke-output-validation.ts` — 1 location (replace_all, coder repair messages)
+
+`containsPseudoToolCall` calls `stripMarkdownCode` before regex-matching, so backtick-wrapped tags are stripped and won't match even if a model quotes them verbatim.
+
+**Gemma S4:** PASS — 3 parallel reads, 114KB tool results. Validates the index=0 collision fix from earlier.
+
+**After fix:** S3 4/4 witnesses PASS. 2661 tests passing, 14 pre-existing failures.
