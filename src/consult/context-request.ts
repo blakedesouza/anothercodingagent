@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { sanitizeModelJson } from '../providers/tool-emulation.js';
 import { resolve, isAbsolute, relative, join } from 'node:path';
 import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
 import { getModelHints } from '../prompts/model-hints.js';
@@ -360,7 +361,7 @@ export function stripBlockquoteMarkers(text: string): string {
 export function parseContextRequests(content: string, limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS): ContextRequest[] {
     let payload: unknown;
     try {
-        payload = JSON.parse(extractJsonPayload(content));
+        payload = JSON.parse(sanitizeModelJson(extractJsonPayload(content)));
     } catch {
         return [];
     }

@@ -6,6 +6,7 @@
  */
 
 import { createAcaError, type AcaError } from '../types/errors.js';
+import { sanitizeModelJson } from '../providers/tool-emulation.js';
 
 // --- Severity & Confidence enums ---
 
@@ -135,7 +136,7 @@ export function parseWitnessOutput(
     // Step 1: JSON parse
     let parsed: unknown;
     try {
-        parsed = JSON.parse(raw);
+        parsed = JSON.parse(sanitizeModelJson(raw));
     } catch (e) {
         return {
             ok: false,

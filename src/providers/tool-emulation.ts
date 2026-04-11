@@ -35,14 +35,26 @@ export function buildToolSchemaPrompt(tools: ToolDefinition[]): string {
         'The ONLY way to invoke a tool is by writing the JSON object below directly into your response text.',
         '',
         'When you need a tool, your entire response must be ONLY this JSON object:',
-        '{"tool_calls":[{"name":"<tool_name>","arguments":{<arguments>}}]}',
+        '{"tool_calls":[{"name":"TOOL_NAME","arguments":{ARGUMENTS}}]}',
         '',
         '- Do NOT use the API\'s native tool_calls mechanism — it is disabled here.',
         '- Do not wrap the JSON in Markdown fences or any XML/HTML tags.',
         '- Do not add prose, explanation, or commentary before or after the JSON.',
-        '- Do not emit <tool_call>, <function_calls>, <invoke>, or similar wrappers.',
+        '- Do not emit `<tool_call>`, `<function_calls>`, `<invoke>`, or similar wrappers.',
         '- For multiple tools, include multiple entries in the "tool_calls" array.',
         '- After tool results arrive, call another tool or give your final text answer.',
+        '- Inside JSON strings, only valid escape sequences are allowed: `\\"`, `\\\\`, `\\/`, `\\b`, `\\f`, `\\n`, `\\r`, `\\t`, `\\uXXXX`. Do NOT write `\\-`, `\\.`, `\\<`, `\\>`, or any other invalid escape — write the literal character instead.',
+        '',
+        'CORRECT — entire response is only the JSON object:',
+        '{"tool_calls":[{"name":"read_file","arguments":{"path":"src/main.ts"}}]}',
+        '',
+        'WRONG — prose before the JSON:',
+        'I will read the file now. {"tool_calls":[...]}',
+        '',
+        'WRONG — JSON split across lines or wrapped in fences:',
+        '```json',
+        '{"tool_calls":[...]}',
+        '```',
         '',
         'Available tools:',
         toolList,
@@ -83,6 +95,21 @@ export function injectToolsIntoRequest(request: ModelRequest): ModelRequest {
 // Response parsing
 // ---------------------------------------------------------------------------
 
+/**
+ * Repair common invalid JSON escape sequences emitted by models.
+ *
+ * RFC 8259 only allows \", \\, \/, \b, \f, \n, \r, \t, and \uXXXX inside
+ * JSON strings. Models (especially GLM-5) sometimes emit \-, \., \<, \>, \!,
+ * etc. which cause JSON.parse to throw a SyntaxError. This strips the
+ * backslash from any unrecognised escape, converting \- → -, \. → ., etc.
+ * Valid escape sequences are left untouched.
+ */
+export function sanitizeModelJson(text: string): string {
+    // Match backslash NOT followed by a valid JSON escape character.
+    // Valid: " \ / b f n r t u
+    return text.replace(/\\([^"\\\/bfnrtu])/g, '$1');
+}
+
 /** Result of parsing emulated tool calls, including the preamble text before the JSON block. */
 export interface EmulatedToolCallResult {
     calls: EmulatedToolCall[];
@@ -110,7 +137,7 @@ export function parseEmulatedToolCalls(text: string): EmulatedToolCallResult | n
 
 function parseToolCallObject(candidate: string): EmulatedToolCall[] | null {
     try {
-        const parsed = JSON.parse(candidate) as {
+        const parsed = JSON.parse(sanitizeModelJson(candidate)) as {
             tool_calls?: Array<{ name?: unknown; arguments?: unknown }>;
         };
         if (!Array.isArray(parsed.tool_calls) || parsed.tool_calls.length === 0) {
@@ -186,7 +213,7 @@ function parseWrappedJsonToolCalls(text: string): EmulatedToolCallResult | null 
 
 function parseToolCallArray(candidate: string): EmulatedToolCall[] | null {
     try {
-        const parsed = JSON.parse(candidate) as Array<{ name?: unknown; arguments?: unknown }>;
+        const parsed = JSON.parse(sanitizeModelJson(candidate)) as Array<{ name?: unknown; arguments?: unknown }>;
         if (!Array.isArray(parsed) || parsed.length === 0) return null;
         const calls = parsed
             .map(toEmulatedToolCall)
@@ -199,7 +226,7 @@ function parseToolCallArray(candidate: string): EmulatedToolCall[] | null {
 
 function parseSingleToolCallObject(candidate: string): EmulatedToolCall | null {
     try {
-        const parsed = JSON.parse(candidate) as { name?: unknown; arguments?: unknown };
+        const parsed = JSON.parse(sanitizeModelJson(candidate)) as { name?: unknown; arguments?: unknown };
         return toEmulatedToolCall(parsed);
     } catch {
         return null;

@@ -3,6 +3,7 @@ import {
     buildToolSchemaPrompt,
     injectToolsIntoRequest,
     parseEmulatedToolCalls,
+    sanitizeModelJson,
     wrapStreamWithToolEmulation,
 } from '../../src/providers/tool-emulation.js';
 import type { ModelRequest, StreamEvent, ToolDefinition } from '../../src/types/provider.js';
@@ -113,6 +114,26 @@ describe('injectToolsIntoRequest', () => {
 });
 
 describe('parseEmulatedToolCalls', () => {
+    it('sanitizes invalid model JSON escapes without changing valid escapes', () => {
+        const text = String.raw`{"path":"world\/rules.md","topic":"magic\-rules","note":"line\nbreak"}`;
+        expect(JSON.parse(sanitizeModelJson(text))).toEqual({
+            path: 'world/rules.md',
+            topic: 'magic-rules',
+            note: 'line\nbreak',
+        });
+    });
+
+    it('parses tool-call JSON containing invalid model escape sequences', () => {
+        const text = String.raw`{"tool_calls":[{"name":"write_file","arguments":{"path":"world\/rules.md","content":"Use magic\-rules and class\.rank terms"}}]}`;
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(1);
+        expect(JSON.parse(result!.calls[0].arguments)).toEqual({
+            path: 'world/rules.md',
+            content: 'Use magic-rules and class.rank terms',
+        });
+    });
+
     it('parses a single tool call with object arguments', () => {
         const text = '{"tool_calls":[{"name":"read_file","arguments":{"path":"/tmp/foo"}}]}';
         const result = parseEmulatedToolCalls(text);

@@ -14,6 +14,7 @@ import type {
 import type { ProviderDriver, ModelRequest } from '../types/provider.js';
 import { generateId } from '../types/ids.js';
 import { normalizeTrackedPath, normalizeTrackedPaths } from './path-normalization.js';
+import { sanitizeModelJson } from '../providers/tool-emulation.js';
 
 // --- Types ---
 
@@ -457,7 +458,7 @@ function parseLlmPatchResponse(text: string): DurableStatePatch {
     if (!jsonMatch) return {};
 
     try {
-        const raw = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+        const raw = JSON.parse(sanitizeModelJson(jsonMatch[0])) as Record<string, unknown>;
         return normalizeDurableStatePatch(raw);
     } catch {
         return {};

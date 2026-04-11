@@ -1,4 +1,5 @@
 import { generateId } from '../types/ids.js';
+import { sanitizeModelJson } from '../providers/tool-emulation.js';
 import type { SessionId, TurnId, StepId, ItemId, ToolCallId } from '../types/ids.js';
 import type { SecretScrubber } from '../permissions/secret-scrubber.js';
 import type { TurnOutcome, TurnRecord, StepRecord, StepSafetyStats, TokenUsage } from '../types/session.js';
@@ -1600,7 +1601,7 @@ export class TurnEngine extends EventEmitter {
             let args: Record<string, unknown> = {};
             let parseFailure = false;
             try {
-                args = JSON.parse(accum.arguments || '{}');
+                args = JSON.parse(sanitizeModelJson(accum.arguments || '{}'));
             } catch {
                 args = {};
                 parseFailure = true;

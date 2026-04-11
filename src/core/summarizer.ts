@@ -17,6 +17,7 @@ import { normalizeDurableStatePatch } from './durable-task-state.js';
 import type { ItemId } from '../types/ids.js';
 import { generateId } from '../types/ids.js';
 import type { ProviderDriver, StreamEvent, ModelRequest } from '../types/provider.js';
+import { sanitizeModelJson } from '../providers/tool-emulation.js';
 import {
     estimateItemTokens,
     findToolCallArgs,
@@ -410,7 +411,7 @@ function parseSummarizationResponse(text: string): SummarizationResponse {
     }
 
     try {
-        const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+        const parsed = JSON.parse(sanitizeModelJson(jsonMatch[0])) as Record<string, unknown>;
         return {
             summaryText: typeof parsed.summaryText === 'string'
                 ? parsed.summaryText
