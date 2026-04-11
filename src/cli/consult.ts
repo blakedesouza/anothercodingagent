@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { sanitizeModelJson } from '../providers/tool-emulation.js';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -15,6 +16,7 @@ import {
     containsPseudoToolCall,
     fulfillContextRequests,
     parseContextRequests,
+    stripBlockquoteMarkers,
     truncateUtf8,
     type ContextRequest,
     type ContextRequestLimits,
@@ -29,6 +31,7 @@ import { aggregateReviews } from '../review/aggregator.js';
 import { buildReport, renderReportText } from '../review/report.js';
 import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
 import { extractCodeIdentifiers, resolveSymbolLocations } from '../consult/symbol-lookup.js';
+import { obfuscateIdentifiers } from '../consult/identifier-obfuscation.js';
 import { getModelHints } from '../prompts/model-hints.js';
 
 export interface ConsultOptions {
@@ -230,7 +233,7 @@ function extractJsonPayload(text: string): string {
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
     try {
-        const parsed = JSON.parse(extractJsonPayload(text)) as unknown;
+        const parsed = JSON.parse(sanitizeModelJson(extractJsonPayload(text))) as unknown;
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
             return parsed as Record<string, unknown>;
         }
@@ -283,7 +286,7 @@ function classifyWitnessFirstPass(
         return {
             status: 'invalid',
             error: 'pseudo-tool call emitted in no-tools context-request pass',
-            retryable: false,
+            retryable: true,
         };
     }
 
@@ -430,7 +433,7 @@ function buildNoToolsConsultSystemMessages(mode: 'witness' | 'shared_context' | 
         content: `You are running a bounded ACA consult pass, not the normal autonomous ACA invoke workflow.
 ${NO_NATIVE_FUNCTION_CALLING}
 ${NO_PROTOCOL_DELIBERATION}
-Do not call tools, ask to call tools, emit tool-call JSON, or emit XML/function markup such as <tool_call>, <call>, <function_calls>, or <invoke>.
+Do not call tools, ask to call tools, emit tool-call JSON, or emit XML/function markup such as \`<tool_call>\`, \`<call>\`, \`<function_calls>\`, or \`<invoke>\`.
 Follow the user prompt's protocol exactly.
 If the prompt asks for Markdown, return Markdown only.
 If the prompt asks for JSON, return JSON only.
@@ -590,7 +593,7 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
         roundsUsed++;
         const roundText = currentResponse.result ?? '';
 
-        let classification = classifyWitnessFirstPass(roundText, limits);
+        let classification = classifyWitnessFirstPass(stripBlockquoteMarkers(roundText), limits);
         let retryResponse: { response: InvokeResponse; stderr: string } | null = null;
 
         if (classification.status === 'invalid' && classification.retryable) {
@@ -602,7 +605,7 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
             });
             allInvokeResponses.push(retryResponse.response);
             if (retryResponse.response.status === 'success') {
-                const retryClass = classifyWitnessFirstPass(retryResponse.response.result ?? '', limits);
+                const retryClass = classifyWitnessFirstPass(stripBlockquoteMarkers(retryResponse.response.result ?? ''), limits);
                 if (retryClass.status === 'report' || retryClass.status === 'needs_context') {
                     classification = retryClass;
                     lastEffectiveResponseText = retryResponse.response.result ?? '';
@@ -661,6 +664,13 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
             systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
         });
         allInvokeResponses.push(nextAttempt.response);
+
+        // Persist each continuation round's raw response for post-mortem debugging.
+        // Round 1 is already written via outPath on the initial context-request invoke.
+        if (nextAttempt.response.result) {
+            const roundPath = join(tmpdir(), `aca-consult-${witness.name}-round-${roundsUsed + 1}-${suffix}.md`);
+            writeFileSync(roundPath, nextAttempt.response.result);
+        }
 
         if (nextAttempt.response.status !== 'success') {
             // Provider error in continuation — return error immediately.
@@ -874,7 +884,7 @@ You are an aggregation-only triage pass.
 ${NO_NATIVE_FUNCTION_CALLING}
 ${NO_PROTOCOL_DELIBERATION}
 The witness reports below are your only evidence. Do not do a fresh code review.
-Do not request files, list directories, call tools, or emit XML/function/tool markup such as <call>, <tool_call>, <function_calls>, or <invoke>.
+Do not request files, list directories, call tools, or emit XML/function/tool markup such as \`<call>\`, \`<tool_call>\`, \`<function_calls>\`, or \`<invoke>\`.
 Do not quote or reproduce literal pseudo-tool markup from witness reports; refer to it generically as pseudo-tool-call markup.
 If evidence is missing, mark it as an open question instead of trying to fetch more context.
 Some witness sections may contain degraded raw output captured before ACA could normalize it into a clean report. Treat those sections as weak evidence, note uncertainty, and do not over-index on malformed markup.
@@ -915,7 +925,7 @@ Return complete Markdown with all four sections:
 - Likely False Positives
 - Open Questions
 
-Do not quote literal pseudo-tool markup such as <invoke> or <tool_call>; describe it generically instead.
+Do not quote literal pseudo-tool markup such as \`<invoke>\` or \`<tool_call>\`; describe it generically instead.
 Do not end mid-sentence or with unbalanced Markdown delimiters.
 `;
 }
@@ -923,9 +933,12 @@ Do not end mid-sentence or with unbalanced Markdown delimiters.
 export async function runConsult(options: ConsultOptions): Promise<ConsultResult> {
     const projectDir = resolve(options.projectDir ?? process.cwd());
     const suffix = `${Date.now()}-${process.pid}`;
+    const rawQuestion = options.question ?? '';
+    const { obfuscated: obfuscatedQuestion, legend } = obfuscateIdentifiers(rawQuestion);
+    const questionForPrompt = legend ? `${legend}\n\n${obfuscatedQuestion}` : obfuscatedQuestion;
     const promptBase = options.promptFile
         ? readFileSync(options.promptFile, 'utf8')
-        : renderPrompt(options.question ?? '');
+        : renderPrompt(questionForPrompt);
     const pack = (options.packRepo || (options.packPath?.length ?? 0) > 0)
         ? buildEvidencePack({
             projectDir,

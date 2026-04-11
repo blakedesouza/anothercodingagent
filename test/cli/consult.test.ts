@@ -154,7 +154,7 @@ describe('runConsult', () => {
         const deepseekCalls = runAcaInvokeMock.mock.calls.filter(([, options]) =>
             (options as { model?: string } | undefined)?.model === 'deepseek/deepseek-v3.2',
         );
-        expect(deepseekCalls).toHaveLength(1);
+        expect(deepseekCalls).toHaveLength(2); // first pass + retry (pseudo-tool-call is now retryable)
     });
 
     it('runs triage when only degraded witness evidence is available', async () => {
@@ -226,7 +226,7 @@ describe('runConsult', () => {
                     return makeInvokeSuccess('## Consensus Findings\n\nThe no-tools detection covers `<invoke>`, `');
                 }
                 expect(task).toContain('Invalid Previous Triage Response');
-                expect(task).toContain('Do not quote literal pseudo-tool markup such as <invoke> or <tool_call>');
+                expect(task).toContain('Do not quote literal pseudo-tool markup such as `<invoke>` or `<tool_call>`');
                 return makeInvokeSuccess(VALID_TRIAGE_REPORT);
             }
             if (options?.model === 'deepseek/deepseek-v3.2') {
