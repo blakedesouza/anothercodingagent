@@ -1034,7 +1034,7 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
                 model,
                 deadlineMs: invokeDeadlineMs,
                 maxSteps: options.maxSteps ?? 22,
-                maxToolCalls: options.maxToolCalls ?? 32,
+                maxToolCalls: options.maxToolCalls,
                 networkMode: options.networkMode,
             },
         );
@@ -1051,7 +1051,7 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
                     model,
                     deadlineMs: invokeDeadlineMs,
                     maxSteps: Math.max(10, Math.min(options.maxSteps ?? 14, 20)),
-                    maxToolCalls: Math.max(10, Math.min(options.maxToolCalls ?? 18, 24)),
+                    maxToolCalls: options.maxToolCalls,
                     networkMode: options.networkMode,
                 },
             );
@@ -1063,7 +1063,7 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
                     model,
                     deadlineMs: invokeDeadlineMs,
                     maxSteps: Math.max(10, Math.min(options.maxSteps ?? 14, 20)),
-                    maxToolCalls: Math.max(10, Math.min(options.maxToolCalls ?? 18, 24)),
+                    maxToolCalls: options.maxToolCalls,
                     networkMode: options.networkMode,
                 },
             );
@@ -1108,7 +1108,7 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
                         model,
                         deadlineMs: invokeDeadlineMs,
                         maxSteps: options.maxSteps ?? 22,
-                        maxToolCalls: options.maxToolCalls ?? 28,
+                        maxToolCalls: options.maxToolCalls,
                         networkMode: options.networkMode,
                     },
                 );
@@ -1137,7 +1137,7 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
                         model,
                         deadlineMs: invokeDeadlineMs,
                         maxSteps: options.maxSteps ?? 18,
-                        maxToolCalls: options.maxToolCalls ?? 22,
+                        maxToolCalls: options.maxToolCalls,
                         networkMode: options.networkMode,
                     },
                 );
@@ -1166,7 +1166,7 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
                         model,
                         deadlineMs: invokeDeadlineMs,
                         maxSteps: options.maxSteps ?? 22,
-                        maxToolCalls: options.maxToolCalls ?? 30,
+                        maxToolCalls: options.maxToolCalls,
                         networkMode: options.networkMode,
                     },
                 );
@@ -1181,7 +1181,7 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
                             model,
                             deadlineMs: invokeDeadlineMs,
                             maxSteps: Math.max(10, Math.min(options.maxSteps ?? 14, 20)),
-                            maxToolCalls: Math.max(10, Math.min(options.maxToolCalls ?? 18, 24)),
+                            maxToolCalls: options.maxToolCalls,
                             networkMode: options.networkMode,
                         },
                     );
