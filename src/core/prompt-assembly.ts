@@ -14,7 +14,6 @@ import type {
 import type { RegisteredTool } from '../tools/tool-registry.js';
 import type { PromptTier } from '../types/agent.js';
 import type { ProjectSnapshot } from './project-awareness.js';
-import { renderProjectContext } from './project-awareness.js';
 import {
     assembleContext,
     buildToolDefsForTier,
@@ -942,7 +941,7 @@ export function buildSynthesisSystemMessages(options: InvokePromptOptions): Requ
 
     lines.push(NO_NATIVE_FUNCTION_CALLING);
     lines.push(NO_PROTOCOL_DELIBERATION);
-    lines.push('Do not call tools, emit tool-call JSON, or emit XML/function markup such as <tool_call>, <function_calls>, or <invoke>.');
+    lines.push('Do not call tools, emit tool-call JSON, or emit XML/function markup such as `<tool_call>`, `<function_calls>`, or `<invoke>`.');
     lines.push('Answer directly based on the context and content provided in the user prompt.');
     lines.push('Follow the output format specified in the prompt exactly.');
 
