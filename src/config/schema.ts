@@ -100,6 +100,8 @@ export interface ResolvedConfig {
         interval: number; // seconds (default 300)
     };
     trustedWorkspaces: Record<string, 'trusted' | 'untrusted'>;
+    /** Default project root for `aca rp-research`. Overridden by --project-root or ACA_RP_PROJECT_ROOT. */
+    rpProjectRoot: string | null;
 }
 
 // --- Defaults ---
@@ -180,6 +182,7 @@ export const CONFIG_DEFAULTS: ResolvedConfig = {
         interval: 300,
     },
     trustedWorkspaces: {},
+    rpProjectRoot: null,
 };
 
 // --- JSON Schema ---
@@ -318,6 +321,7 @@ export const configJsonSchema = {
             type: 'object',
             additionalProperties: { type: 'string', enum: ['trusted', 'untrusted'] },
         },
+        rpProjectRoot: { type: ['string', 'null'] },
     },
 };
 

@@ -106,6 +106,11 @@ export function filterProjectConfig(
     // (that would be a security-expanding action, not a restrictive one).
     // scrubbing.enabled and scrubbing.allowPatterns are both user-only.
 
+    // rpProjectRoot: allowed from project config (gitignored, personal path preference)
+    if ('rpProjectRoot' in config) {
+        result.rpProjectRoot = config.rpProjectRoot;
+    }
+
     // Silently dropped (user-only): providers, defaultProvider, apiTimeout,
     // trustedWorkspaces, sandbox.extraTrustedRoots, network.mode,
     // network.allowDomains, network.allowHttp, scrubbing.allowPatterns,

@@ -1557,9 +1557,11 @@ program
     ) => {
         try {
             const effectiveModel = options.model ?? 'zai-org/glm-5';
+            const configResult = await loadConfig({ workspaceRoot: process.cwd() }).catch(() => null);
+            const configRpRoot = configResult?.config.rpProjectRoot ?? null;
             const summary = await runRpResearchWorkflow({
                 series: seriesParts.join(' '),
-                projectRoot: options.projectRoot,
+                projectRoot: options.projectRoot ?? configRpRoot ?? undefined,
                 slug: options.slug,
                 sourceScope: options.sourceScope,
                 timeline: options.timeline,
