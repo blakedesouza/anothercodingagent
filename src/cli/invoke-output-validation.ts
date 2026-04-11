@@ -39,7 +39,7 @@ export function buildRequiredOutputRepairTask(paths: readonly string[]): string 
         'Continue from the existing context.',
         'Do not restate your plan, summarize progress, or say what you need to try next.',
         'Use tools immediately: inspect only what is still needed, create any missing parent directories, and write the required files now.',
-        'Do not quote literal pseudo-tool markup such as <tool_call>, <invoke>, or function-call JSON. Your next assistant message must contain real tool calls or the actual written output path(s) being satisfied.',
+        'Do not quote literal pseudo-tool markup such as `<tool_call>`, `<invoke>`, or function-call JSON. Your next assistant message must contain real tool calls or the actual written output path(s) being satisfied.',
         'If a source lookup failed earlier, either correct the next tool call or finish from the evidence already gathered. Do not stop because one lookup missed.',
         'Prefer the evidence already gathered. Only do additional reads/fetches if a specific missing detail blocks writing.',
         'When every required output path exists and is non-empty, stop.',
@@ -64,7 +64,7 @@ export function buildProfileCompletionRepairTask(
         'Continue from the existing context.',
         'Do not restate your plan, summarize progress, or say what you will do next.',
         'Your next assistant message must contain actual tool calls, not narration.',
-        'Do not quote literal pseudo-tool markup such as <tool_call>, <invoke>, or function-call JSON.',
+        'Do not quote literal pseudo-tool markup such as `<tool_call>`, `<invoke>`, or function-call JSON.',
         'Use only the sources needed for the assigned task, then write the required output.',
         normalizedPaths.length > 0
             ? `The required output file(s) are: ${quotedPaths}.`
@@ -86,14 +86,35 @@ export function validateProfileCompletion(
     profileName: string | undefined,
     acceptedToolCalls: number,
     resultText: string,
+    lastStepAcceptedToolCalls?: number,
+    missingRequiredPaths?: readonly string[],
 ): ProfileCompletionIssue | null {
-    if (profileName !== 'rp-researcher' || acceptedToolCalls > 0) return null;
+    if (profileName !== 'rp-researcher') return null;
     const compact = resultText.replace(/\s+/g, ' ').trim();
-    const looksLikePlanOnly = /^(?:i['’]?ll|i will|let me|first[, ]+i['’]?ll|i(?: am|'m) going to)\b/i.test(compact);
-    return {
-        code: 'turn.profile_validation_failed',
-        message: looksLikePlanOnly
-            ? 'rp-researcher run ended without any accepted tool calls; plan-only or intention-only research text is not a valid completion'
-            : 'rp-researcher run ended without any accepted tool calls; RP research/write tasks must inspect sources or local files before completion',
-    };
+    const looksLikePlanOnly = /^(?:i['']?ll|i will|let me|first[, ]+i['']?ll|next[, ]+i|now[, ]+i|i(?: am|'m) going to)\b/i.test(compact);
+    // Case 1: no tool calls at all: classic zero-call narration.
+    if (acceptedToolCalls === 0) {
+        return {
+            code: 'turn.profile_validation_failed',
+            message: looksLikePlanOnly
+                ? 'rp-researcher run ended without any accepted tool calls; plan-only or intention-only research text is not a valid completion'
+                : 'rp-researcher run ended without any accepted tool calls; RP research/write tasks must inspect sources or local files before completion',
+        };
+    }
+    // Case 2: narrate-after-work: made calls in earlier steps, but the last step produced
+    // only narration and required output files are still missing.
+    if (
+        lastStepAcceptedToolCalls !== undefined
+        && lastStepAcceptedToolCalls === 0
+        && missingRequiredPaths !== undefined
+        && missingRequiredPaths.length > 0
+    ) {
+        return {
+            code: 'turn.profile_validation_failed',
+            message: looksLikePlanOnly
+                ? 'rp-researcher last step narrated intent instead of calling tools; required output files were not written'
+                : 'rp-researcher last step produced no tool calls; required output files are still missing',
+        };
+    }
+    return null;
 }

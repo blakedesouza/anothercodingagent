@@ -78,6 +78,29 @@ describe('validateRequiredOutputPaths', () => {
         )).toBeNull();
     });
 
+    it('catches narrate-after-work when last step had no tool calls and outputs are missing', () => {
+        expect(validateProfileCompletion(
+            'rp-researcher',
+            4,
+            "I'll now fetch information from The Quintessential Quintuplets Fandom wiki to discover characters, locations, and setting details.",
+            0,
+            ['the-quintessential-quintuplets/research/discovery-plan.md'],
+        )).toEqual({
+            code: 'turn.profile_validation_failed',
+            message: 'rp-researcher last step narrated intent instead of calling tools; required output files were not written',
+        });
+    });
+
+    it('does not flag narrate-after-work when required outputs are all present', () => {
+        expect(validateProfileCompletion(
+            'rp-researcher',
+            4,
+            '# Discovery complete.',
+            0,
+            [],
+        )).toBeNull();
+    });
+
     it('does not apply rp validation to other profiles', () => {
         expect(validateProfileCompletion(
             'researcher',

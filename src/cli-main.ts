@@ -702,10 +702,10 @@ program
         const configResult = await loadConfig({ workspaceRoot: cwd });
         const config = configResult.config;
 
-        // --- Resolve model (must be explicit; no config fallback) ---
-        const effectiveModel = options.model;
+        // --- Resolve model: CLI flag > config model.default ---
+        const effectiveModel = options.model ?? config.model?.default;
         if (!effectiveModel) {
-            writeHumanStderr('Error: no model specified. Use --model <model>\n');
+            writeHumanStderr('Error: no model specified. Use --model <model> or set model.default in ~/.aca/config.json\n');
             process.exit(EXIT_ONESHOT_STARTUP);
         }
 
@@ -1525,10 +1525,11 @@ program
     .option('--blank-timeline', 'Generate a timeline-neutral pack after discovery', false)
     .option('--discover-only', 'Stop after discovery and manifest generation', false)
     .option('--refresh-discovery', 'Force a fresh discovery pass even if a manifest already exists', false)
-    .option('--model <model>', 'Model override for the RP research workflow')
+    .option('--model <model>', 'Model to use for the RP research workflow (default: zai-org/glm-5)')
     .option('--network-mode <mode>', 'Temporarily set ACA_NETWORK_MODE for generated invoke runs (off, approved-only, open)')
     .option('--max-steps <n>', 'Override max steps for generated invoke runs', value => Number(value))
     .option('--max-tool-calls <n>', 'Override max accepted tool calls for generated invoke runs', value => Number(value))
+    .option('--concurrency <n>', 'Max parallel invoke tasks per phase (1-8, default 4)', value => Number(value))
     .option('--json', 'Output the workflow summary as JSON', false)
     .action(async (
         seriesParts: string[],
@@ -1544,15 +1545,12 @@ program
             networkMode?: RpNetworkMode;
             maxSteps?: number;
             maxToolCalls?: number;
+            concurrency?: number;
             json: boolean;
         },
     ) => {
         try {
-            const effectiveModel = options.model;
-            if (!effectiveModel) {
-                process.stderr.write('Error: no model specified. Use --model <model>\n');
-                process.exit(EXIT_ONESHOT_STARTUP);
-            }
+            const effectiveModel = options.model ?? 'zai-org/glm-5';
             const summary = await runRpResearchWorkflow({
                 series: seriesParts.join(' '),
                 projectRoot: options.projectRoot,
@@ -1566,6 +1564,7 @@ program
                 networkMode: options.networkMode,
                 maxSteps: options.maxSteps,
                 maxToolCalls: options.maxToolCalls,
+                concurrency: options.concurrency,
             });
             if (options.json) {
                 process.stdout.write(JSON.stringify(summary, null, 2) + '\n');
@@ -1749,6 +1748,7 @@ program
         const projection = sessionManager.create(cwd, {
             model: effectiveModel,
             mode: 'executor',
+            ...(process.env.ACA_SESSION_TAG ? { sessionTag: process.env.ACA_SESSION_TAG } : {}),
         });
         // Mark as ephemeral (not surfaced for resume)
         projection.manifest.ephemeral = true;
@@ -1991,14 +1991,21 @@ program
             turnResults.push(...initialRun.allResults);
             conversationItems = initialRun.allItems;
 
-            let latestAcceptedToolCalls = turnResult.steps.reduce(
+            const originalTotalToolCalls = turnResult.steps.reduce(
                 (sum, step) => sum + (step.safetyStats?.acceptedToolCalls ?? 0),
                 0,
             );
+            const lastStepToolCalls = turnResult.steps[turnResult.steps.length - 1]?.safetyStats?.acceptedToolCalls ?? 0;
+            let latestAcceptedToolCalls = originalTotalToolCalls;
+            // Compute missing outputs early so validateProfileCompletion can detect
+            // the "narrate-after-work" pattern (made calls in step N, narrated in last step).
+            let missingRequiredOutputs = validateRequiredOutputPaths(cwd, request.constraints?.required_output_paths);
             const initialProfileCompletionIssue = validateProfileCompletion(
                 contextProfile,
                 latestAcceptedToolCalls,
                 extractAssistantText(turnResult.items),
+                lastStepToolCalls,
+                missingRequiredOutputs,
             );
             const canRepairProfileCompletion = initialProfileCompletionIssue !== null
                 && turnResult.turn.outcome === 'assistant_final'
@@ -2026,10 +2033,12 @@ program
                 );
             }
 
-            let missingRequiredOutputs = validateRequiredOutputPaths(cwd, request.constraints?.required_output_paths);
+            missingRequiredOutputs = validateRequiredOutputPaths(cwd, request.constraints?.required_output_paths);
+            // Use originalTotalToolCalls (not latestAcceptedToolCalls) so the output repair
+            // still fires even when the profile-completion repair also narrated (0 calls).
             const canRepairMissingOutputs = missingRequiredOutputs.length > 0
                 && turnResult.turn.outcome === 'assistant_final'
-                && latestAcceptedToolCalls > 0
+                && originalTotalToolCalls > 0
                 && effectiveAllowedTools.includes('write_file');
 
             if (canRepairMissingOutputs) {

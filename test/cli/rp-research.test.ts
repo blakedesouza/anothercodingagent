@@ -9,6 +9,7 @@ import {
     parseDiscoveryManifest,
     resolveRpInvokeDeadlineMs,
     resolveRpProjectRoot,
+    resolveRpResearchConcurrency,
     slugifySeriesTitle,
     shouldFreshRetryRpInvokeResponse,
     validateDiscoveryArtifacts,
@@ -48,6 +49,18 @@ describe('rp-research helpers', () => {
         expect(resolveRpInvokeDeadlineMs(undefined, {
             ACA_RP_INVOKE_DEADLINE_MS: 'not-a-number',
         })).toBe(DEFAULT_RP_INVOKE_DEADLINE_MS);
+    });
+
+    it('defaults invalid concurrency values instead of propagating NaN', () => {
+        expect(resolveRpResearchConcurrency(undefined)).toBe(4);
+        expect(resolveRpResearchConcurrency(Number.NaN)).toBe(4);
+        expect(resolveRpResearchConcurrency(Number.POSITIVE_INFINITY)).toBe(4);
+    });
+
+    it('clamps finite concurrency values to the supported range', () => {
+        expect(resolveRpResearchConcurrency(0)).toBe(1);
+        expect(resolveRpResearchConcurrency(3.8)).toBe(3);
+        expect(resolveRpResearchConcurrency(99)).toBe(8);
     });
 
     it('parses a valid discovery manifest', () => {

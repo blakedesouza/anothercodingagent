@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type { InvokeResponse } from './executor.js';
 import { parseInvokeOutput, runAcaInvoke } from '../mcp/server.js';
-import { parseEmulatedToolCalls } from '../providers/tool-emulation.js';
+import { parseEmulatedToolCalls, sanitizeModelJson } from '../providers/tool-emulation.js';
 
 export const DEFAULT_RP_INVOKE_DEADLINE_MS = 5 * 60 * 1000;
 
@@ -108,6 +109,8 @@ export interface RunRpResearchOptions {
     invokeDeadlineMs?: number;
     maxSteps?: number;
     maxToolCalls?: number;
+    /** Max parallel invoke tasks per phase (world/locations/characters). Clamped 1-8. Default: 4. */
+    concurrency?: number;
 }
 
 export interface RpResearchSummary {
@@ -121,6 +124,12 @@ export interface RpResearchSummary {
     timelineOptions: RpTimelineOption[];
     selectedTimeline?: RpTimelineOption;
     generatedFiles: string[];
+}
+
+export function resolveRpResearchConcurrency(value: number | undefined): number {
+    if (value === undefined) return 4;
+    if (!Number.isFinite(value)) return 4;
+    return Math.max(1, Math.min(Math.trunc(value), 8));
 }
 
 export interface CharacterSchemaValidation {
@@ -428,24 +437,26 @@ function buildDiscoveryTask(
         '- proposed character coverage, including meaningful side characters',
         '- any scope cautions that matter for a timeline-neutral pack',
         'The JSON manifest must be valid JSON with exactly this shape:',
+        '```json',
         '{',
         '  "schema_version": 1,',
-        '  "series": { "title": "<canonical title>", "slug": "<series slug>", "source_scope": "<anime|manga|light-novel|visual-novel|mixed|auto>" },',
+        '  "series": { "title": "CANONICAL_TITLE", "slug": "SERIES_SLUG", "source_scope": "anime|manga|light-novel|visual-novel|mixed|auto" },',
         '  "timeline_options": [',
-        '    { "id": "blank", "label": "Blank / neutral timeline", "summary": "<brief summary>", "recommended": true }',
+        '    { "id": "blank", "label": "Blank / neutral timeline", "summary": "BRIEF_SUMMARY", "recommended": true }',
         '  ],',
         '  "world_files": [',
-        '    { "path": "world/world.md", "kind": "world", "topic": "<greater world topic>" },',
-        '    { "path": "world/world-rules.md", "kind": "world_rules", "topic": "<rules/mechanics topic>" }',
+        '    { "path": "world/world.md", "kind": "world", "topic": "WORLD_TOPIC" },',
+        '    { "path": "world/world-rules.md", "kind": "world_rules", "topic": "RULES_TOPIC" }',
         '  ],',
         '  "location_files": [',
-        '    { "path": "world/locations/<slug>.md", "name": "<location name>", "topic": "<what the file should cover>" }',
+        '    { "path": "world/locations/SLUG.md", "name": "LOCATION_NAME", "topic": "LOCATION_TOPIC" }',
         '  ],',
         '  "character_files": [',
-        '    { "path": "world/characters/<slug>.md", "name": "<character name>", "tier": "main|side|minor", "topic": "<what the file should cover>" }',
+        '    { "path": "world/characters/SLUG.md", "name": "CHARACTER_NAME", "tier": "main|side|minor", "topic": "CHARACTER_TOPIC" }',
         '  ],',
-        '  "notes": ["<optional operator note>"]',
+        '  "notes": ["OPTIONAL_NOTE"]',
         '}',
+        '```',
         'Manifest path values must be relative to the series folder and must use `.md` for all final RP-facing files.',
         'The final RP-facing pack will later use:',
         '- world/world.md',
@@ -503,6 +514,8 @@ function buildWorldTask(
         'Never emit literal pseudo-tool markup such as `<tool_call>` or quoted function-call text. If you need a tool, make the real tool call instead.',
         'If one page lookup fails or a source title is missing, correct the next tool call or continue from the evidence already gathered. Do not stop and do not narrate fake tool calls.',
         'Do not add scene hooks, RP hooks, or creeping plot lines.',
+        'Do not write about the series as a series. Do not use phrases like "The series focuses on", "The story explores", or "The anime depicts". Describe what is true in-world as if the world is real.',
+        'Do not include spoilers: no resolved mysteries, no endgame outcomes, no future-timeline events. If a fact is spoiler-sensitive, omit it entirely.',
         'Keep the file targeted and useful for actual roleplay.',
         ...(entry.kind === 'world'
             ? [
@@ -579,11 +592,15 @@ function buildCharacterTask(
         buildTimelineContext(selectedTimeline),
         'Use Markdown. Start with a single `# <Character Name>` title line.',
         `After the title, only use applicable \`##\` headings chosen from this list: ${RP_CHARACTER_SECTION_HEADINGS.join(', ')}.`,
+        'Basic Info must be a bullet list of key-value facts (e.g. `- Name: ...`, `- Age: ...`, `- Height: ...`). Do not write it as prose.',
         'Do not add any other headings.',
         'If a section is not applicable, omit it entirely and deepen the remaining valid sections instead of inventing replacements.',
-        'When Powers, Weapons, Role, or Affiliation are not applicable, put the depth into Appearance, Personality, Relationships, and Speaking Style instead.',
+        'When Powers or Weapons are not applicable, omit them and deepen the remaining sections instead.',
+        'Only include Role or Affiliation when the information is non-inferrable; a reader could not deduce it from the character\'s name, their position in the cast, or the series premise. If it would not surprise or meaningfully inform, omit it.',
         'Relationships must stay compact: usually 1-2 sentences each, 3 only for a major relationship.',
         'No RP hooks, no creeping plot lines, no backstory section, no current-status section, no trivia, and no encyclopedia padding.',
+        'Do not write about the series as a series. Do not use phrases like "The series focuses on", "The story explores", or "The manga portrays". Describe what is true in-world as if the world is real.',
+        'Do not include spoilers: no resolved identity reveals, no endgame pairings, no future-timeline events, no deaths or departures that occur after the chosen timeline. If a fact is spoiler-sensitive, omit it entirely; no disclaimers, no vague hints.',
         'Keep shared cross-character facts brief in world-rules and do the real differentiation work here in the character file.',
         'Start with the local discovery files and the existing world files. Prefer those over broad new browsing.',
         'If you need outside evidence, keep it bounded and targeted. Use no more than 4 external lookups before you write.',
@@ -691,7 +708,7 @@ export function validateDiscoveryArtifacts(planMarkdown: string, manifestJsonTex
     const checks: Array<[RegExp, string]> = [
         [/\b\d+\s*(?:-\s*\d+)?\s*(?:kb|mb|bytes?)\b/i, 'discovery output must not contain file-size targets or byte targets'],
         [/\*\*Spoiler note\*\*:/i, 'discovery output must not contain explicit spoiler-note labels'],
-        [/(?:bride|groom|identity|mystery)[^.\n]{0,80}\([^)]+\)/i, 'discovery output must not name spoiler answers inside cautions or notes'],
+        [/(?:bride|groom|identity)[^.\n]{0,80}\([A-Z][a-z]{1,}[^)]*\)/i, 'discovery output must not name spoiler answers inside cautions or notes'],
         [/(?:bride|groom)[^.\n]{0,60}canon ending/i, 'discovery output must not reveal endgame identity in caution text'],
     ];
     const combined = `${planMarkdown}\n${manifestJsonText}`;
@@ -743,6 +760,31 @@ export function shouldFreshRetryRpInvokeResponse(response: InvokeResponse): bool
         );
 }
 
+/**
+ * Returns an async function that runs tasks with at most `concurrency` running at a time.
+ * Uses a queue-based semaphore so slow tasks don't stall later ones (pool, not batch).
+ */
+function createLimiter(concurrency: number): <T>(fn: () => Promise<T>) => Promise<T> {
+    let active = 0;
+    const queue: Array<() => void> = [];
+    const next = () => {
+        if (active >= concurrency || queue.length === 0) return;
+        active += 1;
+        const run = queue.shift()!;
+        run();
+    };
+    return <T>(fn: () => Promise<T>): Promise<T> =>
+        new Promise<T>((resolvePromise, rejectPromise) => {
+            queue.push(() => {
+                fn().then(resolvePromise, rejectPromise).finally(() => {
+                    active -= 1;
+                    next();
+                });
+            });
+            next();
+        });
+}
+
 function snapshotSessionIds(sessionsDir: string): Set<string> {
     if (!existsSync(sessionsDir)) return new Set();
     return new Set(
@@ -756,6 +798,7 @@ function findFreshSessionDir(
     sessionsDir: string,
     priorSessionIds: ReadonlySet<string>,
     workspaceRoot: string,
+    expectedTag?: string,
 ): string | null {
     if (!existsSync(sessionsDir)) return null;
     const candidates = readdirSync(sessionsDir, { withFileTypes: true })
@@ -770,9 +813,10 @@ function findFreshSessionDir(
         try {
             const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
             const configSnapshot = manifest.configSnapshot as Record<string, unknown> | undefined;
-            if (typeof configSnapshot?.workspaceRoot === 'string' && resolve(configSnapshot.workspaceRoot) === resolve(workspaceRoot)) {
-                return sessionDir;
-            }
+            if (typeof configSnapshot?.workspaceRoot !== 'string') continue;
+            if (resolve(configSnapshot.workspaceRoot) !== resolve(workspaceRoot)) continue;
+            if (expectedTag !== undefined && configSnapshot.sessionTag !== expectedTag) continue;
+            return sessionDir;
         } catch {
             continue;
         }
@@ -787,12 +831,26 @@ export function extractPseudoWriteFileCall(text: string): PseudoWriteFileCall | 
     for (const call of parsed.calls) {
         if (call.name !== 'write_file') continue;
         try {
-            const args = JSON.parse(call.arguments) as { path?: unknown; content?: unknown };
+            const args = JSON.parse(sanitizeModelJson(call.arguments)) as { path?: unknown; content?: unknown };
             const path = typeof args.path === 'string' ? args.path.trim() : '';
             const content = typeof args.content === 'string' ? args.content : '';
             if (!path) continue;
             return { path, content };
-        } catch {
+        } catch (err) {
+            process.stderr.write(
+                `[rp-research] salvage: JSON.parse failed on write_file arguments (${err instanceof Error ? err.message : String(err)}); trying regex fallback\n`,
+            );
+            // Regex fallback: extract path and content from technically-invalid JSON.
+            // Use a proper JSON-string-aware pattern for content so the match terminates
+            // at the correct closing quote rather than greedily swallowing later keys.
+            const pathMatch = call.arguments.match(/"path"\s*:\s*"([^"]+)"/);
+            const contentMatch = call.arguments.match(/"content"\s*:\s*"((?:[^"\\]|\\.)*)"/s);
+            const fallbackPath = pathMatch?.[1]?.trim() ?? '';
+            const fallbackContent = contentMatch?.[1] ?? '';
+            if (fallbackPath) {
+                process.stderr.write(`[rp-research] salvage: regex fallback extracted path="${fallbackPath}"\n`);
+                return { path: fallbackPath, content: fallbackContent };
+            }
             continue;
         }
     }
@@ -853,7 +911,12 @@ async function runRpInvokeTask(
         networkMode?: RpNetworkMode;
     },
 ): Promise<void> {
-    const execute = async () => runAcaInvoke(task, {
+    // Per-task session tag so parallel tasks can each find their own session during salvage.
+    const sessionTag = randomUUID();
+    const envOverride: Record<string, string> = { ACA_SESSION_TAG: sessionTag };
+    if (options.networkMode) envOverride.ACA_NETWORK_MODE = options.networkMode;
+
+    const execute = () => withEnvOverride(envOverride, () => runAcaInvoke(task, {
         cwd: projectRoot,
         profile: 'rp-researcher',
         model: options.model,
@@ -862,22 +925,20 @@ async function runRpInvokeTask(
         maxToolCalls: options.maxToolCalls,
         failOnRejectedToolCalls: true,
         requiredOutputPaths: options.requiredOutputPaths,
-    });
+    }));
     const sessionsDir = join(homedir(), '.aca', 'sessions');
 
     let priorErrorMessage: string | null = null;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
         const priorSessionIds = snapshotSessionIds(sessionsDir);
-        const result = options.networkMode
-            ? await withEnvOverride({ ACA_NETWORK_MODE: options.networkMode }, execute)
-            : await execute();
+        const result = await execute();
         const response = parseInvokeOutput(result.stdout, result.stderr, result.exitCode);
         if (response.status !== 'error') {
             return;
         }
 
         if (response.errors?.some(error => error.code === 'turn.required_outputs_missing')) {
-            const freshSessionDir = findFreshSessionDir(sessionsDir, priorSessionIds, projectRoot);
+            const freshSessionDir = findFreshSessionDir(sessionsDir, priorSessionIds, projectRoot, sessionTag);
             if (freshSessionDir) {
                 const salvagedPath = salvagePseudoWriteFromSession(
                     freshSessionDir,
@@ -954,6 +1015,8 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
     const model = options.model?.trim() || 'zai-org/glm-5';
     const sourceScope = options.sourceScope ?? 'auto';
     const invokeDeadlineMs = resolveRpInvokeDeadlineMs(options.invokeDeadlineMs);
+    const concurrency = resolveRpResearchConcurrency(options.concurrency);
+    const limit = createLimiter(concurrency);
 
     const shouldRunDiscovery = options.refreshDiscovery
         || !existsSync(paths.discoveryManifestPath)
@@ -1032,71 +1095,107 @@ export async function runRpResearchWorkflow(options: RunRpResearchOptions): Prom
         };
     }
 
-    for (const entry of manifest.world_files) {
-        const workspaceOutputPath = workspaceRelativeOutputPath(seriesSlug, entry.path);
-        await runRpInvokeTask(
-            buildWorldTask(series, paths, entry, selectedTimeline),
-            projectRoot,
-            {
-                requiredOutputPaths: [workspaceOutputPath],
-                model,
-                deadlineMs: invokeDeadlineMs,
-                maxSteps: options.maxSteps ?? 22,
-                maxToolCalls: options.maxToolCalls ?? 28,
-                networkMode: options.networkMode,
-            },
+    // World files phase: parallel up to `concurrency`.
+    {
+        const results = await Promise.allSettled(
+            manifest.world_files.map(entry => limit(async () => {
+                const workspaceOutputPath = workspaceRelativeOutputPath(seriesSlug, entry.path);
+                await runRpInvokeTask(
+                    buildWorldTask(series, paths, entry, selectedTimeline),
+                    projectRoot,
+                    {
+                        requiredOutputPaths: [workspaceOutputPath],
+                        model,
+                        deadlineMs: invokeDeadlineMs,
+                        maxSteps: options.maxSteps ?? 22,
+                        maxToolCalls: options.maxToolCalls ?? 28,
+                        networkMode: options.networkMode,
+                    },
+                );
+                return resolveSeriesFilePath(paths.seriesDir, entry.path);
+            })),
         );
-        generatedFiles.push(resolveSeriesFilePath(paths.seriesDir, entry.path));
-    }
-
-    for (const entry of manifest.location_files) {
-        const workspaceOutputPath = workspaceRelativeOutputPath(seriesSlug, entry.path);
-        await runRpInvokeTask(
-            buildLocationTask(series, paths, entry, selectedTimeline),
-            projectRoot,
-            {
-                requiredOutputPaths: [workspaceOutputPath],
-                model,
-                deadlineMs: invokeDeadlineMs,
-                maxSteps: options.maxSteps ?? 18,
-                maxToolCalls: options.maxToolCalls ?? 22,
-                networkMode: options.networkMode,
-            },
-        );
-        generatedFiles.push(resolveSeriesFilePath(paths.seriesDir, entry.path));
-    }
-
-    for (const entry of manifest.character_files) {
-        const workspaceOutputPath = workspaceRelativeOutputPath(seriesSlug, entry.path);
-        await runRpInvokeTask(
-            buildCharacterTask(series, paths, entry, selectedTimeline),
-            projectRoot,
-            {
-                requiredOutputPaths: [workspaceOutputPath],
-                model,
-                deadlineMs: invokeDeadlineMs,
-                maxSteps: options.maxSteps ?? 22,
-                maxToolCalls: options.maxToolCalls ?? 30,
-                networkMode: options.networkMode,
-            },
-        );
-        const fullPath = resolveSeriesFilePath(paths.seriesDir, entry.path);
-        const validation = validateCharacterMarkdown(readFileSync(fullPath, 'utf8'));
-        if (!validation.valid) {
-            await runRpInvokeTask(
-                buildCharacterSchemaRepairTask(paths, entry, validation.issues),
-                projectRoot,
-                {
-                    requiredOutputPaths: [workspaceOutputPath],
-                    model,
-                    deadlineMs: invokeDeadlineMs,
-                    maxSteps: Math.max(10, Math.min(options.maxSteps ?? 14, 20)),
-                    maxToolCalls: Math.max(10, Math.min(options.maxToolCalls ?? 18, 24)),
-                    networkMode: options.networkMode,
-                },
-            );
+        const failures = results
+            .map((r, i) => r.status === 'rejected' ? `${manifest.world_files[i].path}: ${String((r as PromiseRejectedResult).reason)}` : null)
+            .filter((msg): msg is string => msg !== null);
+        if (failures.length > 0) throw new Error(`world phase failures:\n${failures.join('\n')}`);
+        for (const r of results) {
+            if (r.status === 'fulfilled') generatedFiles.push(r.value);
         }
-        generatedFiles.push(fullPath);
+    }
+
+    // Location files phase: parallel up to `concurrency`.
+    {
+        const results = await Promise.allSettled(
+            manifest.location_files.map(entry => limit(async () => {
+                const workspaceOutputPath = workspaceRelativeOutputPath(seriesSlug, entry.path);
+                await runRpInvokeTask(
+                    buildLocationTask(series, paths, entry, selectedTimeline),
+                    projectRoot,
+                    {
+                        requiredOutputPaths: [workspaceOutputPath],
+                        model,
+                        deadlineMs: invokeDeadlineMs,
+                        maxSteps: options.maxSteps ?? 18,
+                        maxToolCalls: options.maxToolCalls ?? 22,
+                        networkMode: options.networkMode,
+                    },
+                );
+                return resolveSeriesFilePath(paths.seriesDir, entry.path);
+            })),
+        );
+        const failures = results
+            .map((r, i) => r.status === 'rejected' ? `${manifest.location_files[i].path}: ${String((r as PromiseRejectedResult).reason)}` : null)
+            .filter((msg): msg is string => msg !== null);
+        if (failures.length > 0) throw new Error(`location phase failures:\n${failures.join('\n')}`);
+        for (const r of results) {
+            if (r.status === 'fulfilled') generatedFiles.push(r.value);
+        }
+    }
+
+    // Character files phase: parallel up to `concurrency`; each task owns its own repair pass.
+    {
+        const results = await Promise.allSettled(
+            manifest.character_files.map(entry => limit(async () => {
+                const workspaceOutputPath = workspaceRelativeOutputPath(seriesSlug, entry.path);
+                await runRpInvokeTask(
+                    buildCharacterTask(series, paths, entry, selectedTimeline),
+                    projectRoot,
+                    {
+                        requiredOutputPaths: [workspaceOutputPath],
+                        model,
+                        deadlineMs: invokeDeadlineMs,
+                        maxSteps: options.maxSteps ?? 22,
+                        maxToolCalls: options.maxToolCalls ?? 30,
+                        networkMode: options.networkMode,
+                    },
+                );
+                const fullPath = resolveSeriesFilePath(paths.seriesDir, entry.path);
+                const validation = validateCharacterMarkdown(readFileSync(fullPath, 'utf8'));
+                if (!validation.valid) {
+                    await runRpInvokeTask(
+                        buildCharacterSchemaRepairTask(paths, entry, validation.issues),
+                        projectRoot,
+                        {
+                            requiredOutputPaths: [workspaceOutputPath],
+                            model,
+                            deadlineMs: invokeDeadlineMs,
+                            maxSteps: Math.max(10, Math.min(options.maxSteps ?? 14, 20)),
+                            maxToolCalls: Math.max(10, Math.min(options.maxToolCalls ?? 18, 24)),
+                            networkMode: options.networkMode,
+                        },
+                    );
+                }
+                return fullPath;
+            })),
+        );
+        const failures = results
+            .map((r, i) => r.status === 'rejected' ? `${manifest.character_files[i].path}: ${String((r as PromiseRejectedResult).reason)}` : null)
+            .filter((msg): msg is string => msg !== null);
+        if (failures.length > 0) throw new Error(`character phase failures:\n${failures.join('\n')}`);
+        for (const r of results) {
+            if (r.status === 'fulfilled') generatedFiles.push(r.value);
+        }
     }
 
     return {
