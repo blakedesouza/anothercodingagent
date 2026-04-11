@@ -148,8 +148,8 @@ There are probably other consumers of `aca invoke --json` that are also broken. 
 + docs/handoff-consult-aca-mode.md                    (this file — can delete after resume)
 ~ ~/.claude/skills/consult/SKILL.md                   (aca mode default, research-backed Step 3b)
 ~ ~/.claude/skills/consult/consult_ring.py            (ACA_TRIAGE_TOOLS, parameterized call_aca_invoke, build_triage_aca_prompt, --json bug NOT fixed)
-~ ~/.claude/projects/-home-blake-projects-anothercodingagent/memory/project_aca_phase.md  (refreshed)
-~ ~/.claude/projects/-home-blake-projects-anothercodingagent/memory/MEMORY.md             (refreshed index line)
+~ ~/.claude/projects/-repo-project/memory/project_aca_phase.md  (refreshed)
+~ ~/.claude/projects/-repo-project/memory/MEMORY.md             (refreshed index line)
 ```
 
 ## Validation status
@@ -313,12 +313,12 @@ L12 turn  status=completed  outcome=tool_error
 **Debug instrumentation captured:** I added a `process.env.ACA_DUMP_BODY` gate to `nanogpt-driver.ts:rawStream` that appends the full outgoing request body to `/tmp/aca-request-body.json`. **The latest invoke captured a 1611-line dump.** I copied the file to a persistent location since /tmp can clear:
 
 ```
-<claude-home>/projects/-home-blake-projects-anothercodingagent/aca-request-body-gemma-debug.json
+<claude-home>/projects/-repo-project/aca-request-body-gemma-debug.json
 ```
 
 **Next session — IMMEDIATE actions:**
 
-1. **Read** `~/.claude/projects/-home-blake-projects-anothercodingagent/aca-request-body-gemma-debug.json`. Look at the `tools` array and the full system message. Compare to what my isolated curl test sent (which worked). The 1611-line dump should contain the ACA-side ground truth of what gemma actually sees.
+1. **Read** `~/.claude/projects/-repo-project/aca-request-body-gemma-debug.json`. Look at the `tools` array and the full system message. Compare to what my isolated curl test sent (which worked). The 1611-line dump should contain the ACA-side ground truth of what gemma actually sees.
 2. **Find the variable** that differs between "works in isolation" and "fails in ACA". Candidates to check:
    - Does ACA send the tool schemas with extra JSON Schema constructs (`oneOf`, `additionalProperties`, deep `$ref`s) that gemma can't parse?
    - Does the witness verification task have something specific (multi-step instructions, embedded JSON examples) that triggers the bug?
@@ -344,7 +344,7 @@ cat <repo>/docs/handoff-consult-aca-mode.md  # this file
 cat <repo>/plan.md                            # broader context
 
 # 2. Inspect the captured request body
-cat <claude-home>/projects/-home-blake-projects-anothercodingagent/aca-request-body-gemma-debug.json | head -200
+cat <claude-home>/projects/-repo-project/aca-request-body-gemma-debug.json | head -200
 
 # 3. Check git state (should still be the same single Phase 0 commit)
 cd <repo> && git status --short | head -20 && git log -1 --oneline
