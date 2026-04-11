@@ -1517,7 +1517,13 @@ program
 
 program
     .command('rp-research <series...>')
-    .description('Research a series for RP and generate a targeted knowledge pack under the RP project')
+    .description(
+        'Full end-to-end RP knowledge-pack workflow: runs a discovery pass to enumerate cast, locations, and timeline options; ' +
+        'pauses after discovery if multiple arcs are found and asks you to rerun with --timeline <id> or --blank-timeline; ' +
+        'then generates world, location, and character files in parallel. ' +
+        'Use --blank-timeline for neutral/early-anime packs that don\'t need a specific arc selected. ' +
+        'Default model: zai-org/glm-5. Requires --network-mode open for Fandom/wiki lookups.',
+    )
     .option('--project-root <path>', 'Override the RP project root')
     .option('--slug <slug>', 'Override the generated series slug')
     .option('--source-scope <scope>', 'Preferred canon scope: auto, anime, manga, light-novel, visual-novel', 'auto')
