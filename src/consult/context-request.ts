@@ -171,14 +171,15 @@ If one narrow follow-up is needed before finalizing, return only this JSON objec
   "needs_context": [
     {
       "type": "file",
-      "path": "relative/path.ts",
+      "path": "<real/repo/relative/path.ts>",
       "line_start": 1,
       "line_end": 120,
-      "reason": "short concrete reason"
+      "reason": "<your specific reason for needing this snippet>"
     }
   ]
 }
 \`\`\`
+The angle-bracket values are placeholders — replace them with real values. Use a real repo-relative path from the symbol locations listed above or a prior tree response.
 
 To explore a directory before requesting specific files, use \`"type": "tree"\` — ACA returns a 3-level listing:
 \`\`\`json
@@ -208,7 +209,7 @@ Limits:
 - If a domain-named directory (e.g., \`consult/\`) doesn't appear to contain the expected file, request a tree of sibling generically-named directories (\`cli/\`, \`cmd/\`, \`commands/\`, \`bin/\`) before concluding it is absent — entry-point orchestration code often lives in those directories and delegates to domain modules.
 - Only request file paths that are explicitly mentioned in the provided evidence or clearly derivable from the task description. Do not infer paths from common project conventions or assumed directory structure — an ENOENT result wastes one of your ${limits.maxSnippets} context-request slots and provides no useful information.
 - Tools are disabled in this pass. Do not emit tool-call markup or tool-call intent.
-- Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, <read_file>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
+- Invalid examples include \`<tool_call>\`, \`<function_calls>\`, \`<call>\`, \`<invoke>\`, \`<parameter>\`, \`<arg_key>\`, \`<arg_value>\`, \`<read_file>\`, \`[TOOL_CALL]\`, \`"tool_calls"\`, and namespaced forms such as \`<minimax:tool_call>\`.
 - If you need more context, use only the needs_context JSON object above. ACA will read accepted snippets deterministically.
 `;
 }
@@ -262,14 +263,15 @@ If additional context is still needed, return only this JSON object and no Markd
   "needs_context": [
     {
       "type": "file",
-      "path": "relative/path.ts",
+      "path": "<real/repo/relative/path.ts>",
       "line_start": 1,
       "line_end": 120,
-      "reason": "short concrete reason"
+      "reason": "<your specific reason for needing this snippet>"
     }
   ]
 }
 \`\`\`
+The angle-bracket values are placeholders — replace them with real values. Use a real repo-relative path from fulfilled snippets or a prior tree response.
 
 Use \`"type": "tree"\` for a directory listing if you still need to explore a directory.
 
@@ -318,14 +320,15 @@ Return only this JSON object and no Markdown:
 {
   "needs_context": [
     {
-      "path": "relative/path.ts",
+      "path": "<real/repo/relative/path.ts>",
       "line_start": 1,
       "line_end": 120,
-      "reason": "short concrete reason"
+      "reason": "<your specific reason for needing this snippet>"
     }
   ]
 }
 \`\`\`
+The angle-bracket values are placeholders — replace them with real values. Use a real repo-relative path from the task description or evidence.
 
 Limits:
 - Request at most ${limits.maxSnippets} snippets.
@@ -338,8 +341,20 @@ Limits:
 - Do not request broad directories or whole-repo searches.
 - Do not summarize findings or quote code yourself.
 - Missing or ENOENT snippets are not positive evidence; they only mean the requested path was unhelpful.
-- Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, <read_file>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
+- Do not emit tool-call markup or tool-call intent. Invalid examples include \`<tool_call>\`, \`<function_calls>\`, \`<call>\`, \`<invoke>\`, \`<parameter>\`, \`<arg_key>\`, \`<arg_value>\`, \`<read_file>\`, \`[TOOL_CALL]\`, \`"tool_calls"\`, and namespaced forms such as \`<minimax:tool_call>\`.
 `;
+}
+
+/**
+ * Strips `> ` blockquote markers from the start of each line.
+ * Used to recover parseable JSON from models (e.g. Qwen3) that wrap
+ * their entire response in blockquote syntax via delta.content.
+ */
+export function stripBlockquoteMarkers(text: string): string {
+    return text
+        .split('\n')
+        .map(line => line.replace(/^> ?/, ''))
+        .join('\n');
 }
 
 export function parseContextRequests(content: string, limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS): ContextRequest[] {
@@ -607,7 +622,7 @@ Use only the exact prompt and fulfilled snippets shown above. Do not rely on rem
 If a fulfilled snippet shows ERROR, ENOENT, or empty content, treat that as missing evidence, not evidence of absence.
 Do not claim a file, feature, or configuration is missing unless a provided snippet explicitly establishes that fact. Otherwise record an open question.
 If ACA enforces structured output for this request, put the final Markdown report in the "markdown" field.
-Do not emit tool-call markup or tool-call intent. Invalid examples include <tool_call>, <function_calls>, <call>, <invoke>, <parameter>, <arg_key>, <arg_value>, <read_file>, [TOOL_CALL], "tool_calls", and namespaced forms such as <minimax:tool_call>.
+Do not emit tool-call markup or tool-call intent. Invalid examples include \`<tool_call>\`, \`<function_calls>\`, \`<call>\`, \`<invoke>\`, \`<parameter>\`, \`<arg_key>\`, \`<arg_value>\`, \`<read_file>\`, \`[TOOL_CALL]\`, \`"tool_calls"\`, and namespaced forms such as \`<minimax:tool_call>\`.
 `;
 }
 
