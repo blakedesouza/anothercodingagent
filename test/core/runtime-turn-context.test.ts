@@ -111,7 +111,7 @@ describe('runtime-turn-context', () => {
         healthMap.register('lsp', 'local');
         healthMap.reportRetryableFailure('lsp', 'server crashed');
 
-        const context = buildRuntimePromptContext('/home/blake/projects/anothercodingagent', manifest, healthMap);
+        const context = buildRuntimePromptContext('/workspace/anothercodingagent', manifest, healthMap);
 
         expect(context.projectSnapshot).toBeDefined();
         expect(context.workingSet).toEqual([{ path: 'src/main.ts', role: 'editing' }]);

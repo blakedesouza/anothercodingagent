@@ -162,7 +162,7 @@ function buildBuiltInProfiles(toolRegistry: ToolRegistry): AgentProfile[] {
                 'Do not collapse character groups into one file when members are individually important; the orchestrator should give each important character a dedicated agent and output path.',
                 'When the cast or file plan is unknown, discover the cast/topic list first from series-level sources, then propose or use exact Markdown output paths; do not collapse character groups into one file when members are individually important.',
                 'Do not spend the whole tool budget on unbounded exploration across the franchise; stay on the assigned character or world topic and write the file once that target is covered.',
-                'For GLM-5 local high-trust runs, larger bounded budgets are acceptable, but the task must still have an exact assigned output path and required-output validation.',
+                'For explicitly trusted long-context research models, larger bounded budgets are acceptable, but the task must still have an exact assigned output path and required-output validation.',
                 'Do not create per-character instructions.md files unless explicitly assigned.',
                 'Do not include Japanese script or unnecessary Japanese terminology by default; use English or already-common romanized names. Only include original-language text when it is part of an ability/skill/magic name that cannot be disambiguated cleanly in English, or when the task explicitly asks for original-language text.',
                 'Do not invent mandatory sections like "RP Use", "RP Notes", "Knowledge and Secrets", "Spoiler Notes", or "Current Status". Use simple headings only when they fit the specific character or topic.',

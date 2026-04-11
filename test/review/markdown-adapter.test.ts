@@ -145,7 +145,7 @@ Token stored in plaintext.
         it('handles ACA consult witness response format', () => {
             const md = `**Concrete Findings:**
 
-- **File:** \`/home/blake/projects/anothercodingagent/RP_AUTHORING_CONTRACT.md\`
+- **File:** \`/workspace/anothercodingagent/docs/rp/authoring-contract.md\`
 - **Lines 1-10:** The first Markdown heading in the file is \`# RP Knowledge Pack Authoring Contract\`, found on line 1.
 
 No bug was found in the task execution.`;

@@ -36,6 +36,10 @@ describe('rp-research helpers', () => {
         expect(resolved).toBe('/tmp/rp-env');
     });
 
+    it('requires an explicit project root when no env override is configured', () => {
+        expect(() => resolveRpProjectRoot(undefined, {})).toThrow(/RP project root is not configured/);
+    });
+
     it('uses explicit RP invoke deadline override when present', () => {
         expect(resolveRpInvokeDeadlineMs(120000, {})).toBe(120000);
     });

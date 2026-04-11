@@ -225,7 +225,7 @@ describe('AgentRegistry', () => {
             expect(profile!.systemPrompt).toContain('source-grounded Markdown brief');
             expect(profile!.systemPrompt).toContain('do not stop at a promise to research later');
             expect(profile!.systemPrompt).toContain('stay on the assigned character or world topic');
-            expect(profile!.systemPrompt).toContain('GLM-5 local high-trust runs');
+            expect(profile!.systemPrompt).toContain('trusted long-context research models');
             expect(profile!.systemPrompt).toContain('required-output validation');
             expect(profile!.systemPrompt).toContain('Do not create per-character instructions.md files');
             expect(profile!.systemPrompt).toContain('Do not include Japanese script');

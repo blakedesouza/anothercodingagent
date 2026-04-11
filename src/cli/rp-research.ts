@@ -5,7 +5,6 @@ import type { InvokeResponse } from './executor.js';
 import { parseInvokeOutput, runAcaInvoke } from '../mcp/server.js';
 import { parseEmulatedToolCalls } from '../providers/tool-emulation.js';
 
-export const LOCAL_DEFAULT_RP_PROJECT_ROOT = '/home/blake/projects/rpproject';
 export const DEFAULT_RP_INVOKE_DEADLINE_MS = 5 * 60 * 1000;
 
 export const RP_CHARACTER_SECTION_HEADINGS = [
@@ -313,9 +312,6 @@ export function slugifySeriesTitle(series: string): string {
 export function resolveRpProjectRoot(projectRootOverride?: string, env: NodeJS.ProcessEnv = process.env): string {
     const explicit = projectRootOverride?.trim() || env.ACA_RP_PROJECT_ROOT?.trim();
     if (explicit) return resolve(explicit);
-    if (existsSync(LOCAL_DEFAULT_RP_PROJECT_ROOT)) {
-        return resolve(LOCAL_DEFAULT_RP_PROJECT_ROOT);
-    }
     throw new Error(
         'RP project root is not configured. Pass --project-root or set ACA_RP_PROJECT_ROOT.',
     );
