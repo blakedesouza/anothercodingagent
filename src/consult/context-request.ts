@@ -185,7 +185,7 @@ To explore a directory before requesting specific files, use \`"type": "tree"\` 
 \`\`\`json
 {
   "needs_context": [
-    { "type": "tree", "path": "src/providers", "line_start": 0, "line_end": 0, "reason": "find driver file names" }
+    { "type": "tree", "path": "<real/repo/relative/directory>", "line_start": 0, "line_end": 0, "reason": "<your reason for exploring this directory>" }
   ]
 }
 \`\`\`
@@ -381,7 +381,8 @@ function normalizeContextRequests(rawRequests: unknown[], limits: ContextRequest
         if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
         const record = raw as Record<string, unknown>;
         const path = typeof record.path === 'string' ? record.path.trim() : '';
-        if (!path) continue;
+        // Reject placeholder paths that were copied verbatim from the example JSON.
+        if (!path || path.includes('<') || path.includes('>')) continue;
         const reason = typeof record.reason === 'string' ? record.reason.trim().slice(0, 300) : '';
 
         // Tree requests don't use line ranges.
