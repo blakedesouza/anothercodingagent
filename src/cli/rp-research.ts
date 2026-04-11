@@ -936,10 +936,10 @@ async function runRpInvokeTask(
     let priorErrorMessage: string | null = null;
     let priorAttemptMissedOutputs = false;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
-        // On retry after a missing-output failure, prepend a forced-write instruction so the
-        // model does not repeat the announce-without-acting pattern.
+        // On retry after a missing-output or profile-validation failure, prepend a forced-write
+        // instruction so the model does not repeat the announce-without-acting pattern.
         const currentTask = (attempt === 2 && priorAttemptMissedOutputs)
-            ? `RETRY: a prior attempt at this task ended with a text announcement ("Writing the file now") without calling \`write_file\`. Your FIRST tool call in this session MUST be \`write_file\` for the required output path. Do not plan, do not announce, do not fetch more pages — act immediately.\n\n${task}`
+            ? `RETRY: a prior attempt at this task failed to write the required output file. Your FIRST tool call in this session MUST be \`write_file\` for the required output path. Do not plan, do not announce, do not fetch more pages — act immediately.\n\n${task}`
             : task;
         const priorSessionIds = snapshotSessionIds(sessionsDir);
         const result = await makeExecute(currentTask)();
@@ -948,7 +948,10 @@ async function runRpInvokeTask(
             return;
         }
 
-        if (response.errors?.some(error => error.code === 'turn.required_outputs_missing')) {
+        const isMissedOutput = response.errors?.some(error => error.code === 'turn.required_outputs_missing') ?? false;
+        const isProfileValidationFail = response.errors?.some(error => error.code === 'turn.profile_validation_failed') ?? false;
+
+        if (isMissedOutput) {
             priorAttemptMissedOutputs = true;
             const freshSessionDir = findFreshSessionDir(sessionsDir, priorSessionIds, projectRoot, sessionTag);
             if (freshSessionDir) {
@@ -963,8 +966,12 @@ async function runRpInvokeTask(
             }
         }
 
+        // Behavioral failures (missed output, profile validation) also trigger the forced-write
+        // retry, not just LLM infrastructure errors.
+        if (isProfileValidationFail) priorAttemptMissedOutputs = true;
+
         const errorMessage = formatInvokeErrorMessage(result.stdout, result.stderr, result.exitCode);
-        if (attempt === 1 && shouldFreshRetryRpInvokeResponse(response)) {
+        if (attempt === 1 && (shouldFreshRetryRpInvokeResponse(response) || isMissedOutput || isProfileValidationFail)) {
             priorErrorMessage = errorMessage;
             continue;
         }
