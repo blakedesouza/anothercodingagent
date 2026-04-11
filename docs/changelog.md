@@ -56,6 +56,8 @@ Living record of design and implementation work on Another Coding Agent (ACA). O
 
 **Live-validated:** Re-ran test 09 post-fix — qwen requested `src/consult/context-request.ts:340-380` with a specific reason. 2661 tests still passing.
 
+**Follow-up — impact audit (commit `f467b30`):** Opus impact audit found the JSON.parse defense was incorrect (angle brackets are valid JSON string chars). Two additional hardening changes: (1) `normalizeContextRequests` now rejects paths containing `<`/`>` — verbatim copies dropped at parse time rather than producing ENOENT; (2) tree example in `buildContextRequestPrompt` line 188 converted to angle-bracket placeholders for consistency (also caught by the new guard). No pseudo-tool-call false positives. No other contaminated prompt sites found.
+
 **Gauntlet summary:**
 | # | Test | Result |
 |---|------|--------|
