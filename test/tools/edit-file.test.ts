@@ -114,7 +114,7 @@ describe('edit_file tool', () => {
             expect(content).toBe('original content');
         });
 
-        it('applies successful edits even when some reject', async () => {
+        it('does not write any edits when one edit rejects', async () => {
             const filePath = join(tmpDir, 'partial-edit.txt');
             await writeFile(filePath, 'line one\nline two\n');
 
@@ -132,11 +132,34 @@ describe('edit_file tool', () => {
             expect(result.status).toBe('success');
 
             const data = parseData(result);
-            expect(data.applied).toBe(1);
+            expect(data.applied).toBe(0);
             expect((data.rejects as unknown[]).length).toBe(1);
+            expect(result.mutationState).toBe('none');
 
             const content = await readFile(filePath, 'utf8');
-            expect(content).toBe('LINE ONE\nline two\n');
+            expect(content).toBe('line one\nline two\n');
+        });
+
+        it('rejects ambiguous duplicate matches without modification', async () => {
+            const filePath = join(tmpDir, 'duplicate-edit.txt');
+            await writeFile(filePath, 'same\nsame\n');
+
+            const result = await runner.execute(
+                'edit_file',
+                { path: filePath, edits: [{ search: 'same', replace: 'changed' }] },
+                baseContext,
+            );
+            expect(result.status).toBe('success');
+
+            const data = parseData(result);
+            expect(data.applied).toBe(0);
+            const rejects = data.rejects as Array<{ index: number; search: string; reason: string }>;
+            expect(rejects).toHaveLength(1);
+            expect(rejects[0].reason).toContain('multiple');
+            expect(result.mutationState).toBe('none');
+
+            const content = await readFile(filePath, 'utf8');
+            expect(content).toBe('same\nsame\n');
         });
     });
 

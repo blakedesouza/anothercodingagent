@@ -304,7 +304,7 @@ export function createBrowserToolImpls(
         try {
             const page = await manager.ensurePage();
             await page.fill(selector, text, { timeout: 10_000 });
-            return successOutput(JSON.stringify({ filled: selector, text }));
+            return successOutput(JSON.stringify({ filled: selector, chars: text.length }));
         } catch (err) {
             if (err instanceof BrowserUnavailableError) {
                 return errorOutput('browser_unavailable', err.message);

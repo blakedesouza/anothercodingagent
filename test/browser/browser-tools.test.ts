@@ -162,6 +162,8 @@ describe('Browser Tool Implementations', () => {
             );
             expect(result.status).toBe('success');
             expect(mockPage.fill).toHaveBeenCalledWith('#input', 'hello', { timeout: 10_000 });
+            expect(result.data).toBe(JSON.stringify({ filled: '#input', chars: 5 }));
+            expect(result.data).not.toContain('hello');
         });
     });
 

@@ -291,7 +291,7 @@ export class BrowserManager {
             await this.context.route('**/*', async (route) => {
                 const request = route.request();
                 const result = evaluateBrowserNavigation(request.url(), policy);
-                if (result.decision === 'deny') {
+                if (result.decision !== 'allow') {
                     await route.abort('blockedbyclient');
                     return;
                 }

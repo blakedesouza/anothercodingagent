@@ -63,6 +63,19 @@ function errorOutput(code: string, message: string): ToolOutput {
     };
 }
 
+function countOccurrences(content: string, search: string): number {
+    if (search.length === 0) return Number.POSITIVE_INFINITY;
+
+    let count = 0;
+    let offset = 0;
+    while (true) {
+        const idx = content.indexOf(search, offset);
+        if (idx === -1) return count;
+        count++;
+        offset = idx + search.length;
+    }
+}
+
 export const editFileImpl: ToolImplementation = async (
     args: Record<string, unknown>,
     context: ToolContext,
@@ -107,20 +120,37 @@ export const editFileImpl: ToolImplementation = async (
         return errorOutput('tool.io_error', `Cannot read file: ${filePath} (${nodeErr.code ?? 'unknown'})`);
     }
 
-    // Apply each edit in order, replacing the first occurrence of each search string
+    // Validate and stage every edit before writing so the batch is atomic.
     let current = content;
-    let applied = 0;
     const rejects: Reject[] = [];
 
     for (let i = 0; i < edits.length; i++) {
         const edit = edits[i];
-        const idx = current.indexOf(edit.search);
-        if (idx === -1) {
+        const matches = countOccurrences(current, edit.search);
+        if (edit.search.length === 0) {
+            rejects.push({ index: i, search: edit.search, reason: 'search string must not be empty' });
+        } else if (matches === 0) {
             rejects.push({ index: i, search: edit.search, reason: 'search string not found' });
+        } else if (matches > 1) {
+            rejects.push({ index: i, search: edit.search, reason: 'search string matched multiple times' });
         } else {
+            const idx = current.indexOf(edit.search);
             current = current.slice(0, idx) + edit.replace + current.slice(idx + edit.search.length);
-            applied++;
         }
+    }
+
+    if (rejects.length > 0) {
+        const data = JSON.stringify({ applied: 0, rejects });
+        return {
+            status: 'success',
+            data,
+            truncated: false,
+            bytesReturned: Buffer.byteLength(data, 'utf8'),
+            bytesOmitted: 0,
+            retryable: false,
+            timedOut: false,
+            mutationState: 'none',
+        };
     }
 
     const buf = Buffer.from(current, 'utf8');
@@ -135,7 +165,7 @@ export const editFileImpl: ToolImplementation = async (
         return errorOutput('tool.io_error', `Cannot write file: ${filePath} (${nodeErr.code ?? 'unknown'})`);
     }
 
-    const data = JSON.stringify({ applied, rejects });
+    const data = JSON.stringify({ applied: edits.length, rejects });
     return {
         status: 'success',
         data,

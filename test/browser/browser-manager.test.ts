@@ -462,5 +462,35 @@ describe('BrowserManager', () => {
             expect(continueFn).not.toHaveBeenCalled();
             await mgr.dispose();
         });
+
+        it('route handler aborts requests that require confirmation', async () => {
+            const mgr = new BrowserManager({
+                launchFn,
+                networkPolicy: { mode: 'approved-only', allowDomains: [], denyDomains: [], allowHttp: false },
+                nowFn: () => nowValue,
+            });
+
+            await mgr.ensurePage();
+
+            const routeCall = (mockContext.route as ReturnType<typeof vi.fn>).mock.calls[0];
+            const routeHandler = routeCall[1] as Function;
+
+            const abortFn = vi.fn().mockResolvedValue(undefined);
+            const continueFn = vi.fn().mockResolvedValue(undefined);
+            const mockRoute = {
+                request: () => ({
+                    resourceType: () => 'xhr',
+                    url: () => 'https://unapproved.example/api',
+                }),
+                abort: abortFn,
+                continue: continueFn,
+            };
+
+            await routeHandler(mockRoute);
+
+            expect(abortFn).toHaveBeenCalledWith('blockedbyclient');
+            expect(continueFn).not.toHaveBeenCalled();
+            await mgr.dispose();
+        });
     });
 });
