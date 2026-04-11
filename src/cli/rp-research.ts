@@ -6,7 +6,7 @@ import type { InvokeResponse } from './executor.js';
 import { parseInvokeOutput, runAcaInvoke } from '../mcp/server.js';
 import { parseEmulatedToolCalls, sanitizeModelJson } from '../providers/tool-emulation.js';
 
-export const DEFAULT_RP_INVOKE_DEADLINE_MS = 15 * 60 * 1000;
+export const DEFAULT_RP_INVOKE_DEADLINE_MS = 20 * 60 * 1000;
 
 export const RP_CHARACTER_SECTION_HEADINGS = [
     'Basic Info',
