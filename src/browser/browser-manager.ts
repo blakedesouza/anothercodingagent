@@ -290,7 +290,7 @@ export class BrowserManager {
             const policy = this.networkPolicy;
             await this.context.route('**/*', async (route) => {
                 const request = route.request();
-                const result = evaluateBrowserNavigation(request.url(), policy);
+                const result = await evaluateBrowserNavigation(request.url(), policy);
                 if (result.decision !== 'allow') {
                     await route.abort('blockedbyclient');
                     return;

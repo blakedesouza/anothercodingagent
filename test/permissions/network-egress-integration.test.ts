@@ -17,6 +17,7 @@ import type {
     NetworkPolicyResult,
 } from '../../src/permissions/network-policy.js';
 import type { NetworkCheckedPayload } from '../../src/types/events.js';
+import type dns from 'node:dns';
 
 // --- Helpers ---
 
@@ -28,6 +29,11 @@ function makePolicy(overrides: Partial<NetworkPolicy> = {}): NetworkPolicy {
         allowHttp: false,
         ...overrides,
     };
+}
+
+/** A no-op DNS resolver that always returns a clean public IP. */
+function cleanResolver(_host: string, _opts: dns.LookupAllOptions): Promise<dns.LookupAddress[]> {
+    return Promise.resolve([{ address: '93.184.216.34', family: 4 }]);
 }
 
 /** Build a NetworkCheckedPayload from a policy result (mirrors what the tool runner would do). */
@@ -162,36 +168,40 @@ describe('detectShellNetworkCommand — new patterns', () => {
 // =============================================================================
 
 describe('evaluateBrowserNavigation', () => {
-    it('denied domain → blocked before page load', () => {
-        const result = evaluateBrowserNavigation(
+    it('denied domain → blocked before page load', async () => {
+        const result = await evaluateBrowserNavigation(
             'https://evil.com/page',
             makePolicy({ denyDomains: ['evil.com'] }),
+            cleanResolver,
         );
         expect(result.decision).toBe('deny');
         expect(result.reason).toContain('denyDomains');
     });
 
-    it('mode=off → all navigation blocked', () => {
-        const result = evaluateBrowserNavigation(
+    it('mode=off → all navigation blocked', async () => {
+        const result = await evaluateBrowserNavigation(
             'https://example.com',
             makePolicy({ mode: 'off' }),
+            cleanResolver,
         );
         expect(result.decision).toBe('deny');
         expect(result.reason).toContain('mode: off');
     });
 
-    it('allowed domain → navigation permitted', () => {
-        const result = evaluateBrowserNavigation(
+    it('allowed domain → navigation permitted', async () => {
+        const result = await evaluateBrowserNavigation(
             'https://docs.example.com/page',
             makePolicy({ allowDomains: ['docs.example.com'] }),
+            cleanResolver,
         );
         expect(result.decision).toBe('allow');
     });
 
-    it('localhost → auto-allowed for browser', () => {
-        const result = evaluateBrowserNavigation(
+    it('localhost → auto-allowed for browser', async () => {
+        const result = await evaluateBrowserNavigation(
             'http://localhost:3000/app',
             makePolicy({ mode: 'approved-only', allowHttp: true }),
+            cleanResolver,
         );
         expect(result.decision).toBe('allow');
         expect(result.reason).toContain('localhost');
@@ -203,38 +213,39 @@ describe('evaluateBrowserNavigation', () => {
 // =============================================================================
 
 describe('fetch_url network policy integration', () => {
-    it('fetch_url with mode=off → denied (network_disabled)', () => {
+    it('fetch_url with mode=off → denied (network_disabled)', async () => {
         // fetch_url uses evaluateNetworkAccess for HTTP tier
-        const result = evaluateNetworkAccess(
+        const result = await evaluateNetworkAccess(
             'https://example.com/api',
             makePolicy({ mode: 'off' }),
+            cleanResolver,
         );
         expect(result.decision).toBe('deny');
         expect(result.reason).toContain('disabled');
     });
 
-    it('fetch_url HTTP fallback to Playwright → both check policy', () => {
+    it('fetch_url HTTP fallback to Playwright → both check policy', async () => {
         const policy = makePolicy({ denyDomains: ['evil.com'] });
         const url = 'https://evil.com/page';
 
         // HTTP tier check (evaluateNetworkAccess)
-        const httpResult = evaluateNetworkAccess(url, policy);
+        const httpResult = await evaluateNetworkAccess(url, policy, cleanResolver);
         expect(httpResult.decision).toBe('deny');
 
         // Playwright fallback also checks (evaluateBrowserNavigation)
-        const playwrightResult = evaluateBrowserNavigation(url, policy);
+        const playwrightResult = await evaluateBrowserNavigation(url, policy, cleanResolver);
         expect(playwrightResult.decision).toBe('deny');
 
         // Both agree
         expect(httpResult.decision).toBe(playwrightResult.decision);
     });
 
-    it('fetch_url allowed domain passes both tiers', () => {
+    it('fetch_url allowed domain passes both tiers', async () => {
         const policy = makePolicy({ allowDomains: ['api.example.com'] });
         const url = 'https://api.example.com/data';
 
-        const httpResult = evaluateNetworkAccess(url, policy);
-        const playwrightResult = evaluateBrowserNavigation(url, policy);
+        const httpResult = await evaluateNetworkAccess(url, policy, cleanResolver);
+        const playwrightResult = await evaluateBrowserNavigation(url, policy, cleanResolver);
 
         expect(httpResult.decision).toBe('allow');
         expect(playwrightResult.decision).toBe('allow');
@@ -246,10 +257,11 @@ describe('fetch_url network policy integration', () => {
 // =============================================================================
 
 describe('localhost exception refinement', () => {
-    it('fetch_url http://localhost:3000 → allowed (URL-based, localhost auto-allowed)', () => {
-        const result = evaluateNetworkAccess(
+    it('fetch_url http://localhost:3000 → allowed (URL-based, localhost auto-allowed)', async () => {
+        const result = await evaluateNetworkAccess(
             'http://localhost:3000',
             makePolicy({ mode: 'approved-only', allowHttp: true }),
+            cleanResolver,
         );
         expect(result.decision).toBe('allow');
         expect(result.reason).toContain('localhost');
@@ -266,10 +278,11 @@ describe('localhost exception refinement', () => {
         expect(result!.decision).not.toBe('allow');
     });
 
-    it('browser localhost → auto-allowed (URL-based semantics)', () => {
-        const result = evaluateBrowserNavigation(
+    it('browser localhost → auto-allowed (URL-based semantics)', async () => {
+        const result = await evaluateBrowserNavigation(
             'http://localhost:8080',
             makePolicy({ mode: 'approved-only', allowHttp: true }),
+            cleanResolver,
         );
         expect(result.decision).toBe('allow');
     });
@@ -290,9 +303,9 @@ describe('localhost exception refinement', () => {
 // =============================================================================
 
 describe('network.checked event payload', () => {
-    it('URL check emits correct payload shape', () => {
+    it('URL check emits correct payload shape', async () => {
         const policy = makePolicy({ mode: 'approved-only', allowDomains: ['api.github.com'] });
-        const result = evaluateNetworkAccess('https://api.github.com/repos', policy);
+        const result = await evaluateNetworkAccess('https://api.github.com/repos', policy, cleanResolver);
 
         const payload = buildCheckedPayload(result, policy, 'api.github.com', 'url');
 
@@ -326,9 +339,9 @@ describe('network.checked event payload', () => {
         });
     });
 
-    it('browser check emits correct payload', () => {
+    it('browser check emits correct payload', async () => {
         const policy = makePolicy({ denyDomains: ['blocked.com'] });
-        const result = evaluateBrowserNavigation('https://blocked.com/page', policy);
+        const result = await evaluateBrowserNavigation('https://blocked.com/page', policy, cleanResolver);
 
         const payload = buildCheckedPayload(result, policy, 'blocked.com', 'browser');
 
@@ -341,9 +354,9 @@ describe('network.checked event payload', () => {
         });
     });
 
-    it('payload satisfies NetworkCheckedPayload type contract', () => {
+    it('payload satisfies NetworkCheckedPayload type contract', async () => {
         const policy = makePolicy({ mode: 'open' });
-        const result = evaluateNetworkAccess('https://example.com', policy);
+        const result = await evaluateNetworkAccess('https://example.com', policy, cleanResolver);
         const payload: NetworkCheckedPayload = buildCheckedPayload(
             result,
             policy,

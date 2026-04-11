@@ -193,7 +193,7 @@ export function createFetchMediaWikiPageImpl(deps: FetchMediaWikiPageDeps): Tool
             return errorOutput('invalid_url', `Invalid api_url: ${apiUrl}`);
         }
 
-        const blocked = checkNetworkPolicy(requestUrl, networkPolicy);
+        const blocked = await checkNetworkPolicy(requestUrl, networkPolicy);
         if (blocked) return blocked;
 
         try {
@@ -261,7 +261,7 @@ export function createFetchMediaWikiCategoryImpl(deps: FetchMediaWikiPageDeps): 
             return errorOutput('invalid_url', `Invalid api_url: ${apiUrl}`);
         }
 
-        const blocked = checkNetworkPolicy(requestUrl, networkPolicy);
+        const blocked = await checkNetworkPolicy(requestUrl, networkPolicy);
         if (blocked) return blocked;
 
         try {

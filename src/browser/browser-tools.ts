@@ -256,7 +256,7 @@ export function createBrowserToolImpls(
 
         // Network policy check before navigation
         if (networkPolicy) {
-            const policyResult = evaluateBrowserNavigation(url, networkPolicy);
+            const policyResult = await evaluateBrowserNavigation(url, networkPolicy);
             if (policyResult.decision === 'deny') {
                 return errorOutput('network_denied', `Navigation blocked: ${policyResult.reason}`);
             }

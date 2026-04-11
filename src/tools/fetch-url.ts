@@ -242,7 +242,7 @@ async function fetchWithLimits(
 
             // SSRF protection: check network policy on each redirect target
             if (networkPolicy) {
-                const result = evaluateNetworkAccess(currentUrl, networkPolicy);
+                const result = await evaluateNetworkAccess(currentUrl, networkPolicy);
                 if (result.decision === 'deny') {
                     throw new Error(`Redirect to ${currentUrl} blocked: ${result.reason}`);
                 }
@@ -405,8 +405,8 @@ export function createFetchUrlImpl(deps: FetchUrlDeps): ToolImplementation {
         }
 
         // Network policy check
-        const blocked = checkNetworkPolicy(url, networkPolicy);
-        if (blocked) return blocked;
+        const blocked = await checkNetworkPolicy(url, networkPolicy);
+        if (blocked !== null) return blocked;
 
         // Tier 1: lightweight fetch
         if (tierPref === 'auto' || tierPref === 'lightweight') {

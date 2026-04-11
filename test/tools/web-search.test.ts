@@ -128,40 +128,43 @@ describe('createWebSearchImpl', () => {
 // --- Network policy tests ---
 
 describe('checkNetworkPolicy', () => {
-    it('returns null when no policy provided', () => {
-        expect(checkNetworkPolicy('https://example.com', undefined)).toBeNull();
+    it('returns null when no policy provided', async () => {
+        expect(await checkNetworkPolicy('https://example.com', undefined)).toBeNull();
     });
 
-    it('returns deny error for mode=off', () => {
+    it('returns deny error for mode=off', async () => {
         const policy: NetworkPolicy = { mode: 'off', allowDomains: [], denyDomains: [], allowHttp: false };
-        const result = checkNetworkPolicy('https://example.com', policy);
+        const result = await checkNetworkPolicy('https://example.com', policy);
         expect(result).not.toBeNull();
         expect(result!.error?.code).toBe('network_denied');
     });
 
-    it('returns confirm error for unlisted domain in approved-only mode', () => {
+    it('returns confirm error for unlisted domain in approved-only mode', async () => {
         const policy: NetworkPolicy = { mode: 'approved-only', allowDomains: [], denyDomains: [], allowHttp: false };
-        const result = checkNetworkPolicy('https://unknown.com', policy);
+        const result = await checkNetworkPolicy('https://unknown.com', policy);
         expect(result).not.toBeNull();
         expect(result!.error?.code).toBe('network_confirm_required');
     });
 
-    it('returns null for allowed domain in approved-only mode', () => {
+    it('returns null for allowed domain in approved-only mode', async () => {
         const policy: NetworkPolicy = { mode: 'approved-only', allowDomains: ['example.com'], denyDomains: [], allowHttp: false };
-        const result = checkNetworkPolicy('https://example.com', policy);
+        // checkNetworkPolicy calls evaluateNetworkAccess which may do real DNS for allowed domains.
+        // This test only checks that the function resolves to null (allow) — DNS failures are non-blocking.
+        const result = await checkNetworkPolicy('https://example.com', policy);
         expect(result).toBeNull();
     });
 
-    it('returns deny for denied domain even in open mode', () => {
+    it('returns deny for denied domain even in open mode', async () => {
         const policy: NetworkPolicy = { mode: 'open', allowDomains: [], denyDomains: ['evil.com'], allowHttp: false };
-        const result = checkNetworkPolicy('https://evil.com', policy);
+        const result = await checkNetworkPolicy('https://evil.com', policy);
         expect(result).not.toBeNull();
         expect(result!.error?.code).toBe('network_denied');
     });
 
-    it('returns null for open mode with non-denied domain', () => {
+    it('returns null for open mode with non-denied domain', async () => {
         const policy: NetworkPolicy = { mode: 'open', allowDomains: [], denyDomains: [], allowHttp: false };
-        const result = checkNetworkPolicy('https://example.com', policy);
+        // DNS check runs here; failures are non-blocking so this should resolve to null.
+        const result = await checkNetworkPolicy('https://example.com', policy);
         expect(result).toBeNull();
     });
 });
@@ -172,10 +175,10 @@ describe('web_search localhost exception', () => {
     const localhostAddresses = ['localhost', '127.0.0.1', '::1'];
 
     for (const host of localhostAddresses) {
-        it(`auto-allows ${host} regardless of network mode`, () => {
+        it(`auto-allows ${host} regardless of network mode`, async () => {
             const policy: NetworkPolicy = { mode: 'approved-only', allowDomains: [], denyDomains: [], allowHttp: true };
             const url = `http://${host === '::1' ? `[${host}]` : host}:8080/search`;
-            const result = checkNetworkPolicy(url, policy);
+            const result = await checkNetworkPolicy(url, policy);
             expect(result).toBeNull();
         });
     }

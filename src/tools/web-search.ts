@@ -177,10 +177,10 @@ function errorOutput(code: string, message: string, retryable = false): ToolOutp
 /**
  * Check network policy for a URL. Returns a deny/confirm error ToolOutput or null if allowed.
  */
-export function checkNetworkPolicy(url: string, policy: NetworkPolicy | undefined): ToolOutput | null {
+export async function checkNetworkPolicy(url: string, policy: NetworkPolicy | undefined): Promise<ToolOutput | null> {
     if (!policy) return null;
 
-    const result: NetworkPolicyResult = evaluateNetworkAccess(url, policy);
+    const result: NetworkPolicyResult = await evaluateNetworkAccess(url, policy);
     if (result.decision === 'deny') {
         return errorOutput('network_denied', `Blocked: ${result.reason}`);
     }
@@ -213,8 +213,8 @@ export function createWebSearchImpl(deps: WebSearchDeps): ToolImplementation {
         // The policy check here validates the provider API is reachable.
         // Individual result URLs are NOT fetched by this tool (that's fetch_url's job).
         if (searchProvider instanceof TavilySearchProvider) {
-            const blocked = checkNetworkPolicy('https://api.tavily.com/search', networkPolicy);
-            if (blocked) return blocked;
+            const blocked = await checkNetworkPolicy('https://api.tavily.com/search', networkPolicy);
+            if (blocked !== null) return blocked;
         }
 
         try {
