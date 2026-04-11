@@ -54,7 +54,7 @@ Expected now: qwen receives `A` in question (legend maps A=wrapStreamWithToolEmu
 SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-obfusc-verify-XXXXXX) \
   node dist/index.js consult \
   --question "What does wrapStreamWithToolEmulation do, what streaming events does it emit, and what file defines it?" \
-  --project-dir /home/blake/projects/anothercodingagent \
+  --project-dir <repo> \
   --max-context-rounds 1 \
   2>&1 | python3 -c "
 import sys, json
@@ -75,7 +75,7 @@ print('success_count:', data['success_count'])
 SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-obfusc-verify-XXXXXX) \
   node dist/index.js consult \
   --question "What does execCommand do in this codebase and where is it defined?" \
-  --project-dir /home/blake/projects/anothercodingagent \
+  --project-dir <repo> \
   --max-context-rounds 1 \
   2>&1 | python3 -c "
 import sys, json
@@ -95,7 +95,7 @@ Verify obfuscation doesn't degrade normal (non-trigger) questions.
 SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-obfusc-verify-XXXXXX) \
   node dist/index.js consult \
   --question "What does formatOtlpPayload do, what does it return, and what file defines it?" \
-  --project-dir /home/blake/projects/anothercodingagent \
+  --project-dir <repo> \
   --max-context-rounds 3 \
   2>&1 | python3 -c "
 import sys, json

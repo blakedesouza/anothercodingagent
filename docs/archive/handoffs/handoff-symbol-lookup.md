@@ -255,7 +255,7 @@ Source-verified: `src/cli/invoke-output-validation.ts:77`
 SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-symlookup1-XXXXXX) \
   node dist/index.js consult \
   --question "What does countHardRejectedToolCalls do — what condition does it filter on, what error code does it check, and what file is it defined in?" \
-  --project-dir /home/blake/projects/anothercodingagent \
+  --project-dir <repo> \
   --max-context-rounds 3 \
   2>&1 | tee /tmp/aca-symlookup1-${SUFFIX}.txt
 ```
@@ -273,7 +273,7 @@ Source-verified: `src/cli/invoke-runtime-state.ts:34`
 SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-symlookup2-XXXXXX) \
   node dist/index.js consult \
   --question "What does prepareInvokeTurnConfig do, what options does it accept, and what file is it defined in?" \
-  --project-dir /home/blake/projects/anothercodingagent \
+  --project-dir <repo> \
   --max-context-rounds 3 \
   2>&1 | tee /tmp/aca-symlookup2-${SUFFIX}.txt
 ```
@@ -290,7 +290,7 @@ Source-verified: `src/cli/invoke-tooling.ts:110`
 SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-symlookup3-XXXXXX) \
   node dist/index.js consult \
   --question "What does registerInvokeRuntimeTools do and what file defines it?" \
-  --project-dir /home/blake/projects/anothercodingagent \
+  --project-dir <repo> \
   --max-context-rounds 3 \
   2>&1 | tee /tmp/aca-symlookup3-${SUFFIX}.txt
 ```

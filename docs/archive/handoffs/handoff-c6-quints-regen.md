@@ -12,12 +12,12 @@ The previous Quints draft was reviewed by the operator, found to be over-padded 
 
 | Item | Path |
 |---|---|
-| Output root | `/home/blake/projects/rpproject/the-quintessential-quintuplets/` |
-| Archived draft | `/home/blake/projects/rpproject/_archive/the-quintessential-quintuplets-c6-pre-regen-2026-04-09/` |
-| Authoring contract | `/home/blake/projects/anothercodingagent/RP_AUTHORING_CONTRACT.md` |
-| Workflow doc | `/home/blake/projects/anothercodingagent/RP_RESEARCH_WORKFLOW.md` |
-| ACA binary | `/home/blake/projects/anothercodingagent/dist/index.js` |
-| Example pack | `/home/blake/projects/rpproject/EXAMPLE/` |
+| Output root | `<rp-project>/the-quintessential-quintuplets/` |
+| Archived draft | `<rp-project>/_archive/the-quintessential-quintuplets-c6-pre-regen-2026-04-09/` |
+| Authoring contract | `<repo>/docs/rp/authoring-contract.md` |
+| Workflow doc | `<repo>/docs/rp/research-workflow.md` |
+| ACA binary | `<repo>/dist/index.js` |
+| Example pack | `<rp-project>/EXAMPLE/` |
 
 ## What Changed From The Previous Draft
 
@@ -30,7 +30,7 @@ The archived `world/review.txt` documents the operator's full feedback. Summary:
 
 ## Authoring Contract — Key Rules
 
-Read `RP_AUTHORING_CONTRACT.md` in full before generating anything. Short version:
+Read `docs/rp/authoring-contract.md` in full before generating anything. Short version:
 
 **world.md:** Setting backdrop, stable background, pre-arc history that shapes the world as a whole. Not a plot synopsis, not a character overflow bin.
 
@@ -86,10 +86,10 @@ Total: 14 final files.
 
 ## Invoke Command Shape
 
-Run from `cwd = /home/blake/projects/rpproject/the-quintessential-quintuplets/`.
+Run from `cwd = <rp-project>/the-quintessential-quintuplets/`.
 
 ```bash
-ACA_NETWORK_MODE=open node /home/blake/projects/anothercodingagent/dist/index.js invoke <<'ENDJSON'
+ACA_NETWORK_MODE=open node <repo>/dist/index.js invoke <<'ENDJSON'
 {
   "contract_version": "1.0.0",
   "schema_version": "1.1.0",
@@ -165,7 +165,7 @@ C7 (forced tool emulation hardening) is closed. C6 is the active track.
 
 Generate a complete RP knowledge pack for the anime version of The Quintessential Quintuplets using ACA's rp-researcher profile via `aca invoke`. The pack goes into:
 
-  /home/blake/projects/rpproject/the-quintessential-quintuplets/
+  <rp-project>/the-quintessential-quintuplets/
 
 The previous draft was archived and the live folder was cleared. You are starting from scratch.
 
@@ -173,13 +173,13 @@ The previous draft was archived and the live folder was cleared. You are startin
 
 Read this first before generating anything:
 
-  /home/blake/projects/anothercodingagent/RP_AUTHORING_CONTRACT.md
+  <repo>/docs/rp/authoring-contract.md
 
 Also read:
 
-  /home/blake/projects/anothercodingagent/RP_RESEARCH_WORKFLOW.md
-  /home/blake/projects/rpproject/_archive/the-quintessential-quintuplets-c6-pre-regen-2026-04-09/world/review.txt
-  /home/blake/projects/rpproject/EXAMPLE/
+  <repo>/docs/rp/research-workflow.md
+  <rp-project>/_archive/the-quintessential-quintuplets-c6-pre-regen-2026-04-09/world/review.txt
+  <rp-project>/EXAMPLE/
 
 The EXAMPLE folder shows the target shape. The review.txt shows exactly what went wrong in the previous draft.
 
@@ -196,9 +196,9 @@ The EXAMPLE folder shows the target shape. The review.txt shows exactly what wen
 ## Model and settings
 
 - Model: zai-org/glm-5 (pinned)
-- ACA binary: /home/blake/projects/anothercodingagent/dist/index.js
+- ACA binary: <repo>/dist/index.js
 - Network mode: ACA_NETWORK_MODE=open
-- Run invoke from cwd: /home/blake/projects/rpproject/the-quintessential-quintuplets/
+- Run invoke from cwd: <rp-project>/the-quintessential-quintuplets/
 - Source: anime version only (not manga)
 - Timeline: blank/neutral (tutor just arrived, no romance yet) — confirm with operator before generating character files if there's any doubt
 
@@ -223,9 +223,9 @@ research/discovery-plan.md
 
 ## Invoke command shape
 
-Run from cwd = /home/blake/projects/rpproject/the-quintessential-quintuplets/
+Run from cwd = <rp-project>/the-quintessential-quintuplets/
 
-ACA_NETWORK_MODE=open node /home/blake/projects/anothercodingagent/dist/index.js invoke <<'ENDJSON'
+ACA_NETWORK_MODE=open node <repo>/dist/index.js invoke <<'ENDJSON'
 {
   "contract_version": "1.0.0",
   "schema_version": "1.1.0",

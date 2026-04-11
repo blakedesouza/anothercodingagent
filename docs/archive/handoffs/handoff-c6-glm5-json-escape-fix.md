@@ -96,7 +96,7 @@ All of these parse text that came from an LLM and had no prior sanitization:
 ## Current C6 State
 
 - `aca rp-research` command: fully wired, builds clean
-- Quints folder: `/home/blake/projects/rpproject/the-quintessential-quintuplets/` — skeleton created, **no content files yet**
+- Quints folder: `<rp-project>/the-quintessential-quintuplets/` — skeleton created, **no content files yet**
 - Discovery artifacts: **none on disk** (previous run failed before writing)
 - **Next action: rerun Quints discovery with the fixed binary**
 
@@ -130,7 +130,7 @@ Expected behavior after fix:
 
 - `src/cli/rp-research.ts` — the full RP import workflow
 - `src/providers/tool-emulation.ts` — `sanitizeModelJson` lives here
-- `RP_RESEARCH_WORKFLOW.md` — durable workflow doc
-- `RP_AUTHORING_CONTRACT.md` — the format rules (character sections, world/rules split, location rules)
-- `/home/blake/projects/rpproject/EXAMPLE/` — reference format (use .md, not .txt)
+- `docs/rp/research-workflow.md` — durable workflow doc
+- `docs/rp/authoring-contract.md` — the format rules (character sections, world/rules split, location rules)
+- `<rp-project>/EXAMPLE/` — reference format (use .md, not .txt)
 - `plan.md` — C6 status updated

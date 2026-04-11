@@ -184,7 +184,7 @@ Previously: qwen's `context_requests` array was `[]` (request swallowed due to b
 SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-c116-qwen-XXXXXX) \
   node dist/index.js consult \
   --question "What does formatOtlpPayload do, what does it return, and what file defines it?" \
-  --project-dir /home/blake/projects/anothercodingagent \
+  --project-dir <repo> \
   --max-context-rounds 3 \
   2>&1 | tee /tmp/aca-c116-qwen-${SUFFIX}.txt
 ```

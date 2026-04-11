@@ -87,7 +87,7 @@ Run each test sequentially with a fresh `HOME`. Check the triage artifact after 
 SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-retest1-XXXXXX) \
   node dist/index.js consult \
   --question "What error code does the invoke pipeline use to identify hard-rejected tool calls? Find the function that counts them, explain what condition it checks, and name the file it lives in." \
-  --project-dir /home/blake/projects/anothercodingagent \
+  --project-dir <repo> \
   --max-context-rounds 3 \
   2>&1 | tee /tmp/aca-retest1-${SUFFIX}.txt
 ```
@@ -111,7 +111,7 @@ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-retest1-XXXXXX) \
 SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-retest3-XXXXXX) \
   node dist/index.js consult \
   --question "In the invoke runtime state module, when does a TurnEngine turn receive a runtime context system message? What parameter controls this, what is its default, and what content does the system message contain when it is included?" \
-  --project-dir /home/blake/projects/anothercodingagent \
+  --project-dir <repo> \
   --max-context-rounds 3 \
   2>&1 | tee /tmp/aca-retest3-${SUFFIX}.txt
 ```
@@ -134,7 +134,7 @@ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-retest3-XXXXXX) \
 SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-retest-a-XXXXXX) \
   node dist/index.js consult \
   --question "What are the exit codes defined in the executor module, and what fields does InvokeConstraints expose for capping tool usage? Name the exact file these are defined in." \
-  --project-dir /home/blake/projects/anothercodingagent \
+  --project-dir <repo> \
   --max-context-rounds 3 \
   2>&1 | tee /tmp/aca-retest-a-${SUFFIX}.txt
 ```
@@ -157,7 +157,7 @@ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-retest-a-XXXXXX) \
 SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-retest-b-XXXXXX) \
   node dist/index.js consult \
   --question "What directories does runInit create, and what protection does it apply to the secrets file? Also: what is the write strategy for runConfigure to avoid partial config on cancellation? Name the file these functions live in." \
-  --project-dir /home/blake/projects/anothercodingagent \
+  --project-dir <repo> \
   --max-context-rounds 3 \
   2>&1 | tee /tmp/aca-retest-b-${SUFFIX}.txt
 ```

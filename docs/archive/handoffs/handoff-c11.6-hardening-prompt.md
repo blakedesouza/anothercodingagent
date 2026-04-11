@@ -4,7 +4,7 @@ Read plan.md and docs/handoff-c11.6-hardening.md before doing anything else.
 
 ▎
 ▎ Project: Another Coding Agent (ACA) — TypeScript coding agent at
-▎ /home/blake/projects/anothercodingagent. Built binary at dist/index.js.
+▎ <repo>. Built binary at dist/index.js.
 ▎ Tests: npx vitest run. Build: npm run build. 2661 tests passing going in.
 ▎
 ▎ This session has two tasks in priority order:

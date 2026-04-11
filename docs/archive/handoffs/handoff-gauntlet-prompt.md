@@ -2,7 +2,7 @@ Read `plan.md` and `docs/handoff-gauntlet.md` before doing anything else.
 
 ▎
 ▎ Project: Another Coding Agent (ACA) — TypeScript coding agent at
-▎ /home/blake/projects/anothercodingagent. Built binary at dist/index.js.
+▎ <repo>. Built binary at dist/index.js.
 ▎ 2661 tests passing going in.
 ▎
 ▎ This session runs a 10-test gauntlet to validate that every major fix from

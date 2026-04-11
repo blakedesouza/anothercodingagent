@@ -118,7 +118,7 @@ Run a real `aca consult` invocation and confirm the pipeline is intact end-to-en
 
 **How to run:**
 ```bash
-cd /home/blake/projects/anothercodingagent
+cd <repo>
 node dist/index.js --model deepseek/deepseek-v3.2 --no-confirm "consult: Is the buildAnalyticalSystemMessages function missing any important tool policy guidance?"
 ```
 Or use the consult command directly if wired. Check that 4 witnesses fire and structured review is produced.

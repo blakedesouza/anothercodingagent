@@ -29,7 +29,7 @@
 
 ### Steps 4–9 remaining
 
-Full plan at: `/home/blake/.claude/plans/tender-dazzling-sundae.md`
+Full plan at: `<claude-home>/plans/tender-dazzling-sundae.md`
 
 **Step 4 — `buildContinuationPrompt()` in `context-request.ts`**
 New exported function for rounds 2+. Shows: original prompt + all previously fulfilled snippets + round status + context-request protocol (allowing more requests). Signature:
@@ -129,7 +129,7 @@ For each test: read the result JSON, check `context_snippets`, `context_requests
 
 ### Key files to read before starting
 
-- `/home/blake/.claude/plans/tender-dazzling-sundae.md` — full implementation plan
+- `<claude-home>/plans/tender-dazzling-sundae.md` — full implementation plan
 - `src/consult/context-request.ts` — the file with all step 1–3 changes (read before editing)
 - `src/cli/consult.ts` — `runWitness()` lines 507–677, `ConsultOptions` lines 30–49, limits block lines 844–848
 - `src/cli-main.ts` — CLI arg parsing lines 1470–1472

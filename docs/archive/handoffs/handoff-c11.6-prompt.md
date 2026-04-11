@@ -2,7 +2,7 @@ Read plan.md and docs/handoff-c11.6.md before doing anything else.
 
   ▎
   ▎ Project: Another Coding Agent (ACA) — a TypeScript coding agent built at
-  ▎ /home/blake/projects/anothercodingagent. Built binary at dist/index.js.
+  ▎ <repo>. Built binary at dist/index.js.
   ▎ Tests: npx vitest run. Build: npm run build. 2641 tests passing going in.
   ▎
   ▎ C11 is system-prompt edge-case hardening. C11.1–C11.5 + symbol-lookup are COMPLETE.
@@ -42,7 +42,7 @@ Read plan.md and docs/handoff-c11.6.md before doing anything else.
   ▎ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-c116-qwen-XXXXXX) \
   ▎   node dist/index.js consult \
   ▎   --question "What does formatOtlpPayload do, what does it return, and what file defines it?" \
-  ▎   --project-dir /home/blake/projects/anothercodingagent \
+  ▎   --project-dir <repo> \
   ▎   --max-context-rounds 3 \
   ▎   2>&1 | tee /tmp/aca-c116-qwen-${SUFFIX}.txt
   ▎ Pass: qwen context_requests is non-empty (previously was [] due to blockquote swallow).

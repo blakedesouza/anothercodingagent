@@ -25,11 +25,11 @@ Options:
   -h, --help  display help for command
 ```
 
-All 4 witnesses in the 2026-04-06 demo run had `aca_mode: False` in `/tmp/consult-result-1775460979363918475-r0.json`. Trace log confirms: `/home/blake/.claude/logs/consult-trace.ndjson` lines 1582-1621 all show `error: unknown option '--json'`.
+All 4 witnesses in the 2026-04-06 demo run had `aca_mode: False` in `/tmp/consult-result-1775460979363918475-r0.json`. Trace log confirms: `<claude-home>/logs/consult-trace.ndjson` lines 1582-1621 all show `error: unknown option '--json'`.
 
 **Fix (one line, two locations):**
 
-`/home/blake/.claude/skills/consult/consult_ring.py` around line 1091 — the `subprocess.run` call inside `call_aca_invoke`:
+`<claude-home>/skills/consult/consult_ring.py` around line 1091 — the `subprocess.run` call inside `call_aca_invoke`:
 
 ```python
 # BEFORE
@@ -52,7 +52,7 @@ Also update the 2 docstring mentions of `aca invoke --json` in the same file (li
 CONSULT_ID="$(date +%s%N)" CONSULT_PHASE=initial CONSULT_ROUND=0 \
   python3 ~/.claude/skills/consult/consult_ring.py aca \
   /tmp/consult-prompt-1775460979363918475-r0.md \
-  /home/blake/projects/anothercodingagent \
+  <repo> \
   "$(date +%s%N)-r0"
 ```
 
@@ -120,7 +120,7 @@ There are probably other consumers of `aca invoke --json` that are also broken. 
 ## Immediate next steps (in order, tomorrow)
 
 1. **Fix the `--json` bug** in `consult_ring.py` as described above. ~30 seconds.
-2. **Rebuild** (`cd /home/blake/projects/anothercodingagent && npm run build`) — already built today, but rebuild for safety.
+2. **Rebuild** (`cd <repo> && npm run build`) — already built today, but rebuild for safety.
 3. **Re-run the empirical demo** with the same lean prompt file at `/tmp/consult-prompt-1775460979363918475-r0.md`. Same command as above.
 4. **Verify ACA mode actually fired this time** — check `aca_mode: true` on witnesses in the result.json, `triage_status: ok`, and look for evidence of tool calls in `~/.aca/sessions/` (new session dirs from the witness subprocesses).
 5. **Compare witness response quality** (grounded-with-file-line-evidence vs guessed-from-memory) between the old run at `/tmp/consult-*-response-1775460979363918475-r0.md` and the new tool-enabled run.
@@ -189,9 +189,9 @@ M10.2 + M11 + M10.1c are done. Next on the roadmap is M10.3 (Self-Building: ACA 
 
 4. **Empirical demo re-run** (handoff steps 3-5):
    - Original prompt at `/tmp/consult-prompt-1775460979363918475-r0.md` was gone (`/tmp` cleared since the prior session — likely WSL reboot). Wrote a fresh small lean prompt at `/tmp/consult-aca-bugfix-verify.md` (1775 bytes) asking witnesses to use `read_file` + `exec_command` to verify the fix landed.
-   - Ran `python3 ~/.claude/skills/consult/consult_ring.py aca /tmp/consult-aca-bugfix-verify.md /home/blake/projects/anothercodingagent acabugfix-1775475803`.
+   - Ran `python3 ~/.claude/skills/consult/consult_ring.py aca /tmp/consult-aca-bugfix-verify.md <repo> acabugfix-1775475803`.
    - **All 4 witnesses returned `status: ok`. 3 of 4 witnesses returned `aca_mode: true`** (minimax, kimi, qwen). Triage `status: ok` via deepseek-v3.2 in ACA mode (took 194 seconds — meaning it actually used tools to verify findings, which had been impossible before).
-   - **Trace log proof:** `/home/blake/.claude/logs/consult-trace.ndjson` now shows `aca_invoke_start` → `aca_invoke_end status: ok` for minimax/kimi/qwen/deepseek-triage on suffix `acabugfix-1775475803`. Zero `unknown option '--json'` errors anywhere in the post-fix run. The 14 `unknown option` entries in the log are all from the failing 07:50 UTC run with suffix `1775460979363918475-r0` that prompted this handoff.
+   - **Trace log proof:** `<claude-home>/logs/consult-trace.ndjson` now shows `aca_invoke_start` → `aca_invoke_end status: ok` for minimax/kimi/qwen/deepseek-triage on suffix `acabugfix-1775475803`. Zero `unknown option '--json'` errors anywhere in the post-fix run. The 14 `unknown option` entries in the log are all from the failing 07:50 UTC run with suffix `1775460979363918475-r0` that prompted this handoff.
 
 ### Witness response evidence (handoff step 5 — quality comparison)
 
@@ -313,7 +313,7 @@ L12 turn  status=completed  outcome=tool_error
 **Debug instrumentation captured:** I added a `process.env.ACA_DUMP_BODY` gate to `nanogpt-driver.ts:rawStream` that appends the full outgoing request body to `/tmp/aca-request-body.json`. **The latest invoke captured a 1611-line dump.** I copied the file to a persistent location since /tmp can clear:
 
 ```
-/home/blake/.claude/projects/-home-blake-projects-anothercodingagent/aca-request-body-gemma-debug.json
+<claude-home>/projects/-home-blake-projects-anothercodingagent/aca-request-body-gemma-debug.json
 ```
 
 **Next session — IMMEDIATE actions:**
@@ -340,21 +340,21 @@ L12 turn  status=completed  outcome=tool_error
 
 ```bash
 # 1. Re-orient
-cat /home/blake/projects/anothercodingagent/docs/handoff-consult-aca-mode.md  # this file
-cat /home/blake/projects/anothercodingagent/plan.md                            # broader context
+cat <repo>/docs/handoff-consult-aca-mode.md  # this file
+cat <repo>/plan.md                            # broader context
 
 # 2. Inspect the captured request body
-cat /home/blake/.claude/projects/-home-blake-projects-anothercodingagent/aca-request-body-gemma-debug.json | head -200
+cat <claude-home>/projects/-home-blake-projects-anothercodingagent/aca-request-body-gemma-debug.json | head -200
 
 # 3. Check git state (should still be the same single Phase 0 commit)
-cd /home/blake/projects/anothercodingagent && git status --short | head -20 && git log -1 --oneline
+cd <repo> && git status --short | head -20 && git log -1 --oneline
 
 # 4. Re-trigger the empty-args bug for fresh data
 SUFFIX="gemma-debug-$(date +%s)"
 CONSULT_ID="$(date +%s%N)" CONSULT_PHASE=initial CONSULT_ROUND=0 \
   python3 ~/.claude/skills/consult/consult_ring.py aca \
   /tmp/consult-aca-bugfix-verify.md \
-  /home/blake/projects/anothercodingagent \
+  <repo> \
   "$SUFFIX"
 
 # 5. After diagnosis, REMOVE the temporary ACA_DUMP_BODY debug block from

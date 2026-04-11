@@ -96,11 +96,11 @@ Do not start live `C1` through `C7` runs until these gates are checked.
    - wrapper docs that tell operators how to call `rp-researcher`
 
 8. RP project target-root and schema contract are explicit before `C6`.
-   - local default root on this machine: `/home/blake/projects/rpproject`
+   - local default root on this machine: `<rp-project>`
    - generic public override path (`--project-root` and/or config/env) is decided
    - slugging rules are explicit for series-folder creation
    - the approved RP-facing file schema is explicit for `world.md`, `world-rules.md`, `world/characters/*.md`, and `world/locations/*.md`
-   - the example contract in `/home/blake/projects/rpproject/EXAMPLE` is reflected in the workflow docs instead of living only in chat
+   - the example contract in `<rp-project>/EXAMPLE` is reflected in the workflow docs instead of living only in chat
 
 9. Forced-emulation contract parity is explicit before `C7`.
    - NanoGPT forced emulation for tool-enabled runs is treated as intentional product behavior, not an accident
@@ -716,10 +716,10 @@ Calibration anchor:
 
 Design locks:
 
-- local default target root on this machine is `/home/blake/projects/rpproject`
+- local default target root on this machine is `<rp-project>`
 - public behavior must stay configurable through explicit flags and/or config/env overrides
 - series folders are created from a normalized kebab-case slug
-- `RP_AUTHORING_CONTRACT.md` is the source of truth for final-file placement, portrayal-first writing, and guidance bans; the runtime prompts and workflow docs must stay aligned with it
+- `docs/rp/authoring-contract.md` is the source of truth for final-file placement, portrayal-first writing, and guidance bans; the runtime prompts and workflow docs must stay aligned with it
 - the RP-facing payload lives under:
   - `research/`
   - `world/world.md`
@@ -749,7 +749,7 @@ Primary runtime files:
 - `src/cli/executor.ts`
 - `src/delegation/agent-registry.ts`
 - `src/cli/invoke-output-validation.ts`
-- `RP_RESEARCH_WORKFLOW.md`
+- `docs/rp/research-workflow.md`
 - any new RP-import command, helper, slug/path logic, or schema enforcement surfaces added during this track
 
 Primary tests:
@@ -763,9 +763,9 @@ Operator and wrapper surfaces:
 - `~/.claude/skills/orchestrate/`
 - `~/.codex/skills/delegate/`
 - `~/.codex/skills/orchestrate/`
-- `/home/blake/projects/rpproject/workflow.md`
-- `/home/blake/projects/rpproject/TRINITY_SEVEN_RP_HANDOFF.md`
-- `/home/blake/projects/rpproject/EXAMPLE`
+- `<rp-project>/workflow.md`
+- `<rp-project>/TRINITY_SEVEN_RP_HANDOFF.md`
+- `<rp-project>/EXAMPLE`
 
 ### C6 Four-Axis Checks
 

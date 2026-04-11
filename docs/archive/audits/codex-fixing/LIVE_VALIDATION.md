@@ -375,18 +375,18 @@ Rules:
 - Scenario ID: `M8-LIVE-1`
 - Milestone: `M8`
 - Goal: prove the built standalone entrypoint works outside the repo cwd for fast-path packaging surfaces
-- Command shape: absolute `node /home/blake/projects/anothercodingagent/dist/index.js --version`, `--help`, and `describe --json` from `/tmp`
+- Command shape: absolute `node <repo>/dist/index.js --version`, `--help`, and `describe --json` from `/tmp`
 - Workspace / HOME isolation: invoked from `/tmp`; no session state required
 - Expected result: version prints `0.1.0`; help starts with ACA usage text; `describe --json` parses as ACA capability metadata
 - Actual result: `--version` printed `0.1.0`; help began with `Usage: aca [options] [prompt]`; `describe --json` parsed as `aca 1.0.0 1.1.0`
 - Evidence:
-  - built entry `/home/blake/projects/anothercodingagent/dist/index.js`
+  - built entry `<repo>/dist/index.js`
 - Status: `passed`
 
 - Scenario ID: `M8-LIVE-2`
 - Milestone: `M8`
 - Goal: prove the built standalone one-shot path reaches real NanoGPT, returns exact text, and writes durable session artifacts under isolated HOME/workspace
-- Command shape: `HOME=<temp> node /home/blake/projects/anothercodingagent/dist/index.js --model zai-org/glm-5 "Reply with exactly ACA_M8_ONE_SHOT_OK and nothing else."`
+- Command shape: `HOME=<temp> node <repo>/dist/index.js --model zai-org/glm-5 "Reply with exactly ACA_M8_ONE_SHOT_OK and nothing else."`
 - Workspace / HOME isolation: isolated temp HOME `/tmp/aca-m8-live-home-JZE4RD` and isolated temp workspace `/tmp/aca-m8-live-ws-1LrNcN`
 - Expected result: exact assistant text `ACA_M8_ONE_SHOT_OK`; new session manifest and conversation log under the isolated HOME
 - Actual result: stdout was exactly `ACA_M8_ONE_SHOT_OK`; manifest recorded `turnCount: 1`; `conversation.jsonl` contained `5` records
@@ -399,7 +399,7 @@ Rules:
 - Scenario ID: `M8-LIVE-3`
 - Milestone: `M8`
 - Goal: prove the built `aca invoke` path still works as a standalone packaged entrypoint with a real NanoGPT response and durable session state
-- Command shape: `HOME=<temp> node /home/blake/projects/anothercodingagent/dist/index.js invoke < <request.json>` with `context.cwd` set to an isolated temp workspace and `context.model: "zai-org/glm-5"`
+- Command shape: `HOME=<temp> node <repo>/dist/index.js invoke < <request.json>` with `context.cwd` set to an isolated temp workspace and `context.model: "zai-org/glm-5"`
 - Workspace / HOME isolation: isolated temp HOME `/tmp/aca-m8-invoke-home-UDkOKI` and isolated temp workspace `/tmp/aca-m8-invoke-ws-HKdE3U`
 - Expected result: structured JSON success with exact `result: "ACA_M8_INVOKE_OK"` plus an isolated ephemeral session
 - Actual result: response JSON returned exact `result: "ACA_M8_INVOKE_OK"`; manifest recorded `turnCount: 1`
@@ -412,7 +412,7 @@ Rules:
 - Scenario ID: `M8-LIVE-4`
 - Milestone: `M8`
 - Goal: prove the built standalone tool path performs a real `write_file`, preserves the exact assistant result, records tool artifacts, and keeps the NanoGPT key scrubbed from the conversation log
-- Command shape: `HOME=<temp> node /home/blake/projects/anothercodingagent/dist/index.js --model zai-org/glm-5 --no-confirm "<bounded absolute-path write_file task>"`
+- Command shape: `HOME=<temp> node <repo>/dist/index.js --model zai-org/glm-5 --no-confirm "<bounded absolute-path write_file task>"`
 - Workspace / HOME isolation: isolated temp HOME `/tmp/aca-m8-tool-home-S0mr7j` and isolated temp workspace `/tmp/aca-m8-tool-ws-ZkFQ6p`
 - Expected result: stdout exactly `WROTE`; target file contains `ACA_M8_WRITE_OK`; conversation log contains tool-call/tool-result evidence and zero raw NanoGPT key hits
 - Actual result: stdout was exactly `WROTE`; `/tmp/aca-m8-tool-ws-ZkFQ6p/m8-live.txt` contained `ACA_M8_WRITE_OK`; conversation log contained one `tool_call`, one `tool_result`, and `0` raw NanoGPT key hits
@@ -426,7 +426,7 @@ Rules:
 - Scenario ID: `M8-LIVE-5`
 - Milestone: `M8`
 - Goal: prove `--no-confirm` does not bypass the standalone sandbox boundary on a real NanoGPT tool turn
-- Command shape: `HOME=<temp> node /home/blake/projects/anothercodingagent/dist/index.js --model zai-org/glm-5 --no-confirm "<bounded /root write_file task>"`
+- Command shape: `HOME=<temp> node <repo>/dist/index.js --model zai-org/glm-5 --no-confirm "<bounded /root write_file task>"`
 - Workspace / HOME isolation: isolated temp HOME `/tmp/aca-m8-sandbox-home-em729t` and isolated temp workspace `/tmp/aca-m8-sandbox-ws-WDXKcl`
 - Expected result: tool failure with `tool.sandbox`; no `/root/aca-m8-sandbox.txt` created
 - Actual result: assistant reported the expected failure; the conversation log recorded `tool.sandbox`; `/root/aca-m8-sandbox.txt` remained absent
@@ -441,12 +441,12 @@ Rules:
 - Scenario ID: `M9-LIVE-1`
 - Milestone: `M9`
 - Goal: prove the built MCP bridge exposes `aca_run` over real stdio transport
-- Command shape: spawn `node /home/blake/projects/anothercodingagent/dist/index.js serve` through the MCP stdio client transport and call `tools/list`
+- Command shape: spawn `node <repo>/dist/index.js serve` through the MCP stdio client transport and call `tools/list`
 - Workspace / HOME isolation: bridge launched from `/tmp`
 - Expected result: tool list contains `aca_run`
 - Actual result: MCP `tools/list` returned exactly one tool name: `aca_run`
 - Evidence:
-  - built entry `/home/blake/projects/anothercodingagent/dist/index.js`
+  - built entry `<repo>/dist/index.js`
 - Status: `passed`
 
 - Scenario ID: `M9-LIVE-2`
@@ -491,7 +491,7 @@ Rules:
 - Scenario ID: `M10-LIVE-1`
 - Milestone: `M10`
 - Goal: reproduce the live consult-wrapper compatibility bug that exposed M10 drift
-- Command shape: built `node dist/index.js consult --question "Read package.json and report the package name." --project-dir /home/blake/projects/anothercodingagent --witnesses minimax,kimi --skip-triage`
+- Command shape: built `node dist/index.js consult --question "Read package.json and report the package name." --project-dir <repo> --witnesses minimax,kimi --skip-triage`
 - Workspace / HOME isolation: isolated temp HOME created inline; no session state kept because the command failed before witness invocation
 - Expected result: the stale `minimax` alias should fail against the current canonical witness set
 - Actual result: command exited early with `consult failed: unknown witness: minimax`
@@ -502,7 +502,7 @@ Rules:
 - Scenario ID: `M10-LIVE-2`
 - Milestone: `M10`
 - Goal: prove the repaired `.claude` consult wrapper normalizes the stale `minimax` alias to the canonical `deepseek` witness and that the current `aca consult` product path still fulfills bounded context requests
-- Command shape: `ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' python3 /home/blake/.claude/skills/consult/scripts/run_consult.py --witnesses minimax --question "You do not have code in the prompt. Inspect package.json and report the package name and whether the package type is module. Do not guess." --project-dir /home/blake/projects/anothercodingagent --skip-triage`
+- Command shape: `ACA_BINARY='node <repo>/dist/index.js' python3 <claude-home>/skills/consult/scripts/run_consult.py --witnesses minimax --question "You do not have code in the prompt. Inspect package.json and report the package name and whether the package type is module. Do not guess." --project-dir <repo> --skip-triage`
 - Workspace / HOME isolation: isolated temp HOME created inline; consult artifacts written under `/tmp`
 - Expected result: successful consult run with witness key `deepseek`, a bounded `package.json` context request, and a final report grounded in the fulfilled snippet
 - Actual result: wrapper completed with `success_count: 1`, witness key `deepseek`, one `context_requests` entry for `package.json:1-30`, one fulfilled snippet, and a final report identifying `anothercodingagent` with `"type": "module"`
@@ -514,10 +514,10 @@ Rules:
 - Scenario ID: `M10-LIVE-3`
 - Milestone: `M10`
 - Goal: prove the tool-enabled witness-profile `invoke` path is still live, tool-filtered, and persisted on disk
-- Command shape: built `node /home/blake/projects/anothercodingagent/dist/index.js invoke < <request.json>` with `context.profile: "witness"`, `allowed_tools: ["exec_command"]`, and the task `Use exec_command to run pwd and return only the absolute working-directory path. Do not guess.`
-- Workspace / HOME isolation: isolated temp HOME `/tmp/aca-m10-invoke-home-TNE921` and repo workspace `/home/blake/projects/anothercodingagent`
+- Command shape: built `node <repo>/dist/index.js invoke < <request.json>` with `context.profile: "witness"`, `allowed_tools: ["exec_command"]`, and the task `Use exec_command to run pwd and return only the absolute working-directory path. Do not guess.`
+- Workspace / HOME isolation: isolated temp HOME `/tmp/aca-m10-invoke-home-TNE921` and repo workspace `<repo>`
 - Expected result: structured JSON success, exactly one accepted `exec_command`, final result equal to the repo path, and an ephemeral executor session on disk
-- Actual result: invoke returned success with `result: "/home/blake/projects/anothercodingagent"`; `safety.accepted_tool_calls_by_name.exec_command` was `1`; the session manifest recorded `mode: "executor"` and `conversation.jsonl` persisted the `exec_command("pwd")` tool call and final answer
+- Actual result: invoke returned success with `result: "<repo>"`; `safety.accepted_tool_calls_by_name.exec_command` was `1`; the session manifest recorded `mode: "executor"` and `conversation.jsonl` persisted the `exec_command("pwd")` tool call and final answer
 - Evidence:
   - session dir `/tmp/aca-m10-invoke-home-TNE921/.aca/sessions/ses_01KNQTV3P334BYRGYQBSP22ZGC`
   - manifest `/tmp/aca-m10-invoke-home-TNE921/.aca/sessions/ses_01KNQTV3P334BYRGYQBSP22ZGC/manifest.json`
@@ -527,7 +527,7 @@ Rules:
 - Scenario ID: `M10-LIVE-4`
 - Milestone: `M10`
 - Goal: prove executor-mode negative-path handling still fails fast on an invalid model without creating session state
-- Command shape: built `node /home/blake/projects/anothercodingagent/dist/index.js invoke < <request.json>` with `context.model: "nonexistent/fake-model-xyz"`
+- Command shape: built `node <repo>/dist/index.js invoke < <request.json>` with `context.model: "nonexistent/fake-model-xyz"`
 - Workspace / HOME isolation: isolated temp HOME `/tmp/aca-m10-neg-home-qTRlRV`
 - Expected result: structured `protocol.invalid_model` error and no session directory
 - Actual result: invoke returned `{"code":"protocol.invalid_model","message":"Unknown model \"nonexistent/fake-model-xyz\""}` and the isolated HOME contained no session directories
@@ -604,7 +604,7 @@ Rules:
 - Scenario ID: `C1-LIVE-2`
 - Milestone: `C1`
 - Goal: prove a bounded packed consult still succeeds end to end on the rebuilt artifact
-- Command shape: `node dist/index.js consult --question "Using the packed evidence and any bounded follow-up snippets you need, report the package name and the canonical witness keys. Do not guess." --project-dir /home/blake/projects/anothercodingagent --witnesses kimi --pack-path package.json --pack-path src/config/witness-models.ts --out /tmp/aca-c1-pack-post.json`
+- Command shape: `node dist/index.js consult --question "Using the packed evidence and any bounded follow-up snippets you need, report the package name and the canonical witness keys. Do not guess." --project-dir <repo> --witnesses kimi --pack-path package.json --pack-path src/config/witness-models.ts --out /tmp/aca-c1-pack-post.json`
 - Workspace / HOME isolation: direct built-CLI consult run in the repo workspace; artifacts written under `/tmp`
 - Expected result: non-degraded result with two packed files, one successful witness report, and a successful triage report
 - Actual result: consult returned `success_count: 1`, `degraded: false`, `included_files: 2`, a successful Kimi witness report, and `triage.status: "ok"`
@@ -617,7 +617,7 @@ Rules:
 - Scenario ID: `C1-LIVE-3`
 - Milestone: `C1`
 - Goal: prove degraded witness output is preserved and still reaches triage in a normal packed consult
-- Command shape: `node dist/index.js consult --question "Using the packed evidence and any bounded follow-up snippets you need, report the package name and the canonical witness keys. Do not guess." --project-dir /home/blake/projects/anothercodingagent --witnesses deepseek,kimi --pack-path package.json --pack-path src/config/witness-models.ts --out /tmp/aca-c1-pack.json`
+- Command shape: `node dist/index.js consult --question "Using the packed evidence and any bounded follow-up snippets you need, report the package name and the canonical witness keys. Do not guess." --project-dir <repo> --witnesses deepseek,kimi --pack-path package.json --pack-path src/config/witness-models.ts --out /tmp/aca-c1-pack.json`
 - Workspace / HOME isolation: direct built-CLI consult run in the repo workspace; artifacts written under `/tmp`
 - Expected result: even if one witness degrades, ACA should preserve the raw artifact and continue triage with surviving witness evidence
 - Actual result: DeepSeek emitted `{"action":"final","findings_markdown":"","needs_context":[]}` in the no-tools context-request pass, ACA marked that witness degraded, preserved the raw request artifact, accepted the Kimi report, and still produced `triage.status: "ok"`
@@ -631,7 +631,7 @@ Rules:
 - Scenario ID: `C1-LIVE-4`
 - Milestone: `C1`
 - Goal: prove the repaired shared-context path leaves unsupported facts as open questions instead of turning missing evidence into a false absence claim
-- Command shape: `node dist/index.js consult --question "Report the package name and the canonical witness keys. Do not guess." --project-dir /home/blake/projects/anothercodingagent --witnesses kimi --shared-context --out /tmp/aca-c1-shared-post2.json`
+- Command shape: `node dist/index.js consult --question "Report the package name and the canonical witness keys. Do not guess." --project-dir <repo> --witnesses kimi --shared-context --out /tmp/aca-c1-shared-post2.json`
 - Workspace / HOME isolation: direct built-CLI consult run in the repo workspace; artifacts written under `/tmp`
 - Expected result: package name should be grounded from `package.json`; unsupported witness-key claims should remain uncertain instead of being promoted as facts
 - Actual result: shared-context stayed enabled, the witness explicitly requested `package.json`, confirmed `anothercodingagent`, and left canonical witness keys as `Unknown`; triage kept witness keys in `Open Questions` instead of asserting a false absence
@@ -645,7 +645,7 @@ Rules:
 - Scenario ID: `C1-LIVE-5`
 - Milestone: `C1`
 - Goal: prove the `.claude` consult wrapper now forwards shared-context flags through to ACA-native consult
-- Command shape: `ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' python3 /home/blake/.claude/skills/consult/scripts/run_consult.py --witnesses kimi --shared-context --skip-triage --question "Report the package name. Do not guess." --project-dir /home/blake/projects/anothercodingagent`
+- Command shape: `ACA_BINARY='node <repo>/dist/index.js' python3 <claude-home>/skills/consult/scripts/run_consult.py --witnesses kimi --shared-context --skip-triage --question "Report the package name. Do not guess." --project-dir <repo>`
 - Workspace / HOME isolation: wrapper-driven consult run in the repo workspace; artifacts written under `/tmp`
 - Expected result: wrapper accepts `--shared-context`, ACA shared-context requests `package.json`, and the witness returns a successful bounded report
 - Actual result: wrapper completed successfully with `shared_context.status: "ok"`, one `package.json` shared-context request, and a successful Kimi witness response; triage was intentionally skipped by flag
@@ -658,7 +658,7 @@ Rules:
 - Scenario ID: `C1-LIVE-6`
 - Milestone: `C1`
 - Goal: prove an invalid shared-context model degrades cleanly without preventing witness completion or triage
-- Command shape: `node dist/index.js consult --question "Report the package name. Do not guess." --project-dir /home/blake/projects/anothercodingagent --witnesses kimi --shared-context --shared-context-model not-a-real/model --out /tmp/aca-c1-invalid-post2.json`
+- Command shape: `node dist/index.js consult --question "Report the package name. Do not guess." --project-dir <repo> --witnesses kimi --shared-context --shared-context-model not-a-real/model --out /tmp/aca-c1-invalid-post2.json`
 - Workspace / HOME isolation: direct built-CLI consult run in the repo workspace; artifacts written under `/tmp`
 - Expected result: shared-context should record a structured `protocol.invalid_model` failure, the witness should still complete, and triage should still succeed with the available witness evidence
 - Actual result: `shared_context.status` was `error` with `protocol.invalid_model: Unknown model "not-a-real/model"`, the Kimi witness still completed successfully, and `triage.status` remained `ok`
@@ -671,7 +671,7 @@ Rules:
 - Scenario ID: `C1-LIVE-7`
 - Milestone: `C1`
 - Goal: prove a real 4-witness packed consult run completes on the built artifact and capture any remaining multi-witness degradation shape
-- Command shape: `node dist/index.js consult --question "Using the packed evidence and any bounded follow-up snippets you need, report the package name and the canonical witness keys. Do not guess." --project-dir /home/blake/projects/anothercodingagent --witnesses all --pack-path package.json --pack-path src/config/witness-models.ts --out /tmp/aca-c1-four-way.json`
+- Command shape: `node dist/index.js consult --question "Using the packed evidence and any bounded follow-up snippets you need, report the package name and the canonical witness keys. Do not guess." --project-dir <repo> --witnesses all --pack-path package.json --pack-path src/config/witness-models.ts --out /tmp/aca-c1-four-way.json`
 - Workspace / HOME isolation: direct built-CLI consult run in the repo workspace; artifacts written under `/tmp`
 - Expected result: four-witness consult completes with either full success or bounded degraded continuation plus successful triage
 - Actual result: consult returned `success_count: 3` / `total_witnesses: 4` with `degraded: true`; `kimi`, `qwen`, and `gemma` succeeded; `deepseek` degraded during no-tools finalization after requesting `src/config/witness-models.ts`, because it emitted a bespoke JSON object (`{"package_name":"anothercodingagent","canonical_witness_keys":[...]}`) instead of a Markdown final report; ACA preserved the degraded artifact and triage still completed successfully with the three valid witness reports
@@ -687,7 +687,7 @@ Rules:
 - Scenario ID: `C2-LIVE-1`
 - Milestone: `C2`
 - Goal: prove the built no-tools consult path still handles a normal `needs_context -> final` witness flow
-- Command shape: `node dist/index.js consult --question "Report the package name. Do not guess." --project-dir /home/blake/projects/anothercodingagent --witnesses kimi --out /tmp/aca-c2-needs-context.json`
+- Command shape: `node dist/index.js consult --question "Report the package name. Do not guess." --project-dir <repo> --witnesses kimi --out /tmp/aca-c2-needs-context.json`
 - Workspace / HOME isolation: direct built-CLI consult run in the repo workspace; artifacts written under `/tmp`
 - Expected result: one witness asks for bounded raw context, ACA fulfills it, the witness finalizes successfully, and triage succeeds
 - Actual result: Kimi requested `package.json:1-30`, ACA fulfilled that bounded snippet request, the witness finalized successfully, and triage returned `status: "ok"` with `success_count: 1`
@@ -701,7 +701,7 @@ Rules:
 - Scenario ID: `C2-LIVE-2`
 - Milestone: `C2`
 - Goal: prove malformed witness finalization output can be repaired once without losing the original bad artifact
-- Command shape: `node dist/index.js consult --question "Using the packed evidence and any bounded follow-up snippets you need, report the package name and the canonical witness keys. Do not guess." --project-dir /home/blake/projects/anothercodingagent --witnesses all --pack-path package.json --pack-path src/config/witness-models.ts --out /tmp/aca-c2-four-way.json`
+- Command shape: `node dist/index.js consult --question "Using the packed evidence and any bounded follow-up snippets you need, report the package name and the canonical witness keys. Do not guess." --project-dir <repo> --witnesses all --pack-path package.json --pack-path src/config/witness-models.ts --out /tmp/aca-c2-four-way.json`
 - Workspace / HOME isolation: direct built-CLI consult run in the repo workspace; artifacts written under `/tmp`
 - Expected result: if a witness emits malformed custom JSON instead of a Markdown final, ACA should repair it once, preserve the original malformed final artifact, and still complete the consult
 - Actual result: the 4-witness run completed with `success_count: 4` and `degraded: false`; DeepSeek first emitted bespoke JSON during finalization, ACA repaired that witness into a valid Markdown report on retry, preserved the original malformed final artifact, and triage still completed successfully. This same live run also exposed the separate truthfulness bug fixed during `C2`: the repaired DeepSeek witness still carried a stale error string in the result JSON even though the recovered report was usable.
@@ -715,7 +715,7 @@ Rules:
 - Scenario ID: `C2-LIVE-3`
 - Milestone: `C2`
 - Goal: prove empty structured witness finals still degrade cleanly and remain available to triage
-- Command shape: `node dist/index.js consult --prompt-file /tmp/aca-c1-degraded-prompt.md --project-dir /home/blake/projects/anothercodingagent --witnesses deepseek --out /tmp/aca-c2-empty-final.json`
+- Command shape: `node dist/index.js consult --prompt-file /tmp/aca-c1-degraded-prompt.md --project-dir <repo> --witnesses deepseek --out /tmp/aca-c2-empty-final.json`
 - Workspace / HOME isolation: direct built-CLI consult run in the repo workspace; artifacts written under `/tmp`
 - Expected result: DeepSeek emits the known empty structured final shape, ACA marks it degraded after one bounded retry, preserves the raw artifact, and triage still succeeds from degraded evidence
 - Actual result: consult returned `success_count: 0`, `degraded: true`; DeepSeek emitted `{"action":"final","findings_markdown":"","needs_context":[]}`, ACA retried once, still classified it as degraded, preserved the raw witness artifact, and triage returned `status: "ok"`
@@ -728,7 +728,7 @@ Rules:
 - Scenario ID: `C2-LIVE-4`
 - Milestone: `C2`
 - Goal: prove pseudo-tool witness output is still classified as degraded no-tools output and forwarded to triage as raw evidence
-- Command shape: `node dist/index.js consult --prompt-file /tmp/aca-c2-pseudo-tool-prompt.md --project-dir /home/blake/projects/anothercodingagent --witnesses deepseek --out /tmp/aca-c2-pseudo-tool.json`
+- Command shape: `node dist/index.js consult --prompt-file /tmp/aca-c2-pseudo-tool-prompt.md --project-dir <repo> --witnesses deepseek --out /tmp/aca-c2-pseudo-tool.json`
 - Workspace / HOME isolation: direct built-CLI consult run in the repo workspace; artifacts written under `/tmp`
 - Expected result: DeepSeek emits literal pseudo-tool-call markup, ACA classifies it as degraded no-tools witness output, preserves the raw artifact, and triage succeeds from the degraded evidence
 - Actual result: consult returned `success_count: 0`, `degraded: true`; DeepSeek emitted literal pseudo-tool-call markup in the context-request pass, ACA classified it as `pseudo-tool call emitted in no-tools context-request pass`, preserved the raw witness artifact, and triage returned `status: "ok"`
@@ -741,7 +741,7 @@ Rules:
 - Scenario ID: `C2-LIVE-5`
 - Milestone: `C2`
 - Goal: prove the bounded repair path does not hide repeated malformed witness finals and that raw triage artifacts are preserved even when triage did not need repair
-- Command shape: `node dist/index.js consult --prompt-file /tmp/aca-c2-triage-json-prompt.md --project-dir /home/blake/projects/anothercodingagent --witnesses kimi --pack-path package.json --out /tmp/aca-c2-triage-json.json`
+- Command shape: `node dist/index.js consult --prompt-file /tmp/aca-c2-triage-json-prompt.md --project-dir <repo> --witnesses kimi --pack-path package.json --out /tmp/aca-c2-triage-json.json`
 - Workspace / HOME isolation: direct built-CLI consult run in the repo workspace; artifacts written under `/tmp`
 - Expected result: if the witness keeps returning custom JSON after one repair attempt, ACA should preserve the malformed final artifact, mark the witness degraded, and still save the first triage attempt separately via `triage.raw_path`
 - Actual result: Kimi kept returning custom JSON in finalization under the JSON-only adversarial prompt, ACA marked the witness degraded, preserved the malformed final artifact, and triage still completed successfully with both `triage.path` and `triage.raw_path` recorded
@@ -762,7 +762,7 @@ Residual note for `C2` live coverage:
 - Scenario ID: `C3-LIVE-1`
 - Milestone: `C3`
 - Goal: prove the built `.claude` delegate wrapper can shape a real offload run with an explicit profile and narrowed tool set
-- Command shape: `ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' python3 /home/blake/.claude/skills/delegate/scripts/run_delegate.py --project-dir /home/blake/projects/anothercodingagent --profile reviewer --allowed-tools read_file --max-steps 8 --max-total-tokens 80000 --timeout-ms 120000 --task "Read package.json and reply with only the package name."`
+- Command shape: `ACA_BINARY='node <repo>/dist/index.js' python3 <claude-home>/skills/delegate/scripts/run_delegate.py --project-dir <repo> --profile reviewer --allowed-tools read_file --max-steps 8 --max-total-tokens 80000 --timeout-ms 120000 --task "Read package.json and reply with only the package name."`
 - Workspace / HOME isolation: isolated temp `HOME` under `/tmp/aca-c3-del-home-*`; repo workspace unchanged
 - Expected result: wrapper forwards `profile=reviewer`, narrows tools to `read_file`, returns the package name, and records the created session directory
 - Actual result: delegate returned `anothercodingagent` with `accepted_tool_calls_by_name.read_file = 1`; the saved wrapper artifact captured the real built `aca_bin` and one new session directory under the isolated `HOME`
@@ -774,7 +774,7 @@ Residual note for `C2` live coverage:
 - Scenario ID: `C3-LIVE-2`
 - Milestone: `C3`
 - Goal: prove the repaired `.claude` orchestrate wrapper forwards top-level defaults plus per-task overrides for profile/required outputs/fail-on-rejected and stays auditable in a real parallel run
-- Command shape: `ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' python3 /home/blake/.claude/skills/orchestrate/scripts/run_orchestrate.py --project-dir /tmp/aca-c3-orch-ws2-zLbxVw --tasks-json /tmp/aca-c3-orch2-tasks-kPEnby.json --profile coder --allowed-tools read_file,make_directory,write_file --max-steps 8 --max-total-tokens 80000 --timeout-ms 120000 --fail-on-rejected-tool-calls --concurrency 2`
+- Command shape: `ACA_BINARY='node <repo>/dist/index.js' python3 <claude-home>/skills/orchestrate/scripts/run_orchestrate.py --project-dir /tmp/aca-c3-orch-ws2-zLbxVw --tasks-json /tmp/aca-c3-orch2-tasks-kPEnby.json --profile coder --allowed-tools read_file,make_directory,write_file --max-steps 8 --max-total-tokens 80000 --timeout-ms 120000 --fail-on-rejected-tool-calls --concurrency 2`
 - Workspace / HOME isolation: isolated temp workspace `/tmp/aca-c3-orch-ws2-zLbxVw` and temp `HOME` `/tmp/aca-c3-orch-home-final-CUiwZ6`
 - Expected result: both tasks complete in parallel, required output paths are satisfied, the top-level artifact records the resolved `aca_bin`, and nested delegate artifacts remain inspectable
 - Actual result: orchestrate returned `success_count: 2`; task `alpha` used top-level `profile=coder`, task `beta` overrode to `profile=general`, both created their assigned files, and the top-level artifact now records the real built `aca_bin` instead of the stale default `./dist/index.js`
@@ -788,7 +788,7 @@ Residual note for `C2` live coverage:
 - Scenario ID: `C3-LIVE-3`
 - Milestone: `C3`
 - Goal: prove Codex now has a first-party delegate entrypoint that behaves the same way as the canonical `.claude` wrapper
-- Command shape: `ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' python3 /home/blake/.codex/skills/delegate/scripts/run_delegate.py --project-dir /home/blake/projects/anothercodingagent --profile reviewer --allowed-tools read_file --max-steps 8 --max-total-tokens 80000 --timeout-ms 120000 --task "Read package.json and reply with only the package name."`
+- Command shape: `ACA_BINARY='node <repo>/dist/index.js' python3 <codex-home>/skills/delegate/scripts/run_delegate.py --project-dir <repo> --profile reviewer --allowed-tools read_file --max-steps 8 --max-total-tokens 80000 --timeout-ms 120000 --task "Read package.json and reply with only the package name."`
 - Workspace / HOME isolation: isolated temp `HOME` under `/tmp/aca-c3-codex-home-*`; repo workspace unchanged
 - Expected result: the `.codex` surface succeeds through the same bounded delegate contract and records a new session directory
 - Actual result: the `.codex` shim returned `anothercodingagent`, recorded the real built `aca_bin`, and saved one new session directory under the isolated `HOME`
@@ -800,7 +800,7 @@ Residual note for `C2` live coverage:
 - Scenario ID: `C3-LIVE-4`
 - Milestone: `C3`
 - Goal: prove failure propagation still reaches the external caller cleanly after the Codex parity surface is added
-- Command shape: `ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' python3 /home/blake/.codex/skills/delegate/scripts/run_delegate.py --project-dir /home/blake/projects/anothercodingagent --model nonexistent/c3-invalid-model --allowed-tools read_file --max-steps 8 --max-total-tokens 80000 --timeout-ms 120000 --task "Read package.json and reply with only the package name."`
+- Command shape: `ACA_BINARY='node <repo>/dist/index.js' python3 <codex-home>/skills/delegate/scripts/run_delegate.py --project-dir <repo> --model nonexistent/c3-invalid-model --allowed-tools read_file --max-steps 8 --max-total-tokens 80000 --timeout-ms 120000 --task "Read package.json and reply with only the package name."`
 - Workspace / HOME isolation: isolated temp `HOME` under `/tmp/aca-c3-codex-fail-home-*`; repo workspace unchanged
 - Expected result: wrapper returns a structured invalid-model error and does not create a session directory
 - Actual result: the `.codex` delegate wrapper exited `5` with `protocol.invalid_model: Unknown model "nonexistent/c3-invalid-model"` and `new_session_dirs: []`
@@ -831,7 +831,7 @@ Residual note for `C3` live coverage:
 - Scenario ID: `C4-LIVE-1`
 - Milestone: `C4`
 - Goal: expose whether the broad RP discovery workflow can fail safe when optional search/browser paths are unavailable or noisy instead of silently pretending discovery is complete
-- Command shape: `ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' HOME=/tmp/aca-c4-home-O7N2oG python3 /home/blake/.claude/skills/delegate/scripts/run_delegate.py --project-dir /tmp/aca-c4-ws-qOphFr --profile rp-researcher --model zai-org/glm-5 --allowed-tools read_file,find_paths,search_text,web_search,fetch_url,fetch_mediawiki_category,fetch_mediawiki_page --max-steps 10 --max-total-tokens 100000 --timeout-ms 300000 --network-mode open --thinking enabled --temperature 1.0 --task "Research Trinity Seven canon and return a Markdown discovery brief only. Do not write files. The brief must include main character candidates, high-value world/topic files, concrete source notes, and exact proposed output paths under world/characters/ and world/."`
+- Command shape: `ACA_BINARY='node <repo>/dist/index.js' HOME=/tmp/aca-c4-home-O7N2oG python3 <claude-home>/skills/delegate/scripts/run_delegate.py --project-dir /tmp/aca-c4-ws-qOphFr --profile rp-researcher --model zai-org/glm-5 --allowed-tools read_file,find_paths,search_text,web_search,fetch_url,fetch_mediawiki_category,fetch_mediawiki_page --max-steps 10 --max-total-tokens 100000 --timeout-ms 300000 --network-mode open --thinking enabled --temperature 1.0 --task "Research Trinity Seven canon and return a Markdown discovery brief only. Do not write files. The brief must include main character candidates, high-value world/topic files, concrete source notes, and exact proposed output paths under world/characters/ and world/."`
 - Workspace / HOME isolation: isolated temp workspace `/tmp/aca-c4-ws-qOphFr` and isolated temp `HOME` `/tmp/aca-c4-home-O7N2oG`
 - Expected result: either a grounded discovery brief or a clearly surfaced failure that shows where RP discovery/operator guidance is drifting
 - Actual result: the built wrapper failed openly with `turn.max_steps` after `33` accepted tool calls; the run burned budget across optional search/browser/category paths instead of converging on a bounded discovery brief, which exposed the need to harden the RP prompt/operator contract before closure
@@ -843,7 +843,7 @@ Residual note for `C3` live coverage:
 - Scenario ID: `C4-LIVE-2`
 - Milestone: `C4`
 - Goal: expose whether RP repair turns honor a widened tool budget when the wrapper requests more than the old default
-- Command shape: `ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' HOME=/tmp/aca-c4-home3-N4BCci python3 /home/blake/.claude/skills/delegate/scripts/run_delegate.py --project-dir /tmp/aca-c4-ws3-U5Euzo --profile rp-researcher --model zai-org/glm-5 --allowed-tools read_file,find_paths,search_text,fetch_mediawiki_page --max-steps 10 --max-tool-calls 20 --max-total-tokens 100000 --timeout-ms 300000 --network-mode open --thinking enabled --temperature 1.0 --task "Using only fetch_mediawiki_page against https://trinity-seven.fandom.com/api.php plus local file tools, produce a Markdown discovery brief for Trinity Seven. Do not write files. Use Trinity Seven, Arata Kasuga, Lilith Asami, Lieselotte Sherlock, Levi Kazama, Akio Fudo, Mira Yamana, Yui Kurata, Iscariot, Royal Biblia Academy, and Breakdown Phenomenon as the starting page set. The brief must include main character candidates, 4-6 high-value world/topic files, concrete source notes, and exact proposed output paths under world/characters/ and world/."`
+- Command shape: `ACA_BINARY='node <repo>/dist/index.js' HOME=/tmp/aca-c4-home3-N4BCci python3 <claude-home>/skills/delegate/scripts/run_delegate.py --project-dir /tmp/aca-c4-ws3-U5Euzo --profile rp-researcher --model zai-org/glm-5 --allowed-tools read_file,find_paths,search_text,fetch_mediawiki_page --max-steps 10 --max-tool-calls 20 --max-total-tokens 100000 --timeout-ms 300000 --network-mode open --thinking enabled --temperature 1.0 --task "Using only fetch_mediawiki_page against https://trinity-seven.fandom.com/api.php plus local file tools, produce a Markdown discovery brief for Trinity Seven. Do not write files. Use Trinity Seven, Arata Kasuga, Lilith Asami, Lieselotte Sherlock, Levi Kazama, Akio Fudo, Mira Yamana, Yui Kurata, Iscariot, Royal Biblia Academy, and Breakdown Phenomenon as the starting page set. The brief must include main character candidates, 4-6 high-value world/topic files, concrete source notes, and exact proposed output paths under world/characters/ and world/."`
 - Workspace / HOME isolation: isolated temp workspace `/tmp/aca-c4-ws3-U5Euzo` and isolated temp `HOME` `/tmp/aca-c4-home3-N4BCci`
 - Expected result: the repaired RP discovery turn should honor the widened budget instead of silently falling back to the old 8-call cap
 - Actual result: before the repair-cap hardening, the same bounded discovery task failed with `turn.max_tool_calls` after `8` accepted calls even though the wrapper requested `20`, proving the RP repair path was still clamped to the old fallback limit
@@ -868,7 +868,7 @@ Residual note for `C3` live coverage:
 - Scenario ID: `C4-LIVE-4`
 - Milestone: `C4`
 - Goal: prove `rp-researcher` can still create the exact assigned RP file when the user-level default model is unavailable and fallback is required
-- Command shape: `ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' HOME=/tmp/aca-c4-home3-N4BCci ACA_MODEL_DEFAULT='zai-org/glm-5.1' python3 /home/blake/.claude/skills/delegate/scripts/run_delegate.py --project-dir /tmp/aca-c4-ws3-U5Euzo --profile rp-researcher --allowed-tools read_file,find_paths,search_text,fetch_mediawiki_page,make_directory,write_file --max-steps 10 --max-tool-calls 20 --max-total-tokens 100000 --timeout-ms 300000 --network-mode open --thinking enabled --temperature 1.0 --required-output-path world/characters/lilith-asami.md --fail-on-rejected-tool-calls --task "Using only fetch_mediawiki_page against https://trinity-seven.fandom.com/api.php plus local file tools, research Lilith Asami and write exactly world/characters/lilith-asami.md as grounded Markdown. Do not write any other file. Keep Relationships compact with at most 6 important dynamics. Avoid Japanese script unless it is needed to disambiguate a named ability."`
+- Command shape: `ACA_BINARY='node <repo>/dist/index.js' HOME=/tmp/aca-c4-home3-N4BCci ACA_MODEL_DEFAULT='zai-org/glm-5.1' python3 <claude-home>/skills/delegate/scripts/run_delegate.py --project-dir /tmp/aca-c4-ws3-U5Euzo --profile rp-researcher --allowed-tools read_file,find_paths,search_text,fetch_mediawiki_page,make_directory,write_file --max-steps 10 --max-tool-calls 20 --max-total-tokens 100000 --timeout-ms 300000 --network-mode open --thinking enabled --temperature 1.0 --required-output-path world/characters/lilith-asami.md --fail-on-rejected-tool-calls --task "Using only fetch_mediawiki_page against https://trinity-seven.fandom.com/api.php plus local file tools, research Lilith Asami and write exactly world/characters/lilith-asami.md as grounded Markdown. Do not write any other file. Keep Relationships compact with at most 6 important dynamics. Avoid Japanese script unless it is needed to disambiguate a named ability."`
 - Workspace / HOME isolation: isolated temp workspace `/tmp/aca-c4-ws3-U5Euzo` and isolated temp `HOME` `/tmp/aca-c4-home3-N4BCci`
 - Expected result: the wrapper should succeed without an explicit model, the runtime should fall back away from unavailable `zai-org/glm-5.1`, and the required output file should exist on disk
 - Actual result: the run succeeded, wrote `world/characters/lilith-asami.md`, and the session manifest recorded `configSnapshot.model = "zai-org/glm-5"` even though `ACA_MODEL_DEFAULT` was pinned to unavailable `zai-org/glm-5.1`. The file artifact was correct; one bounded open loop remained from a malformed self-check `read_file`, which did not block required-output validation
@@ -882,7 +882,7 @@ Residual note for `C3` live coverage:
 - Scenario ID: `C4-LIVE-5`
 - Milestone: `C4`
 - Goal: prove plan-only / zero-tool RP completions still fail instead of being accepted as valid research output
-- Command shape: `ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' HOME=/tmp/aca-c4-home3-N4BCci python3 /home/blake/.claude/skills/delegate/scripts/run_delegate.py --project-dir /tmp/aca-c4-ws3-U5Euzo --profile rp-researcher --model zai-org/glm-5 --allowed-tools '' --max-steps 4 --max-tool-calls 4 --max-total-tokens 40000 --timeout-ms 120000 --task "Do not use tools. Just describe how you would research Trinity Seven and what files you would probably create."`
+- Command shape: `ACA_BINARY='node <repo>/dist/index.js' HOME=/tmp/aca-c4-home3-N4BCci python3 <claude-home>/skills/delegate/scripts/run_delegate.py --project-dir /tmp/aca-c4-ws3-U5Euzo --profile rp-researcher --model zai-org/glm-5 --allowed-tools '' --max-steps 4 --max-tool-calls 4 --max-total-tokens 40000 --timeout-ms 120000 --task "Do not use tools. Just describe how you would research Trinity Seven and what files you would probably create."`
 - Workspace / HOME isolation: isolated temp workspace `/tmp/aca-c4-ws3-U5Euzo` and isolated temp `HOME` `/tmp/aca-c4-home3-N4BCci`
 - Expected result: the RP profile should reject the run because no research or file-inspection tools were actually used
 - Actual result: the wrapper returned `turn.profile_validation_failed` with `rp-researcher run ended without any accepted tool calls; RP research/write tasks must inspect sources or local files before completion`
@@ -901,7 +901,7 @@ Residual note for `C4` live coverage:
 - Scenario ID: `C5-LIVE-1`
 - Milestone: `C5`
 - Goal: verify the queued `C3` residual is still real on the current built artifact before changing the wrapper
-- Command shape: `HOME=/tmp/aca-c5-c3-home-j9xD5T ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' python3 /home/blake/.claude/skills/orchestrate/scripts/run_orchestrate.py --project-dir /tmp/aca-c5-c3-ws-0Z191M --tasks-json /tmp/aca-c5-c3-tasks-kJd0Qx.json --allowed-tools make_directory,write_file,find_paths,read_file --max-steps 8 --max-tool-calls 8 --max-total-tokens 80000 --timeout-ms 180000 --concurrency 2`
+- Command shape: `HOME=/tmp/aca-c5-c3-home-j9xD5T ACA_BINARY='node <repo>/dist/index.js' python3 <claude-home>/skills/orchestrate/scripts/run_orchestrate.py --project-dir /tmp/aca-c5-c3-ws-0Z191M --tasks-json /tmp/aca-c5-c3-tasks-kJd0Qx.json --allowed-tools make_directory,write_file,find_paths,read_file --max-steps 8 --max-tool-calls 8 --max-total-tokens 80000 --timeout-ms 180000 --concurrency 2`
 - Workspace / HOME isolation: isolated temp workspace `/tmp/aca-c5-c3-ws-0Z191M` and isolated temp `HOME` `/tmp/aca-c5-c3-home-j9xD5T`
 - Expected result: if the residual is still real, each nested delegate artifact will over-report both new session dirs instead of its own task-matched session
 - Actual result: the residual reproduced exactly; both nested delegate artifacts reported the same two `new_session_dirs`, so per-task session attribution was still coarse under shared `HOME`
@@ -914,7 +914,7 @@ Residual note for `C4` live coverage:
 - Scenario ID: `C5-LIVE-2`
 - Milestone: `C5`
 - Goal: prove the rebuilt delegate/orchestrate surface now attributes shared-`HOME` sessions to the correct task
-- Command shape: `HOME=/tmp/aca-c5-c3-home-fixed-CLwkWT ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' python3 /home/blake/.claude/skills/orchestrate/scripts/run_orchestrate.py --project-dir /tmp/aca-c5-c3-ws-fixed-51vBS1 --tasks-json /tmp/aca-c5-c3-tasks-fixed-1CRWdM.json --allowed-tools make_directory,write_file,find_paths,read_file --max-steps 8 --max-tool-calls 8 --max-total-tokens 80000 --timeout-ms 180000 --concurrency 2`
+- Command shape: `HOME=/tmp/aca-c5-c3-home-fixed-CLwkWT ACA_BINARY='node <repo>/dist/index.js' python3 <claude-home>/skills/orchestrate/scripts/run_orchestrate.py --project-dir /tmp/aca-c5-c3-ws-fixed-51vBS1 --tasks-json /tmp/aca-c5-c3-tasks-fixed-1CRWdM.json --allowed-tools make_directory,write_file,find_paths,read_file --max-steps 8 --max-tool-calls 8 --max-total-tokens 80000 --timeout-ms 180000 --concurrency 2`
 - Workspace / HOME isolation: isolated temp workspace `/tmp/aca-c5-c3-ws-fixed-51vBS1` and isolated temp `HOME` `/tmp/aca-c5-c3-home-fixed-CLwkWT`
 - Expected result: each nested delegate artifact reports its own `session_id` / `session_dir` and a single task-matched `new_session_dirs` entry
 - Actual result: both nested delegate artifacts now emit exact `session_id` / `session_dir`, and each `new_session_dirs` list contains only the task-matched ACA session created for that delegated run
@@ -927,7 +927,7 @@ Residual note for `C4` live coverage:
 - Scenario ID: `C5-LIVE-3`
 - Milestone: `C5`
 - Goal: prove the queued `C4` write-path session-noise residual is gone after narrowing durable task-state error tracking
-- Command shape: `HOME=/tmp/aca-c5-c4-home-write-Pwnwwy ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' ACA_MODEL_DEFAULT='zai-org/glm-5.1' python3 /home/blake/.claude/skills/delegate/scripts/run_delegate.py --project-dir /tmp/aca-c5-c4-ws-write-k2xbZA --profile rp-researcher --allowed-tools read_file,find_paths,search_text,fetch_mediawiki_page,make_directory,write_file --max-steps 10 --max-tool-calls 20 --max-total-tokens 100000 --timeout-ms 300000 --network-mode open --thinking enabled --temperature 1.0 --required-output-path world/characters/lilith-asami.md --fail-on-rejected-tool-calls --task "Using only fetch_mediawiki_page against https://trinity-seven.fandom.com/api.php plus local file tools, research Lilith Asami and write exactly world/characters/lilith-asami.md as grounded Markdown. Do not write any other file. Keep Relationships compact with at most 6 important dynamics. Avoid Japanese script unless it is needed to disambiguate a named ability."`
+- Command shape: `HOME=/tmp/aca-c5-c4-home-write-Pwnwwy ACA_BINARY='node <repo>/dist/index.js' ACA_MODEL_DEFAULT='zai-org/glm-5.1' python3 <claude-home>/skills/delegate/scripts/run_delegate.py --project-dir /tmp/aca-c5-c4-ws-write-k2xbZA --profile rp-researcher --allowed-tools read_file,find_paths,search_text,fetch_mediawiki_page,make_directory,write_file --max-steps 10 --max-tool-calls 20 --max-total-tokens 100000 --timeout-ms 300000 --network-mode open --thinking enabled --temperature 1.0 --required-output-path world/characters/lilith-asami.md --fail-on-rejected-tool-calls --task "Using only fetch_mediawiki_page against https://trinity-seven.fandom.com/api.php plus local file tools, research Lilith Asami and write exactly world/characters/lilith-asami.md as grounded Markdown. Do not write any other file. Keep Relationships compact with at most 6 important dynamics. Avoid Japanese script unless it is needed to disambiguate a named ability."`
 - Workspace / HOME isolation: isolated temp workspace `/tmp/aca-c5-c4-ws-write-k2xbZA` and isolated temp `HOME` `/tmp/aca-c5-c4-home-write-Pwnwwy`
 - Expected result: the required output file still succeeds, fallback still lands on `zai-org/glm-5`, and the session manifest ends with `openLoops: []` instead of a self-check `read_file` validation loop
 - Actual result: the run succeeded, wrote the required character file, persisted `session_id = ses_01KNR9SE828V2R1KNEQK2QTCYN`, and the manifest durable task state ended with an empty `openLoops` array
@@ -941,7 +941,7 @@ Residual note for `C4` live coverage:
 - Scenario ID: `C5-LIVE-4`
 - Milestone: `C5`
 - Goal: prove the queued `C4` discovery-path deferred-overflow noise is also gone in the built runtime
-- Command shape: `HOME=/tmp/aca-c5-c4-home-discovery-Aw4Dza ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' python3 /home/blake/.claude/skills/delegate/scripts/run_delegate.py --project-dir /tmp/aca-c5-c4-ws-discovery-jT1ORe --profile rp-researcher --model zai-org/glm-5 --allowed-tools read_file,find_paths,search_text,fetch_mediawiki_page --max-steps 10 --max-tool-calls 20 --max-total-tokens 100000 --timeout-ms 300000 --network-mode open --thinking enabled --temperature 1.0 --task "Using only fetch_mediawiki_page against https://trinity-seven.fandom.com/api.php plus local file tools, produce a Markdown discovery brief for Trinity Seven. Do not write files. Use Trinity Seven, Arata Kasuga, Lilith Asami, Lieselotte Sherlock, Levi Kazama, Akio Fudo, Mira Yamana, Yui Kurata, Iscariot, Royal Biblia Academy, and Breakdown Phenomenon as the starting page set. The brief must include main character candidates, 4-6 high-value world/topic files, concrete source notes, and exact proposed output paths under world/characters/ and world/."`
+- Command shape: `HOME=/tmp/aca-c5-c4-home-discovery-Aw4Dza ACA_BINARY='node <repo>/dist/index.js' python3 <claude-home>/skills/delegate/scripts/run_delegate.py --project-dir /tmp/aca-c5-c4-ws-discovery-jT1ORe --profile rp-researcher --model zai-org/glm-5 --allowed-tools read_file,find_paths,search_text,fetch_mediawiki_page --max-steps 10 --max-tool-calls 20 --max-total-tokens 100000 --timeout-ms 300000 --network-mode open --thinking enabled --temperature 1.0 --task "Using only fetch_mediawiki_page against https://trinity-seven.fandom.com/api.php plus local file tools, produce a Markdown discovery brief for Trinity Seven. Do not write files. Use Trinity Seven, Arata Kasuga, Lilith Asami, Lieselotte Sherlock, Levi Kazama, Akio Fudo, Mira Yamana, Yui Kurata, Iscariot, Royal Biblia Academy, and Breakdown Phenomenon as the starting page set. The brief must include main character candidates, 4-6 high-value world/topic files, concrete source notes, and exact proposed output paths under world/characters/ and world/."`
 - Workspace / HOME isolation: isolated temp workspace `/tmp/aca-c5-c4-ws-discovery-jT1ORe` and isolated temp `HOME` `/tmp/aca-c5-c4-home-discovery-Aw4Dza`
 - Expected result: even if the model again front-loads more than 10 tool calls, the final durable task state should no longer keep fake open loops for neutral deferred overflow
 - Actual result: the discovery brief succeeded with `12` accepted tool calls and `3` rejected calls, but the session manifest still ended with `openLoops: []`, so the old deferred-overflow noise is gone
@@ -954,7 +954,7 @@ Residual note for `C4` live coverage:
 - Scenario ID: `C5-LIVE-5`
 - Milestone: `C5`
 - Goal: resolve the queued `C2` repro gap by checking whether a malformed or partial first-pass triage artifact can now be captured live and preserved
-- Command shape: `CONSULT_ACA_MAX_STEPS=4 CONSULT_ACA_MAX_TOTAL_TOKENS=50000 CONSULT_LLM_TIMEOUT_S=180 ACA_BINARY='node /home/blake/projects/anothercodingagent/dist/index.js' python3 /home/blake/.codex/skills/consult/scripts/run_consult.py --mode aca --witnesses deepseek,kimi,qwen,gemma --pack-path src/cli/consult.ts --pack-path src/consult/context-request.ts --question "Review ACA's no-tools consult triage path. Focus on malformed or partial triage output risk, raw triage artifact preservation, and literal pseudo-tool markup like <invoke> or <tool_call>." --project-dir /home/blake/projects/anothercodingagent`
+- Command shape: `CONSULT_ACA_MAX_STEPS=4 CONSULT_ACA_MAX_TOTAL_TOKENS=50000 CONSULT_LLM_TIMEOUT_S=180 ACA_BINARY='node <repo>/dist/index.js' python3 <codex-home>/skills/consult/scripts/run_consult.py --mode aca --witnesses deepseek,kimi,qwen,gemma --pack-path src/cli/consult.ts --pack-path src/consult/context-request.ts --question "Review ACA's no-tools consult triage path. Focus on malformed or partial triage output risk, raw triage artifact preservation, and literal pseudo-tool markup like <invoke> or <tool_call>." --project-dir <repo>`
 - Workspace / HOME isolation: repo workspace reused intentionally; no temp `HOME` requirement for consult
 - Expected result: either clean triage with preserved raw artifact or a real first-pass malformed/partial triage capture that shows the retry/preservation path live
 - Actual result: all four witnesses succeeded, the first triage artifact was partial and preserved at `triage.raw_path`, and ACA repaired it into a complete final triage report at `triage.path`; the raw and final reports differ on disk, which proves the live retry/preservation path instead of leaving it only test-covered
@@ -977,7 +977,7 @@ Residual note for `C5` live coverage:
 - Scenario ID: `C7-LIVE-1`
 - Milestone: `C7`
 - Goal: prove built `aca invoke` still executes a real tool under forced NanoGPT emulation after the parser/prompt hardening
-- Command shape: built `invoke` with `context.model = "qwen/qwen3-coder-next"`, `context.profile = "general"`, `allowed_tools = ["read_file"]`, and a bounded heading-extraction task against `RP_AUTHORING_CONTRACT.md`
+- Command shape: built `invoke` with `context.model = "qwen/qwen3-coder-next"`, `context.profile = "general"`, `allowed_tools = ["read_file"]`, and a bounded heading-extraction task against `docs/rp/authoring-contract.md`
 - Workspace / HOME isolation: repo workspace reused intentionally
 - Expected result: one accepted `read_file` and exact final heading text
 - Actual result: returned `# RP Knowledge Pack Authoring Contract` with one accepted `read_file`
@@ -1000,7 +1000,7 @@ Residual note for `C5` live coverage:
 - Scenario ID: `C7-LIVE-3`
 - Milestone: `C7`
 - Goal: prove the witness-profile tool path still works on forced emulation
-- Command shape: built `invoke` with `context.model = "qwen/qwen3-coder-next"`, `context.profile = "witness"`, `allowed_tools = ["read_file"]`, and a bounded heading-extraction task against `RP_AUTHORING_CONTRACT.md`
+- Command shape: built `invoke` with `context.model = "qwen/qwen3-coder-next"`, `context.profile = "witness"`, `allowed_tools = ["read_file"]`, and a bounded heading-extraction task against `docs/rp/authoring-contract.md`
 - Workspace / HOME isolation: repo workspace reused intentionally
 - Expected result: one accepted `read_file` and exact final heading text
 - Actual result: returned `# RP Knowledge Pack Authoring Contract` with one accepted `read_file` and no rejected tools
@@ -1011,23 +1011,23 @@ Residual note for `C5` live coverage:
 - Scenario ID: `C7-LIVE-4`
 - Milestone: `C7`
 - Goal: prove the `rp-researcher` write path still reaches real `write_file` under forced emulation
-- Command shape: built `invoke` with `context.model = "qwen/qwen3-coder-next"`, `context.profile = "rp-researcher"`, `cwd = "/home/blake/projects"`, `allowed_tools = ["read_file","write_file"]`, `required_output_paths = ["/home/blake/projects/.aca-c7-rp-probe/royal-biblia-academy.md"]`, and a bounded rewrite task from `EXAMPLE/world/locations/royal_biblia_academy.txt`
-- Workspace / HOME isolation: shared `/home/blake/projects` workspace with output under `/home/blake/projects/.aca-c7-rp-probe`
+- Command shape: built `invoke` with `context.model = "qwen/qwen3-coder-next"`, `context.profile = "rp-researcher"`, `cwd = "<workspace-parent>"`, `allowed_tools = ["read_file","write_file"]`, `required_output_paths = ["<workspace-parent>/.aca-c7-rp-probe/royal-biblia-academy.md"]`, and a bounded rewrite task from `EXAMPLE/world/locations/royal_biblia_academy.txt`
+- Workspace / HOME isolation: shared `<workspace-parent>` workspace with output under `<workspace-parent>/.aca-c7-rp-probe`
 - Expected result: accepted `read_file` + `write_file`, required output created, and ideally a clean final response
 - Actual result: the required output file was created and the session recorded accepted `read_file` + `write_file`, but the outer invoke ended with retryable `llm.malformed` after the write completed
 - Evidence:
-  - output file `/home/blake/projects/.aca-c7-rp-probe/royal-biblia-academy.md`
-  - session dir `/home/blake/.aca/sessions/ses_01KNSWT69DH0TZHQ8GZR21BK1J`
-  - manifest `/home/blake/.aca/sessions/ses_01KNSWT69DH0TZHQ8GZR21BK1J/manifest.json`
+  - output file `<workspace-parent>/.aca-c7-rp-probe/royal-biblia-academy.md`
+  - session dir `<aca-home>/sessions/ses_01KNSWT69DH0TZHQ8GZR21BK1J`
+  - manifest `<aca-home>/sessions/ses_01KNSWT69DH0TZHQ8GZR21BK1J/manifest.json`
 - Status: `observed`
 
 - Scenario ID: `C7-LIVE-5`
 - Milestone: `C7`
 - Goal: prove the no-tools consult path still behaves cleanly on a local-file question without silently turning pseudo-tool intent into valid output
-- Command shape: `node dist/index.js consult --question "Inspect the local file /home/blake/projects/anothercodingagent/RP_AUTHORING_CONTRACT.md and tell me its first Markdown heading." --witnesses deepseek --skip-triage --out /tmp/aca-c7-consult-deepseek.json`
+- Command shape: `node dist/index.js consult --question "Inspect the local file <repo>/docs/rp/authoring-contract.md and tell me its first Markdown heading." --witnesses deepseek --skip-triage --out /tmp/aca-c7-consult-deepseek.json`
 - Workspace / HOME isolation: repo workspace reused intentionally
 - Expected result: either disciplined `needs_context` or degraded pseudo-tool classification, but not a false direct answer
-- Actual result: DeepSeek stayed disciplined, emitted a valid `needs_context` request for `RP_AUTHORING_CONTRACT.md:1-10`, ACA fulfilled the snippet, and the run completed without degradation
+- Actual result: DeepSeek stayed disciplined, emitted a valid `needs_context` request for `docs/rp/authoring-contract.md:1-10`, ACA fulfilled the snippet, and the run completed without degradation
 - Evidence:
   - result JSON `/tmp/aca-c7-consult-deepseek.json`
   - context-request artifact `/tmp/aca-consult-deepseek-context-request-1775764501922-6835.md`
@@ -1037,27 +1037,27 @@ Residual note for `C5` live coverage:
 - Scenario ID: `C7-LIVE-6`
 - Milestone: `C7`
 - Goal: run a small multi-model NanoGPT delegate bakeoff on the same forced-emulation read→write task
-- Command shape: repeated `.codex` delegate-wrapper runs against `/home/blake/projects` with `allowed_tools = ["read_file","write_file"]`, required output paths under `/home/blake/projects/.aca-c7-bakeoff/`, and models `qwen/qwen3-coder-next`, `qwen/qwen3-coder`, `moonshotai/Kimi-K2-Instruct-0905`, and `zai-org/glm-5`
-- Workspace / HOME isolation: shared `/home/blake/projects` workspace with disjoint output files under `.aca-c7-bakeoff/`
+- Command shape: repeated `.codex` delegate-wrapper runs against `<workspace-parent>` with `allowed_tools = ["read_file","write_file"]`, required output paths under `<workspace-parent>/.aca-c7-bakeoff/`, and models `qwen/qwen3-coder-next`, `qwen/qwen3-coder`, `moonshotai/Kimi-K2-Instruct-0905`, and `zai-org/glm-5`
+- Workspace / HOME isolation: shared `<workspace-parent>` workspace with disjoint output files under `.aca-c7-bakeoff/`
 - Expected result: at least one successful full delegate read→write path, plus comparative signal on the current forced-emulation candidates
 - Actual result:
   - `qwen/qwen3-coder-next`: aborted with retryable `llm.malformed` after the first accepted `read_file`
   - `qwen/qwen3-coder`: aborted with retryable `llm.malformed` after the first accepted `read_file`
-  - `moonshotai/Kimi-K2-Instruct-0905`: completed the accepted `read_file` + `write_file` path and created `/home/blake/projects/.aca-c7-bakeoff/kimi-k2-0905.md`, but the written heading was paraphrased as `# RP Authoring Contract` instead of copying the exact first heading line
-  - `zai-org/glm-5`: completed accepted `read_file` + `write_file` and created `/home/blake/projects/.aca-c7-bakeoff/glm-5.md` with the exact heading line `# RP Knowledge Pack Authoring Contract`
+  - `moonshotai/Kimi-K2-Instruct-0905`: completed the accepted `read_file` + `write_file` path and created `<workspace-parent>/.aca-c7-bakeoff/kimi-k2-0905.md`, but the written heading was paraphrased as `# RP Authoring Contract` instead of copying the exact first heading line
+  - `zai-org/glm-5`: completed accepted `read_file` + `write_file` and created `<workspace-parent>/.aca-c7-bakeoff/glm-5.md` with the exact heading line `# RP Knowledge Pack Authoring Contract`
 - Evidence:
   - Kimi delegate result `/tmp/delegate-result-1775764429818050640.json`
   - GLM delegate result `/tmp/delegate-result-1775764429847102983.json`
   - Qwen delegate result `/tmp/delegate-result-1775764388289912409.json`
   - Qwen3 delegate result `/tmp/delegate-result-1775764429812332631.json`
-  - output file `/home/blake/projects/.aca-c7-bakeoff/kimi-k2-0905.md`
-  - output file `/home/blake/projects/.aca-c7-bakeoff/glm-5.md`
+  - output file `<workspace-parent>/.aca-c7-bakeoff/kimi-k2-0905.md`
+  - output file `<workspace-parent>/.aca-c7-bakeoff/glm-5.md`
 - Status: `observed`
 
 - Scenario ID: `C7-LIVE-7`
 - Milestone: `C7`
 - Goal: prove the no-tools consult path still degrades active pseudo-tool markup instead of treating it as valid witness output
-- Command shape: `node dist/index.js consult --prompt-file /tmp/aca-c7-pseudo-tool-prompt.md --project-dir /home/blake/projects/anothercodingagent --witnesses qwen --out /tmp/aca-c7-pseudo-tool-qwen.json`
+- Command shape: `node dist/index.js consult --prompt-file /tmp/aca-c7-pseudo-tool-prompt.md --project-dir <repo> --witnesses qwen --out /tmp/aca-c7-pseudo-tool-qwen.json`
 - Workspace / HOME isolation: repo workspace reused intentionally
 - Expected result: the witness should be marked degraded if it emits active pseudo-tool markup in the no-tools context-request pass, and triage should still complete from the raw degraded artifact
 - Actual result: Qwen emitted a long no-tools context-request reply containing active pseudo-tool markup copied into the response, ACA classified it as `pseudo-tool call emitted in no-tools context-request pass`, set `success_count: 0` / `degraded: true`, and still produced a successful triage report from the raw degraded artifact
@@ -1072,7 +1072,7 @@ Residual note for `C5` live coverage:
 - Scenario ID: `C7-LIVE-8`
 - Milestone: `C7`
 - Goal: distinguish a remaining parser bug from a size-sensitive model/runtime-shape split on the built Qwen executor path
-- Command shape: two built `invoke` runs with `context.model = "qwen/qwen3-coder-next"`, identical `allowed_tools = ["read_file","write_file"]`, identical `required_output_paths = ["out.md"]`, and the same heading-copy task against `source.md`, once with a tiny file and once with `RP_AUTHORING_CONTRACT.md`
+- Command shape: two built `invoke` runs with `context.model = "qwen/qwen3-coder-next"`, identical `allowed_tools = ["read_file","write_file"]`, identical `required_output_paths = ["out.md"]`, and the same heading-copy task against `source.md`, once with a tiny file and once with `docs/rp/authoring-contract.md`
 - Workspace / HOME isolation: isolated temp HOME and workspaces at `/tmp/aca-c7-sizeprobe-small` and `/tmp/aca-c7-sizeprobe-large`
 - Expected result: if the parser/runtime is still broken generically, both runs should fail in the same way; if the issue is model/runtime-shape sensitivity, the tiny run should behave materially better than the larger read-result run
 - Actual result: the tiny-source path behaved materially better than the large-source path, but not perfectly. An initial built run completed with accepted `read_file` + `write_file` and final text `Completed. Extracted and wrote the first Markdown heading line (\`# Small Heading\`) to out.md.`. A follow-up rerun still wrote `/tmp/aca-c7-sizeprobe-small/out.md` with `# Small Heading`, but the outer invoke ended with retryable `llm.malformed`. By contrast, the large-source run aborted with retryable `llm.malformed` after the first accepted `read_file` and never wrote `out.md`. This supports a size-sensitive Qwen model/runtime-shape split and also leaves open a workflow-level salvage question once required outputs already exist

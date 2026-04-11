@@ -39,7 +39,7 @@
 
 **C7: COMPLETE (2026-04-10).** Four forced-emulation blast-radius fixes: (1) `tool-emulation.ts` recovers invoke/parameter pseudo-tool wrappers + repeated wrapped blocks + filters empty-name entries; (2) `nanogpt-driver.ts` reports `supportsTools: emulated` truthfully; (3) `rp-research.ts` reuses shared emulation parser for pseudo write_file salvage; (4) `cli-main.ts` `enablePositionalOptions()` fixes subcommand `--model` swallowing. All 6 live scenarios proven. Qwen post-write `llm.malformed` after satisfied required output = model-quality note, not a blocker. GLM-5 preferred for rp-researcher.
 
-**C6: IN PROGRESS (2026-04-10).** Quints RP pack regen from clean slate. Archive at `/home/blake/projects/rpproject/_archive/the-quintessential-quintuplets-c6-pre-regen-2026-04-09`. Output to `/home/blake/projects/rpproject/the-quintessential-quintuplets/`. Authoring contract: `RP_AUTHORING_CONTRACT.md`. Model: `zai-org/glm-5`. Timeline: blank/neutral. Handoff + inline prompt: `docs/handoff-c6-quints-regen.md`.
+**C6: IN PROGRESS (2026-04-10).** Quints RP pack regen from clean slate. Archive at `<rp-project>/_archive/the-quintessential-quintuplets-c6-pre-regen-2026-04-09`. Output to `<rp-project>/the-quintessential-quintuplets/`. Authoring contract: `docs/rp/authoring-contract.md`. Model: `zai-org/glm-5`. Timeline: blank/neutral. Handoff + inline prompt: `docs/handoff-c6-quints-regen.md`.
 
 **C6 GLM-5 JSON escape fix — COMPLETE (2026-04-10).** `sanitizeModelJson()` added to `tool-emulation.ts` (exported), applied at all 3 internal parse sites + 6 codebase-wide model-output `JSON.parse` sites (turn-engine, context-request, consult, summarizer, durable-task-state, witness-finding). `buildToolSchemaPrompt` angle-bracket placeholders fixed. `extractPseudoWriteFileCall` silent catch replaced with logging + regex fallback (overcapture bug caught and fixed same session via Opus spider-web audit). Discovery task JSON template angle-bracket placeholders replaced with all-caps tokens in fenced block. Build clean. Handoff: `docs/handoff-c6-glm5-json-escape-fix.md`.
 
@@ -62,7 +62,7 @@
   - Test 4 (context-request.ts protocol review): ok | 3 rounds | 1 tree | 2 ENOENT (wrong root-level path guessed despite trees) — still ok overall ✓
   - Test 5 (NanoGPT driver tool emulation): ok | 3 rounds | 3 tree requests | 1 ENOENT (src/drivers tried first, then recovered via src tree) ✓
 - Key observation: all tests exhausted maxRounds and used forced finalization — no voluntary finalization on these complex questions
-- Plan: `/home/blake/.claude/plans/tender-dazzling-sundae.md`
+- Plan: `<claude-home>/plans/tender-dazzling-sundae.md`
 
 ## Current State (2026-03-30)
 

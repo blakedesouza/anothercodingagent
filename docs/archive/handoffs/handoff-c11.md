@@ -232,7 +232,7 @@ print(json.dumps({
     'contract_version': '1.0.0',
     'schema_version': '1.0.0',
     'task': 'YOUR TASK HERE',
-    'context': {'model': 'MODEL_ID', 'profile': 'coder', 'cwd': '/home/blake/projects/anothercodingagent'},
+    'context': {'model': 'MODEL_ID', 'profile': 'coder', 'cwd': '<repo>'},
 }))
 " > /tmp/input.json
 cat /tmp/input.json | HOME=$(mktemp -d -t aca-test-XXXXXX) node dist/index.js invoke --json

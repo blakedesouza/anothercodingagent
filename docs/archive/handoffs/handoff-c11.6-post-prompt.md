@@ -4,7 +4,7 @@ Read plan.md and docs/handoff-c11.6-post.md before doing anything else.
 
 ▎
 ▎ Project: Another Coding Agent (ACA) — TypeScript coding agent at
-▎ /home/blake/projects/anothercodingagent. Built binary at dist/index.js.
+▎ <repo>. Built binary at dist/index.js.
 ▎ Tests: npx vitest run. Build: npm run build. 2655 tests passing going in.
 ▎
 ▎ This session's only job is live-validating the identifier obfuscation feature
@@ -29,7 +29,7 @@ Read plan.md and docs/handoff-c11.6-post.md before doing anything else.
 ▎ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-obfusc-verify-XXXXXX) \
 ▎   node dist/index.js consult \
 ▎   --question "What does wrapStreamWithToolEmulation do, what streaming events does it emit, and what file defines it?" \
-▎   --project-dir /home/blake/projects/anothercodingagent \
+▎   --project-dir <repo> \
 ▎   --max-context-rounds 1 \
 ▎   2>&1 | python3 -c "
 ▎ import sys, json

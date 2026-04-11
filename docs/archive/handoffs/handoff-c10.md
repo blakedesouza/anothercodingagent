@@ -115,7 +115,7 @@ Unit tests for:
 - C10 is real
 - Use `NANOGPT_DEBUG=1 --model minimax/minimax-m2.7` to capture the actual raw stream
 - One real MiniMax run was captured this session and showed `[TOOL_CALL]` format that parsed correctly — but only one run, inconclusive
-- Follow the C10 plan at `/home/blake/.claude/plans/jazzy-exploring-wind.md`
+- Follow the C10 plan at `<claude-home>/plans/jazzy-exploring-wind.md`
 
 **If deepseek still shows bias (tool calls on conceptual, or `llm.malformed`):**
 - The C9 prompt fixes didn't actually work
