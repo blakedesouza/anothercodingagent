@@ -31,8 +31,8 @@ ACA is an experiment in making agent work composable instead of monolithic:
 - Public API compatibility is not guaranteed.
 - Model behavior varies by NanoGPT route and model alias.
 - Broad web/research workflows can still be token-heavy.
-- Some historical docs are development archives, not polished user guides.
-- Full repo lint currently has known pre-existing test-only `no-explicit-any` failures; see [Known issues](docs/known-issues.md).
+- Detailed milestone history is kept under `docs/archive/` and is not the primary user guide.
+- Full repo lint currently has known pre-existing test-only `no-explicit-any` failures; see [Known issues](docs/planning/known-issues.md).
 
 ## Requirements
 
@@ -158,12 +158,13 @@ Example:
 ## Documentation
 
 - [Docs index](docs/README.md): the best starting point after this README.
-- [Roadmap](docs/roadmap.md): current state, limits, and next work.
+- [Roadmap](docs/planning/roadmap.md): current state, limits, and next work.
 - [Security](SECURITY.md): safety and reporting notes.
-- [Known issues](docs/known-issues.md): current caveats.
-- [Changelog](docs/changelog.md): release-facing summary plus development history.
+- [Known issues](docs/planning/known-issues.md): current caveats.
+- [Changelog](docs/releases/changelog.md): concise release-facing summary.
 
-Design/archive material is intentionally present because this is a WIP agent project. Start with the README and roadmap; use the architecture/spec docs when you want to understand how the system is being built.
+Start with the README and roadmap. Architecture notes live under `docs/spec/`;
+historical handoffs and detailed development notes are archived separately for traceability.
 
 ## Repository Map
 
@@ -171,8 +172,7 @@ Design/archive material is intentionally present because this is a WIP agent pro
 - `test/`: Vitest coverage for runtime behavior, providers, permissions, tools, consult, and integration wiring.
 - `docs/spec/`: architecture and protocol reference.
 - `docs/steps/`: milestone implementation plan/history.
-- `docs/handoff-*.md`: session handoffs kept as development archive.
-- `fundamentals.md`, `plan.md`, `goal*.md`: original design and project-state notes.
+- `docs/archive/`: historical handoffs, reviews, planning notes, and audit workstreams.
 
 ## License
 

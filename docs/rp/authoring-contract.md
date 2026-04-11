@@ -82,13 +82,21 @@ The contract locks the section concepts. The current runtime heading spellings a
 
 Those heading names may evolve later, but only with synchronized schema, example, and workflow updates.
 
+**`Role` and `Affiliation` are conditional.** Include them only when the information is non-inferrable from the series premise or other sections. If a reader could derive it from the character's name, their position in the cast, or the series premise alone, omit the section and use the space to deepen what cannot be inferred. Include them when the role or affiliation would genuinely surprise a reader or meaningfully change how the character is played.
+
 Rules:
 
 - Use only the approved section concepts.
 - Do not add extra sections to compensate for weak writing.
-- If a section is not applicable, omit it and deepen the remaining valid sections instead.
+- If a section is not applicable or inferrable, omit it and deepen the remaining valid sections instead.
 - Main and recurring side characters belong in the same `world/characters/` directory.
 - Significant recurring characters should receive profiles, with depth scaled by importance rather than by invented extra headings.
+
+### Section Format Rules
+
+- `Basic Info` must be a bullet list of key-value facts (`- Name: ...`, `- Age: ...`, `- Height: ...`). Never prose.
+- `Appearance` is descriptive prose. This is where the visual portrait lives — how they look, how they carry themselves, what stands out.
+- Both sections should exist and serve different purposes. `Basic Info` is the quick-reference fact sheet. `Appearance` is the portrayal layer.
 
 ### Character Writing Rules
 
@@ -192,6 +200,30 @@ Do not include any of the following in the RP-facing pack unless a user explicit
 - creeping plot lines
 - encyclopedia padding
 - trait-stack characterization
+
+### No Meta-Commentary
+
+Do not write about the series as a series. Final files describe the world as if it is real — not as a property being analyzed.
+
+Forbidden patterns:
+- "The series focuses on..." / "The story explores..."
+- "The artwork depicts..." / "The manga portrays..."
+- "This is a romantic comedy about..."
+- Any sentence that treats the setting or characters as fictional constructs being described from outside
+
+Preferred: describe what is actually true in-world. If the setting has a distinctive tone or dynamic, let the facts imply it.
+
+### No Spoilers
+
+Final files must not reveal resolved mysteries, endgame outcomes, or future-timeline facts regardless of how they are framed.
+
+This includes:
+- Resolved identity reveals (who a character actually is, when that is a mystery)
+- Endgame pairings or romantic resolutions
+- Deaths, departures, or major status changes that occur after the chosen timeline
+- Future-timeline events framed as backstory or footnotes
+
+If a fact is spoiler-sensitive, omit it entirely. Do not include it with a disclaimer, a spoiler warning, or a vague description that implies the answer. The timeline contract governs what era the pack covers — facts from outside that era do not belong in the files at all.
 
 ## Review Rubric
 

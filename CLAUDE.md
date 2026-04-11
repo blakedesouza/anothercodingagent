@@ -16,11 +16,11 @@ No single markdown or documentation file may exceed **300 lines or ~10,000 token
 - When a file approaches 300 lines, split it into a directory of smaller files with a `README.md` index
 - The original monolithic file may be kept as a canonical source, but split files are the working copies agents read
 - Each split file must be self-contained enough to be understood without reading all sibling files
-- Split files include a source comment linking back to the original (e.g., `<!-- Source: fundamentals.md lines 100-200 -->`)
+- Split files include a source comment linking back to the original foundation document (e.g., `<!-- Source: fundamentals.md lines 100-200 -->`)
 
 **Current split structure:**
-- `fundamentals.md` (2389 lines) → `docs/spec/` (22 files, each < 10K tokens)
-- `docs/steps.md` (1300 lines) → `docs/steps/` (9 files, each < 7K tokens)
+- `docs/archive/planning/fundamentals.md` (2389 lines) → `docs/spec/` (22 files, each < 10K tokens)
+- `docs/archive/planning/steps.md` (1300 lines) → `docs/steps/` (9 files, each < 7K tokens)
 
 When creating new documentation, prefer multiple focused files over one large file from the start.
 
@@ -38,7 +38,7 @@ When consulting external AI models (Codex, Kimi, DeepSeek), follow these rules:
 
 After completing each milestone or substep:
 - Mark checkboxes `[x]` in the relevant `docs/steps/` file
-- Update the handoff doc status (e.g., `docs/handoff-phase0.md` → COMPLETE)
+- Update the handoff doc status in `docs/archive/handoffs/` when working from archived handoffs
 - Create the next handoff doc if entering a new milestone
 
 ## Testing Philosophy (MANDATORY)

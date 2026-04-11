@@ -1,10 +1,10 @@
-# RP Research Workflow Handoff
+# RP Research Workflow
 
-This is the durable workflow note for ACA-native RP lore research. It records the current direction so future sessions do not fall back to the shallow whole-series brief pattern.
+This is the durable workflow note for ACA-native RP lore research.
 
 ## Current Direction
 
-Use the `rp-researcher` profile in `src/delegation/agent-registry.ts` for anime, manga, VN, and related canon research. GLM-5 (`zai-org/glm-5`) is currently the strongest local high-trust candidate for this workflow.
+Use the `rp-researcher` profile in `src/delegation/agent-registry.ts` for anime, manga, VN, and related canon research. Choose the model explicitly for the corpus and trust level you need.
 
 The core rule is:
 
@@ -13,7 +13,7 @@ Discovery first. Then one deep research/write invocation per character or world 
 Do not write one compact global research brief and then ask the model to synthesize everything from that.
 ```
 
-The formal authoring source of truth for the generated pack now lives in [RP_AUTHORING_CONTRACT.md](./RP_AUTHORING_CONTRACT.md).
+The formal authoring source of truth for the generated pack now lives in [authoring-contract.md](authoring-contract.md).
 
 Working implications:
 
@@ -38,7 +38,7 @@ Working implications:
 3. Generate one file per invocation.
    - Give each agent one exact output target, such as `world/characters/arata-kasuga.md`.
    - Keep output paths disjoint.
-   - For local high-trust RP runs, use `ACA_NETWORK_MODE=open`.
+   - Use `ACA_NETWORK_MODE=open` only for trusted research runs where broad network access is intentional.
    - The current wrapper does not auto-save the final assistant Markdown into the assigned file for you. Keep `write_file` available and require exact output paths so ACA must create the file itself before the run can pass.
 
 4. Keep relationships compact.
@@ -88,11 +88,11 @@ Start with concurrency 2. Use concurrency 3 only when network/tool behavior is s
 
 ## Empirical Notes
 
-GLM-5 handled large, relevant MediaWiki research better than Kimi/MiniMax in local tests, but it still should not be treated as uncapped. Give it a larger bounded leash instead.
+Long-context research models can handle larger source-gathering budgets, but they still should not be treated as uncapped. Give them a larger bounded leash instead.
 
-The mixed prompt shape "research for a long time, then call `write_file`" was unreliable: GLM-5 sometimes researched well and finalized without writing the required file. Required-output validation caught this. Saving the final answer to the exact output path from the orchestrator is a better shape for deep per-file generation.
+The mixed prompt shape "research for a long time, then call `write_file`" can be unreliable: models may research well and then finalize without writing the required file. Required-output validation catches this. Saving the final answer to the exact output path from the orchestrator is a better shape for deep per-file generation.
 
-Consult/witness/triage code does not need a separate RP path. Use the existing consult path to review generated docs after the files exist. Triage defaults to GLM-5 aggregation-only.
+Consult/witness/triage code does not need a separate RP path. Use the existing consult path to review generated docs after the files exist.
 
 ## Future Product Work
 

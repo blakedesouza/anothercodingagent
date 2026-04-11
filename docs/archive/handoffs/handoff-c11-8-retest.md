@@ -31,7 +31,7 @@ markup, not reasoning prose. It doesn't stop this.
 
 **Root cause:** qwen3.5 externalizes chain-of-thought as blockquoted text when the question
 is complex. This is a different failure mode from the `reasoning_content` leakage (P2 in
-`docs/c11/failure-catalog.md`), which was a streaming delta issue fixed in C11.3.
+`docs/archive/audits/c11/failure-catalog.md`), which was a streaming delta issue fixed in C11.3.
 
 **Fix:** Add a qwen-specific hint in `src/prompts/model-hints.ts` (prefix: `qwen/qwen3`
 or `qwen/qwen3.5`). The hint must explicitly forbid wrapping output in blockquote syntax

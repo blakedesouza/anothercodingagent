@@ -99,14 +99,10 @@ The second-pass framework is established and the Phase 0 through Milestone 11 re
 Current restart point:
 
 - No remaining milestone restart point in the Phase 0-M11 walk
-- `C1` is complete under the post-M11 follow-on plan
-- `C2` is complete under the post-M11 follow-on plan
-- `C3` is complete under the post-M11 follow-on plan
-- `C4` is complete under the post-M11 follow-on plan
-- `C5` is complete under the post-M11 follow-on plan
-- `C6` remains open under the post-M11 follow-on plan, but it is paused at operator request
-- `C7` is now the next planned follow-on track
-- Current restart point is `C7`
+- `C1` through `C5` are complete under the post-M11 follow-on plan
+- `C7` is complete under the post-M11 follow-on plan (closed 2026-04-10)
+- `C6` is the active track — Quints regen in progress
+- Current restart point is `C6`
 - `C5` closed the queued residuals:
   - `C2`: a fresh 4-witness consult produced a partial first-pass triage artifact, preserved it at `triage.raw_path`, and succeeded on repaired final triage
   - `C3`: parallel shared-`HOME` orchestrate runs now emit task-matched `session_id` / `session_dir` and no longer over-report sibling `new_session_dirs`
@@ -161,7 +157,7 @@ Current rule for both:
 
 ## Latest Completed Pass
 
-`C5` is complete under the second-pass framework, `C6` is paused, and `C7` is now the active in-progress track.
+`C7` is complete under the second-pass framework. `C6` is the active track — Quints regen has begun.
 
 Major findings:
 

@@ -1,9 +1,9 @@
 # C1 Independent Verification Pass (Opus)
 
-**Date:** 2026-04-09  
-**Auditor:** Claude Opus 4.6 (independent of Codex)  
-**Methodology:** Same 6-axis framework as `AUDIT_FRAMEWORK.md`, applied from scratch without trusting Codex's closure claims  
-**Scope:** C1 "Bundled Consult Orchestration" — consult/witness pipeline, blast radius, wiring, tests, live NanoGPT re-proof  
+**Date:** 2026-04-09
+**Auditor:** Claude Opus 4.6 (independent of Codex)
+**Methodology:** Same 6-axis framework as `AUDIT_FRAMEWORK.md`, applied from scratch without trusting Codex's closure claims
+**Scope:** C1 "Bundled Consult Orchestration" — consult/witness pipeline, blast radius, wiring, tests, live NanoGPT re-proof
 **Output file:** `codex-fixing/C1_VERIFICATION_PASS_OPUS.md` (grows batch by batch)
 
 ---
@@ -28,7 +28,7 @@ This is not unique to C1 — it affects C2–C7 equally. It is **not** a code de
 
 ## Batch A — Claim Trace via Git Log
 
-**Status:** Complete  
+**Status:** Complete
 **Goal:** Attach each of Codex's 3 C1 claims to a specific commit, files touched, and tests touched.
 
 ### C1 commit window (all 2026-04-07)
@@ -50,7 +50,7 @@ Pre-window context: `6e19733` (01:50) introduced the entire consult pipeline fro
 
 **Mapped commit:** `4378038` — "fix(consult): replace minimax witness with deepseek"
 
-**Files touched:** `src/config/witness-models.ts`, `src/cli/consult.ts`, `src/consult/context-request.ts`, `src/providers/models.json`  
+**Files touched:** `src/config/witness-models.ts`, `src/cli/consult.ts`, `src/consult/context-request.ts`, `src/providers/models.json`
 **Tests touched:** `test/config/witness-models.test.ts` (+38 lines), `test/consult/context-request.test.ts` (+18 lines), `test/providers/model-registry.test.ts` (+9 lines)
 
 **What actually changed:** `WITNESS_MODELS[0]` entry was `minimax/minimax-m2.7` → `deepseek/deepseek-v3.2`. Comment JSDoc updated to reflect deepseek. The `aca witnesses --json` command was already working (introduced in M11.5, 2276 tests). The "compatibility" fix was a data correctness issue: MiniMax is no longer a valid subscription model; `aca witnesses --json` was returning a MiniMax entry that would fail any real consult attempt.
@@ -89,7 +89,7 @@ Pre-window context: `6e19733` (01:50) introduced the entire consult pipeline fro
 - `src/providers/tool-emulation.ts` — `e6f1f58` only (**not in Codex's scope list** — see Batch B)
 - `src/index.ts` — `b1e85f5` (adds `--shared-context` CLI flags; see architecture note below)
 
-**Architecture note — index.ts vs cli-main.ts:**  
+**Architecture note — index.ts vs cli-main.ts:**
 At C1 time, the full Commander CLI lived in `src/index.ts`. The C1 commits modify `src/index.ts` for consult options. After C1 (in the uncommitted working tree), the CLI was refactored: `src/cli-main.ts` (currently **untracked**) now holds the full Commander wiring, and `src/index.ts` was reduced to a 106-line bootstrap that `await import('./cli-main.js')`. Codex's scope list names `src/cli-main.ts` — but at C1 time this file didn't exist in this form. The scope list mixes C1-era and post-C1 file names.
 
 **Tests touched:** `test/consult/context-request.test.ts` in all 5 commits (+17, +11, +38, +17, +40 lines respectively = ~123 new test lines for this file across C1). `test/providers/tool-emulation.test.ts` in `e6f1f58` (+30 lines).
@@ -114,7 +114,7 @@ At C1 time, the full Commander CLI lived in `src/index.ts`. The C1 commits modif
 
 ## Batch B — Blast Radius Verification
 
-**Status:** Complete  
+**Status:** Complete
 **Goal:** Prove Codex's scope list is complete. Unlisted consumers = finding.
 
 ### Codex's scope list vs independent map

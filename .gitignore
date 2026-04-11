@@ -35,6 +35,7 @@ playwright-report/
 .mcp.json
 
 # Scratch investigation notes/artifacts
+.local/
 bug-report-*/
 codex-ideas/
 codex-troubleshooting/

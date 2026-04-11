@@ -15,7 +15,7 @@ Standard operating procedure for every milestone substep. Validated by 4-model c
 5. Consult     → Send implementation to all 4 AI witnesses for review
 6. Apply       → Fix consensus findings
 7. Re-test     → Confirm fixes don't break anything
-8. Update      → Mark checkboxes in step file, update plan.md, append changelog
+8. Update      → Mark checkboxes in step file, update current project-state docs, append changelog
 ```
 
 ## When to Skip Consultation (Step 5)
@@ -40,14 +40,14 @@ Tailor the prompt based on what the substep does:
 | **Logic/State** | State machines, business rules, control flow | Invariant preservation, exhaustive transitions, race conditions, ordering |
 | **Security** | Permissions, exec, sandboxing, secrets | Injection, TOCTOU, privilege escalation, input validation |
 
-Always include the relevant `fundamentals.md` spec block excerpt in the prompt so witnesses can verify semantic correctness (not just syntactic).
+Always include the relevant `docs/archive/planning/fundamentals.md` spec block excerpt in the prompt so witnesses can verify semantic correctness (not just syntactic).
 
 ## Milestone Boundaries
 
 At the end of each milestone (7 total):
 - Run integration smoke test (e.g., M1.10)
 - Run full consultation with integration-focused prompt
-- Update plan.md with milestone completion status
+- Update current project-state docs with milestone completion status
 
 ## Known AI Blind Spots
 

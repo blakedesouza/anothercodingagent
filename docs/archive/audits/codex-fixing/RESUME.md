@@ -66,7 +66,8 @@ If a future Codex session needs to resume this work, start here.
 - `C4` residual is now closed in `C5`: durable task state no longer persists neutral `tool.deferred` overflow noise or same-turn self-check `read_file` validation misses as open loops, and fresh RP write/discovery manifests now end with `openLoops: []`.
 - `C5` (Residual Closure and Hard-to-Reproduce Cases) is complete under the second-pass framework; the queued residuals from `C2` through `C4` are closed.
 - `C6` (RP Knowledge Pack Import Workflow) remains open under the second-pass framework, but it is paused at operator request while `C7` runs first.
-- `C7` (Forced Tool Emulation and Blast-Radius Hardening) is now the active restart point under the second-pass framework.
+- `C7` (Forced Tool Emulation and Blast-Radius Hardening) is complete (closed 2026-04-10).
+- `C6` (RP Knowledge Pack Import Workflow) is the active restart point. Quints regen in progress.
 - `C3`, `C4`, `C5`, `C6`, and `C7` are live-first tracks: real built-artifact runs are the main confidence bar, and local tests are only targeted regressions for touched deterministic logic.
 - `C5` is reserved for bounded leftovers that are important enough to track but do not invalidate the source track's closure.
 - If a `C5` item turns out to break the main claim of `C1` through `C4`, reopen that source track instead of keeping the issue in `C5`.
@@ -123,17 +124,7 @@ Residual caution:
 
 ## Immediate Next Step
 
-`C7` is the active restart point.
-
-Start by re-reading the audit docs, then move through the forced-emulation detour in this order:
-
-1. read `POST_M11_TRACKS_PLAN.md` and `LIVE_VALIDATION.md`
-2. inspect the forced-emulation blast radius in `tool-emulation`, `nanogpt-driver`, consult no-tools classification, invoke/delegation call paths, and RP-research prompt/runtime surfaces
-3. continue from the active `C7` fixes and live evidence instead of restarting from the old Quints emulation bug
-4. use the fresh no-tools degraded replay plus the built Qwen size probe as the new baseline instead of reopening the old pseudo-tool gap
-5. decide whether the Qwen `llm.malformed` pattern, especially the post-write abort after a satisfied required output, is a `C7` product blocker, a place for workflow-level salvage, or a documented model-quality/runtime-shape note
-6. keep bookkeeping anchored to `C7` unless a new live run actually breaks the core claim of an earlier track
-7. after `C7` closes, resume `C6` from the archived Quints baseline and regenerate `/home/blake/projects/rpproject/the-quintessential-quintuplets` from scratch
+`C6` is the active restart point. See `docs/handoff-c6-quints-regen.md` in the anothercodingagent project for the full execution plan and copy-paste inline prompt.
 
 Keep bookkeeping current in:
 

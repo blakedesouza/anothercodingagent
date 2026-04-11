@@ -28,7 +28,7 @@ Public positioning: ACA should look intentional and useful for builders who unde
 ## Next Product Work
 
 - Convert the RP research workflow from manual invoke batches into an ACA-native command or orchestrator.
-- Add a machine-local high-trust GLM-5 profile without changing conservative public defaults.
+- Add explicit high-trust research profiles without changing conservative public defaults.
 - Improve write-phase finalization so completed required outputs are not marked failed because of harmless post-write tool attempts.
 - Surface safety telemetry more clearly in `aca consult` and `aca invoke` outputs.
 - Add compatibility smoke tests for subscription models used as writers, witnesses, and triage.

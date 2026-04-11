@@ -11,7 +11,7 @@ Foundation  →  Spec Chunks  →  Steps  →  Handoffs  →  Code
 
 Each stage feeds the next. Don't skip ahead.
 
-## 1. Foundation (`fundamentals.md`)
+## 1. Foundation (`docs/archive/planning/fundamentals.md`)
 
 The monolithic design document. Created through iterative brainstorming, consultation, and refinement across multiple sessions.
 
@@ -56,22 +56,22 @@ docs/steps/
 └── 08-cross-cutting.md
 ```
 
-## 4. Handoffs (`docs/handoff-*.md`)
+## 4. Handoffs (`docs/archive/handoffs/`)
 
 Created as substeps complete. Everything the next session needs to pick up where you left off.
 
 - **What it is:** A summary of what's done, what's next, key decisions made, and open questions
 - **How it's made:** Generated at the end of each substep (by `/build` or manually)
-- **Rule:** Must be self-contained. A new session should be able to start from just the handoff + plan.md
+- **Rule:** Must be self-contained. A new session should be able to start from just the handoff plus current project-state docs.
 
 ## 5. Supporting Files
 
 | File | Purpose |
 |------|---------|
-| `plan.md` | High-level project state. Updated after every substep |
-| `WORKFLOW.md` | The standard development cycle (read → implement → lint → test → consult → apply → retest) |
-| `STRUCTURE.md` | This file — how the project is organized |
-| `docs/changelog.md` | Living record of what changed and why |
+| `docs/archive/planning/plan.md` | Historical high-level project state |
+| `docs/dev/workflow.md` | The standard development cycle (read → implement → lint → test → consult → apply → retest) |
+| `docs/dev/structure.md` | This file — how the project is organized |
+| `docs/releases/changelog.md` | Living record of what changed and why |
 
 ## Key Lessons
 

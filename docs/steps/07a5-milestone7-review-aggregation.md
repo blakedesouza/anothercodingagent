@@ -47,7 +47,7 @@ Compress multi-witness review output before it reaches Claude. This is a 2-stage
 
 ### M7A.5.3 — Watchdog Model Benchmark Harness
 
-- [x] Build an offline benchmark set from historical witness reviews + known accepted/rejected findings in `docs/changelog.md`
+- [x] Build an offline benchmark set from historical witness reviews + known accepted/rejected findings in `docs/releases/changelog.md`
 - [x] Score candidate NanoGPT watchdog models on: dedupe accuracy, dissent preservation, severity ranking, faithfulness to raw witness claims, and output compactness
 - [x] Compare 3-5 watchdog candidates with a fixed prompt and fixed review bundle; do not brute-force every NanoGPT model
 - [x] Record the selected watchdog model and fallback model in docs/config

@@ -6,6 +6,44 @@ This project is still experimental, so entries before a tagged release are group
 
 ## Unreleased
 
+### 2026-04-10 — GLM-5 narration fix + rp shell ergonomics
+
+**Problem:** GLM-5 (thinking model) would emit bare intent text ("I'll now fetch...") as its
+visible response after making tool calls in an earlier step. The turn engine saw a text-only
+response → yielded `assistant_final` → session ended with required output files never written.
+The repair turn that fired also narrated, and there was no second safety net.
+
+**Root causes (Opus analysis):**
+1. No GLM-5 model hints — model had no directive forbidding narration-without-action.
+2. `validateProfileCompletion` only fired when *cumulative* tool calls = 0. GLM-5 made 4 calls
+   in step 1, so cumulative = 4 → guard passed → profile-completion repair never triggered for
+   the narrate-after-work pattern.
+3. `canRepairMissingOutputs` used post-repair tool count. If the profile-repair turn also
+   narrated (0 calls), the output repair guard `latestAcceptedToolCalls > 0` was false → no
+   second repair attempt.
+
+**Fixes:**
+- `src/prompts/model-hints.ts`: Added `zai-org/glm` entry — two directives forbidding
+  "I'll now / I will / Let me" intent phrases and requiring immediate tool calls.
+- `src/cli/invoke-output-validation.ts`: `validateProfileCompletion` extended with optional
+  `lastStepAcceptedToolCalls` + `missingRequiredPaths` params. Now also fires when last step
+  had 0 tool calls AND required outputs are still missing (narrate-after-work pattern).
+- `src/cli-main.ts`: Computes `missingRequiredOutputs` before the profile check. Tracks
+  `originalTotalToolCalls` separately so `canRepairMissingOutputs` fires even when the
+  profile-completion repair also narrated.
+- 2 regression tests added to `test/cli/invoke-output-validation.test.ts`.
+
+**Live validation:** 17/17 Quints files generated on first attempt after fix.
+
+**Shell ergonomics:**
+- `~/.bashrc`: Added `aca` alias and `rp()` function — `rp "Series Name" [--blank-timeline]`
+  cds to rpproject and runs the full workflow with `--network-mode open`.
+- `~/.aca/config.json` + `.aca/config.json`: `model.default` set to `zai-org/glm-5` at both
+  user and project level.
+- `src/cli-main.ts`: REPL/one-shot model resolution now falls back to `config.model?.default`
+  instead of hard-erroring when `--model` flag is absent. Error message updated to mention the
+  config path.
+
 ### Added
 
 - ACA-native `consult` workflow for bounded witness review, context-request follow-up, no-tools triage, and result artifacts.
@@ -36,7 +74,7 @@ This project is still experimental, so entries before a tagged release are group
 ### Notes
 
 - The historical log below is intentionally verbose and includes debugging context from active development. It is retained for traceability, not as first-stop user documentation.
-- The canonical public entry point is the root `README.md`; roadmap/status lives in `docs/roadmap.md`.
+- The canonical public entry point is the root `README.md`; roadmap/status lives in `docs/planning/roadmap.md`.
 
 ---
 
@@ -115,7 +153,7 @@ Added the wiring needed for model-specific system prompt hints. Zero behavioral 
 
 ## 2026-04-10 — C11.1 Stress-Test Battery (Baseline Failure Catalog)
 
-Ran 14 live scenario runs (5 scenarios × 6 models) as baseline for C11 prompt hardening. No code changes. Results in `docs/c11/failure-catalog.md`.
+Ran 14 live scenario runs (5 scenarios × 6 models) as baseline for C11 prompt hardening. No code changes. Results in `docs/archive/audits/c11/failure-catalog.md`.
 
 ### What passed (no intervention needed)
 - **Stall discipline (S1):** kimi, qwen, minimax all called tools immediately and completed the read→edit→verify task. Anti-pattern example in `buildInvokeSystemMessages` is working.
@@ -220,7 +258,7 @@ Five files changed:
 ~ src/providers/tool-emulation.ts            (+ id)
 ~ src/core/turn-engine.ts                    (accumulator collision detection)
 ~ test/core/turn-engine.test.ts              (+ 5 regression tests)
-~ docs/changelog.md                          (this entry)
+~ docs/releases/changelog.md                 (this entry)
 ~ plan.md
 ```
 
