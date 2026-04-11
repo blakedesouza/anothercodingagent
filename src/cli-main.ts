@@ -2113,6 +2113,7 @@ program
                 acceptedToolCallsByName.set(name, (acceptedToolCallsByName.get(name) ?? 0) + count);
             }
         }
+        const budgetExceededAfterCompletion = guardrails.has('budget_exceeded_after_completion');
         const safety: InvokeSafety = {
             outcome: turnResult.turn.outcome,
             steps: turnResults.reduce((sum, result) => sum + result.steps.length, 0),
@@ -2122,6 +2123,7 @@ program
             accepted_tool_calls_by_name: Object.fromEntries([...acceptedToolCallsByName.entries()].sort()),
             tool_result_bytes: toolResultBytes,
             guardrails: [...guardrails].sort(),
+            ...(budgetExceededAfterCompletion ? { budget_exceeded: true } : {}),
         };
 
         // Check for non-success outcomes before building response.

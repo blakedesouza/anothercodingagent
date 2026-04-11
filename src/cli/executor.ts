@@ -109,6 +109,8 @@ export interface InvokeSafety {
     accepted_tool_calls_by_name: Record<string, number>;
     tool_result_bytes: number;
     guardrails: string[];
+    /** True if token budget was exceeded but task still completed successfully. */
+    budget_exceeded?: boolean;
 }
 
 export interface InvokeError {

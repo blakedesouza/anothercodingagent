@@ -430,13 +430,25 @@ function errorOutput(code: string, message: string): ToolOutput {
     };
 }
 
+/** JSON.stringify with sorted keys so {a:1,b:2} and {b:2,a:1} are identical. */
+function stableStringify(v: unknown): string {
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) {
+        return JSON.stringify(v);
+    }
+    const obj = v as Record<string, unknown>;
+    const pairs = Object.keys(obj).sort().map(k => `${JSON.stringify(k)}:${stableStringify(obj[k])}`);
+    return `{${pairs.join(',')}}`;
+}
+
 function authorityArgsMatch(
     actual: Record<string, unknown>,
     expected?: Record<string, unknown>,
 ): boolean {
     if (expected === undefined) return true;
+    // Use stable (key-sorted) stringify so nested objects with different key
+    // insertion order still compare equal — prevents security-boundary false negatives.
     return Object.entries(expected).every(([key, value]) =>
-        JSON.stringify(actual[key]) === JSON.stringify(value)
+        stableStringify(actual[key]) === stableStringify(value)
     );
 }
 
@@ -555,12 +567,14 @@ export class TurnEngine extends EventEmitter {
 
         // --- Phase 2: AppendUserMessage ---
         this.transitionTo(Phase.AppendUserMessage);
+        // Point 3: scrub secrets from user input before persisting to conversation.jsonl.
+        const persistedUserInput = this.scrubber ? this.scrubber.scrub(userInput) : userInput;
         const userMessage: MessageItem = {
             kind: 'message',
             id: generateId('item') as ItemId,
             seq: this.sequenceGenerator.next(),
             role: 'user',
-            parts: [{ type: 'text', text: userInput }],
+            parts: [{ type: 'text', text: persistedUserInput }],
             timestamp: new Date().toISOString(),
         };
         items.push(userMessage);
@@ -729,14 +743,17 @@ export class TurnEngine extends EventEmitter {
             const llmStartMs = Date.now();
 
             for await (const event of activeDriver.stream(request)) {
-                streamEvents.push(event);
-                if (event.type === 'text_delta' && config.onTextDelta) {
-                    // Point 4: scrub secrets from streaming text before sending to terminal.
-                    // Known limitation: a secret split across chunk boundaries is not caught
-                    // because the scrubber operates on each chunk individually. A streaming-safe
-                    // sliding-window buffer is planned for M7.8.
-                    const displayText = this.scrubber ? this.scrubber.scrub(event.text) : event.text;
-                    config.onTextDelta(displayText);
+                // Point 4: scrub secrets from text_delta before persisting to streamEvents
+                // (which feeds conversation.jsonl). The display callback reuses the already-
+                // scrubbed text. Known limitation: a secret split across chunk boundaries is
+                // not caught because the scrubber operates per-chunk. A streaming-safe
+                // sliding-window buffer is planned for M7.8.
+                const storedEvent = (event.type === 'text_delta' && this.scrubber)
+                    ? { ...event, text: this.scrubber.scrub(event.text) }
+                    : event;
+                streamEvents.push(storedEvent);
+                if (storedEvent.type === 'text_delta' && config.onTextDelta) {
+                    config.onTextDelta(storedEvent.text);
                 }
                 if (event.type === 'error') {
                     streamError = event;
@@ -881,8 +898,14 @@ export class TurnEngine extends EventEmitter {
                 }
             }
 
-            if (tokenLimit !== undefined && totalTurnTokens > tokenLimit) {
-                outcome = 'budget_exceeded';
+            // Text-only → yield with assistant_final (check BEFORE budget so completion takes priority)
+            if (toolCallParts.length === 0) {
+                outcome = 'assistant_final';
+                // Track if budget was exceeded even though task completed
+                if (tokenLimit !== undefined && totalTurnTokens > tokenLimit) {
+                    stepSafetyStats.guardrail = 'budget_exceeded_after_completion';
+                }
+                // Record the step before yielding
                 const step = this.recordStep(
                     stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats, promptAssemblyStats, requestCaps?.maxContext,
                 );
@@ -891,10 +914,9 @@ export class TurnEngine extends EventEmitter {
                 break;
             }
 
-            // Text-only → yield with assistant_final
-            if (toolCallParts.length === 0) {
-                outcome = 'assistant_final';
-                // Record the step before yielding
+            // Budget exceeded with pending tool calls → truly incomplete
+            if (tokenLimit !== undefined && totalTurnTokens > tokenLimit) {
+                outcome = 'budget_exceeded';
                 const step = this.recordStep(
                     stepId, turnId, stepNumber, config, inputSeqs, items, finishReason, tokenUsage, activeModel, activeProvider, stepSafetyStats, promptAssemblyStats, requestCaps?.maxContext,
                 );

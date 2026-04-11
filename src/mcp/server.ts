@@ -462,6 +462,9 @@ export function createMcpServer(
                     if (response.safety.guardrails?.length > 0) {
                         text += `, guardrails=${response.safety.guardrails.join(',')}`;
                     }
+                    if (response.safety.budget_exceeded) {
+                        text += ` | WARNING: token budget exceeded but task completed`;
+                    }
                     text += ']';
                 }
 
