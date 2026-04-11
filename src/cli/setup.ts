@@ -50,7 +50,7 @@ export async function runInit(acaDir?: string): Promise<SetupResult> {
     const configPath = join(dir, 'config.json');
     const configCreated = await writeIfAbsent(configPath, JSON.stringify({
         schemaVersion: CURRENT_SCHEMA_VERSION,
-        model: { default: CONFIG_DEFAULTS.model.default },
+        model: { default: 'zai-org/glm-5' },
         network: { mode: CONFIG_DEFAULTS.network.mode },
     }, null, 2) + '\n');
     lines.push(configCreated ? 'Created config.json' : 'config.json already exists (preserved)');
