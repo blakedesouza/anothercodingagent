@@ -160,6 +160,8 @@ export class SecretScrubber {
         // Sort longest-first so a longer known secret is replaced before any shorter
         // secret that shares a prefix with it.
         const sorted = [...this.knownSecretValues].sort((a, b) => b.length - a.length);
+        // LIMITATION: Matching is case-sensitive and literal. A secret that appears
+        // in output with different casing will not be redacted.
         for (const secret of sorted) {
             if (!result.includes(secret)) continue;
             const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -169,6 +171,8 @@ export class SecretScrubber {
         }
 
         // --- Strategy 2: pattern-based replacement ---
+        // LIMITATION: Pattern matching covers known formats but cannot catch secrets
+        // referenced via shell variable expansion ($VAR or ${VAR}).
         for (const { pattern, type } of this.patterns) {
             // Build a fresh global regex each call — never reuse a global RegExp
             // instance across calls because `lastIndex` is shared state.

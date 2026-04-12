@@ -89,7 +89,14 @@ function extractCommand(toolName: string, args: Record<string, unknown>): string
     return undefined;
 }
 
-/** Extract effective cwd from tool args. */
+/**
+ * Extract effective cwd from tool args.
+ *
+ * NOTE: There is no TOCTOU vulnerability here: toolArgs is the same object
+ * reference used at approval time and execution time, and nothing in the
+ * dispatch path mutates it between those points. The cwd seen at approval
+ * is the same cwd used at execution.
+ */
 function extractCwd(
     toolName: string,
     args: Record<string, unknown> | undefined,

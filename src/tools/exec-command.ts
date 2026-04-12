@@ -121,7 +121,11 @@ export const execCommandImpl: ToolImplementation = async (
 
     const env = envOverrides ? { ...process.env, ...envOverrides } : process.env;
 
-    // Spawn via /bin/sh so the command string is interpreted as a shell expression.
+    // Shell interpretation via /bin/sh -c is intentional — this tool is a shell
+    // execution primitive. The security boundary is enforced upstream by the
+    // approval layer (src/permissions/approval.ts) before this function is
+    // reached. Callers must not pass command strings without prior approval.
+    // Shell metacharacters in `command` are interpreted as intended.
     // detached: true places the child in its own process group (pgid = child.pid),
     // enabling tree-kill via process.kill(-pgid, signal).
     const child = spawn('/bin/sh', ['-c', command], {
@@ -153,6 +157,8 @@ export const execCommandImpl: ToolImplementation = async (
 
     return new Promise<ToolOutput>((resolve) => {
         let resolved = false;
+        // Declared before killAndTimeout so the closure can reference it for cleanup.
+        let abortHandler: (() => void) | undefined;
 
         const finish = (output: ToolOutput): void => {
             if (!resolved) {
@@ -163,6 +169,8 @@ export const execCommandImpl: ToolImplementation = async (
 
         // Kill the process group and return a timeout error.
         const killAndTimeout = (reason: string): void => {
+            clearTimeout(timeoutId);
+            if (abortHandler) context.signal.removeEventListener('abort', abortHandler);
             try {
                 if (child.pid !== undefined) {
                     process.kill(-child.pid, 'SIGKILL');
@@ -187,7 +195,7 @@ export const execCommandImpl: ToolImplementation = async (
         }
 
         // AbortSignal from ToolRunner (outer timeout or cancellation).
-        const abortHandler = (): void => {
+        abortHandler = (): void => {
             clearTimeout(timeoutId);
             killAndTimeout('Command was aborted');
         };
