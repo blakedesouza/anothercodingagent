@@ -644,9 +644,10 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             });
         }
 
-        it('captures delta.reasoning_content as text_delta (reasoning-only response)', async () => {
-            // Thinking-only response: model emits only reasoning_content, no content.
-            // Must NOT trigger the empty-response guard (llm.malformed).
+        it('drops delta.reasoning_content — reasoning-only response produces no text_delta', async () => {
+            // Reasoning tokens are internal CoT and must not contaminate the response
+            // text buffer used by tool emulation. A reasoning-only response produces
+            // zero text_delta events and no errors.
             const rawBody = [
                 `data: ${makeReasoningChunk('Let me think...')}`,
                 `data: ${makeDoneChunk()}`,
@@ -657,15 +658,14 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             const events = await collectEvents(driver.stream(makeRequest()));
 
             const textDeltas = events.filter(e => e.type === 'text_delta');
-            expect(textDeltas.length).toBeGreaterThan(0);
-            const fullText = textDeltas.map(e => e.type === 'text_delta' ? e.text : '').join('');
-            expect(fullText).toBe('Let me think...');
+            expect(textDeltas).toHaveLength(0);
 
             const errorEvents = events.filter(e => e.type === 'error');
             expect(errorEvents).toHaveLength(0);
         });
 
-        it('captures both reasoning_content and content when both present in stream', async () => {
+        it('drops reasoning_content but yields delta.content when both present', async () => {
+            // Only delta.content reaches the caller — reasoning is silently dropped.
             const rawBody = [
                 `data: ${makeReasoningChunk('<think>reasoning here</think>')}`,
                 `data: ${makeContentChunk('The answer is 42.')}`,
@@ -679,15 +679,15 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             const fullText = events
                 .filter(e => e.type === 'text_delta')
                 .map(e => e.type === 'text_delta' ? e.text : '').join('');
-            expect(fullText).toBe('<think>reasoning here</think>The answer is 42.');
+            expect(fullText).toBe('The answer is 42.');
 
             const errorEvents = events.filter(e => e.type === 'error');
             expect(errorEvents).toHaveLength(0);
         });
 
-        it('captures delta.reasoning as text_delta (GLM ZhipuAI format)', async () => {
-            // GLM-5 / GLM-4.x use delta.reasoning instead of delta.reasoning_content.
-            // Must be captured so GLM thinking responses are not treated as empty.
+        it('drops delta.reasoning (GLM ZhipuAI format) — produces no text_delta', async () => {
+            // GLM-5 / GLM-4.x emit reasoning in delta.reasoning. Dropped to prevent
+            // contamination of the tool-emulation response buffer.
             const glmReasoningChunk = JSON.stringify({
                 id: 'test', object: 'chat.completion.chunk',
                 choices: [{ index: 0, delta: { content: '', reasoning: 'I found the bug.' }, finish_reason: null }],
@@ -702,9 +702,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             const events = await collectEvents(driver.stream(makeRequest()));
 
             const textDeltas = events.filter(e => e.type === 'text_delta');
-            expect(textDeltas.length).toBeGreaterThan(0);
-            const fullText = textDeltas.map(e => e.type === 'text_delta' ? e.text : '').join('');
-            expect(fullText).toBe('I found the bug.');
+            expect(textDeltas).toHaveLength(0);
 
             const errorEvents = events.filter(e => e.type === 'error');
             expect(errorEvents).toHaveLength(0);

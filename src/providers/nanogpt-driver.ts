@@ -243,16 +243,13 @@ export class NanoGptDriver implements ProviderDriver {
                 }
 
                 // Some models emit reasoning/thinking tokens in a separate field
-                // rather than delta.content. Capture them as text so the response
-                // is not considered empty. Two field names are in use:
+                // rather than delta.content. Two field names are in use:
                 //   delta.reasoning_content — Qwen3, DeepSeek R1, OpenAI o-series
                 //   delta.reasoning          — GLM-5, GLM-4.x (ZhipuAI format)
-                if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
-                    yield { type: 'text_delta' as const, text: delta.reasoning_content };
-                }
-                if (typeof delta.reasoning === 'string' && delta.reasoning.length > 0) {
-                    yield { type: 'text_delta' as const, text: delta.reasoning };
-                }
+                // These are NOT yielded as text_delta — reasoning is internal CoT and
+                // must not contaminate the response text buffer used by tool emulation.
+                // (Qwen's blockquote-format reasoning in delta.content is handled by
+                // stripModelPreamble in tool-emulation.ts.)
 
                 const toolCalls = delta.tool_calls as Array<Record<string, unknown>> | undefined;
                 if (toolCalls) {
