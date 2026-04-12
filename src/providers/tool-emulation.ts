@@ -1,5 +1,6 @@
 import type { ModelRequest, RequestMessage, ToolDefinition, StreamEvent } from '../types/provider.js';
 import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
+import { getModelHints } from '../prompts/model-hints.js';
 
 /**
  * A parsed emulated tool call (arguments stored as a JSON string, matching
@@ -21,10 +22,15 @@ export interface EmulatedToolCall {
  * The block instructs the model to respond with a specific JSON format and
  * lists all available tools with their parameter schemas.
  */
-export function buildToolSchemaPrompt(tools: ToolDefinition[]): string {
+export function buildToolSchemaPrompt(tools: ToolDefinition[], modelId?: string): string {
     const toolList = tools
         .map(t => `- ${t.name}: ${t.description}\n  Parameters: ${JSON.stringify(t.parameters)}`)
         .join('\n');
+
+    const hints = modelId ? getModelHints(modelId) : [];
+    const hintSection = hints.length > 0
+        ? '\n\n<model_hints>\n' + hints.join('\n') + '\n</model_hints>'
+        : '';
 
     return [
         '',
@@ -57,7 +63,7 @@ export function buildToolSchemaPrompt(tools: ToolDefinition[]): string {
         '```',
         '',
         'Available tools:',
-        toolList,
+        toolList + hintSection,
     ].join('\n');
 }
 
@@ -71,7 +77,7 @@ export function buildToolSchemaPrompt(tools: ToolDefinition[]): string {
 export function injectToolsIntoRequest(request: ModelRequest): ModelRequest {
     if (!request.tools || request.tools.length === 0) return request;
 
-    const schemaBlock = buildToolSchemaPrompt(request.tools);
+    const schemaBlock = buildToolSchemaPrompt(request.tools, request.model);
 
     let injected = false;
     const messages: RequestMessage[] = request.messages.map(msg => {

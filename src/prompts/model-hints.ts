@@ -32,6 +32,7 @@ export const MODEL_HINTS: Record<string, string[]> = {
     'zai-org/glm': [
         'Make tool calls directly — do not narrate your intent. If you need to fetch a page, read a file, or write output, call that tool now in this same response. Never write "I\'ll now fetch", "I will fetch", "Let me fetch", "Next I\'ll", or similar intent phrases and then stop without a tool call. Act immediately.',
         'If you have already read reference files and still need external data, make the fetch or search tool call in this response right now. Do not announce what you plan to do — do it.',
+        'CRITICAL: When you invoke a tool, your ENTIRE response must be ONLY the JSON object: {"tool_calls":[...]}. Do not write ANY text before or after the JSON. The first character of your response must be `{`.',
     ],
 };
 
