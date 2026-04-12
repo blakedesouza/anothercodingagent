@@ -27,8 +27,8 @@ import type { LspServerConfig } from './server-registry.js';
 
 // --- Constants ---
 
-const INIT_TIMEOUT_MS = 10_000;
-const REQUEST_TIMEOUT_MS = 10_000;
+const INIT_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 20_000;
 const RESTART_BACKOFF_MS = 1_000;
 
 // --- Types ---
