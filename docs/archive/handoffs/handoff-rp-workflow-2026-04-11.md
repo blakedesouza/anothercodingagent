@@ -24,10 +24,10 @@ Session date: 2026-04-11. All work is on `main`. Several commits were made but N
 | `e2784d8` | `aca init` now defaults model to `zai-org/glm-5` in generated config |
 
 ### Local config (gitignored, not committed)
-- `/home/blake/projects/anothercodingagent/.aca/config.json` — has `rpProjectRoot: "/home/blake/projects/rpproject"` set
+- `~/.aca/config.json` (or `.aca/config.json` in project root) — has `rpProjectRoot` pointing to your RP packs directory
 
 ### RP packs generated
-- **Oshi no Ko** — complete, 17 files at `/home/blake/projects/rpproject/oshi-no-ko/`
+- **Oshi no Ko** — complete, 17 files at `~/projects/rpproject/oshi-no-ko/`
 - **Trinity Seven** — complete but INCOMPLETE character coverage (see below)
 
 ---
@@ -43,15 +43,15 @@ Trinity Seven generated 14 character files but missed notable characters includi
 ### What to do
 1. **Delete** the existing Trinity Seven folder:
    ```bash
-   rm -rf /home/blake/projects/rpproject/trinity-seven
+   rm -rf ~/projects/rpproject/trinity-seven
    ```
 2. **Rerun** with blank timeline:
    ```bash
-   node /home/blake/projects/anothercodingagent/dist/index.js rp-research "Trinity Seven" --network-mode open
+   aca rp-research "Trinity Seven" --network-mode open
    ```
 3. Wait for timeline options, choose **blank**, then run full generation:
    ```bash
-   node /home/blake/projects/anothercodingagent/dist/index.js rp-research "Trinity Seven" --network-mode open --blank-timeline
+   aca rp-research "Trinity Seven" --network-mode open --blank-timeline
    ```
 
 ---

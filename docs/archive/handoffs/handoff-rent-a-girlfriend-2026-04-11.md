@@ -15,7 +15,7 @@ Session date: 2026-04-11. All work is on `main`. Commits from this session are N
 | `84cbb35` | Fixed the retry logic: `required_outputs_missing` and `profile_validation_failed` now actually trigger the forced-write retry (previously only LLM infra errors did) |
 
 ### Trinity Seven — COMPLETE
-Full pack at `/home/blake/projects/rpproject/trinity-seven/`:
+Full pack at `~/projects/rpproject/trinity-seven/`:
 - 2 world files, 3 location files, 15 character files
 - All 20 files generated and validated
 - Canon spelling fixes applied manually: `Impero` → `Imperium`, `Exspecto` → `Expectatio`
