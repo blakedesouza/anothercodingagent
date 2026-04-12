@@ -28,7 +28,7 @@ import type { ModelResponseFormat } from '../types/provider.js';
 const DEFAULT_DEADLINE_MS = DEFAULT_API_TIMEOUT_MS;
 
 /** Default bounded delegation budget. Callers can narrow/expand per aca_run call. */
-const DEFAULT_MAX_STEPS = 20;
+const DEFAULT_MAX_STEPS = 50;
 const DEFAULT_MAX_TOTAL_TOKENS = 200_000;
 
 /** Maximum subprocess output size: 10 MB. Prevents OOM from runaway output. */

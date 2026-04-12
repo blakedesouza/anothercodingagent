@@ -592,7 +592,7 @@ export const RP_RETRYABLE_ABORT_CODES = new Set([
     'llm.malformed',
 ]);
 const DEFAULT_RP_MAX_TOOL_RESULT_BYTES = 200_000;
-const RP_REPAIR_MAX_STEPS = 10;
+const RP_REPAIR_MAX_STEPS = 25;
 export const RP_REPAIR_MAX_TOOL_CALLS = 40;
 
 export function shouldRetryRpAbort(
