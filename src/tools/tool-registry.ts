@@ -8,13 +8,13 @@ export type TimeoutCategory = 'file' | 'lsp' | 'web' | 'network' | 'shell' | 'de
 
 /** Timeout durations in milliseconds, keyed by category. */
 export const TIMEOUT_MS: Record<TimeoutCategory, number> = {
-    file: 5_000,
-    lsp: 10_000,
-    web: 15_000,
-    network: 30_000,
-    shell: 60_000,
-    delegation: 120_000,
-    compute: 120_000,
+    file: 20 * 60 * 1000,
+    lsp: 20 * 60 * 1000,
+    web: 20 * 60 * 1000,
+    network: 20 * 60 * 1000,
+    shell: 20 * 60 * 1000,
+    delegation: 20 * 60 * 1000,
+    compute: 20 * 60 * 1000,
     user: Infinity,
 };
 

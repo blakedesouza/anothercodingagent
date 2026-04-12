@@ -2,10 +2,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ToolOutput } from '../../src/types/conversation.js';
 import {
     ToolRegistry,
+    TIMEOUT_MS,
     type ToolSpec,
     type ToolImplementation,
 } from '../../src/tools/tool-registry.js';
 import { ToolRunner } from '../../src/tools/tool-runner.js';
+
+// Override timeouts for testing — production values are 20 minutes
+TIMEOUT_MS.file = 5_000;
+TIMEOUT_MS.lsp = 5_000;
+TIMEOUT_MS.web = 5_000;
+TIMEOUT_MS.network = 5_000;
+TIMEOUT_MS.shell = 5_000;
+TIMEOUT_MS.delegation = 5_000;
+TIMEOUT_MS.compute = 5_000;
 
 // --- Helpers ---
 
