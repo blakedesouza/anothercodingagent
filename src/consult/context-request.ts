@@ -161,6 +161,7 @@ You are in ACA-native context-request mode.
 ${NO_NATIVE_FUNCTION_CALLING}
 ${NO_PROTOCOL_DELIBERATION}
 ${roundStatusLine}
+Answer in English only.
 First decide whether the available evidence is enough. If it is enough, return your final findings directly in Markdown.
 Assume you know nothing beyond the prompt text and any ACA-appended evidence. If the task asks for a concrete repo fact that is not shown verbatim, request the minimal supporting snippet instead of guessing.
 Missing snippets, ENOENT paths, or omitted files are not evidence that a file, feature, or configuration is absent.
@@ -206,6 +207,8 @@ Limits:
 - Request at most ${limits.maxSnippets} snippets per round.
 - Each file snippet should be at most ${limits.maxLines} lines.
 - Request only repo-relative paths.
+- \`line_start\` and \`line_end\` must be JSON numbers. Do not put prose, explanations, placeholders, strings, or comments in numeric fields.
+- If you cannot identify exact numeric lines, request a narrow \`type: "tree"\` listing first or finalize with an open question.
 - Use \`type: 'tree'\` for a 3-level directory listing when you are unsure of exact file names. Do not request whole-repo searches.
 - If a domain-named directory (e.g., \`consult/\`) doesn't appear to contain the expected file, request a tree of sibling generically-named directories (\`cli/\`, \`cmd/\`, \`commands/\`, \`bin/\`) before concluding it is absent — entry-point orchestration code often lives in those directories and delegates to domain modules.
 - Only request file paths that are explicitly mentioned in the provided evidence or clearly derivable from the task description. Do not infer paths from common project conventions or assumed directory structure — an ENOENT result wastes one of your ${limits.maxSnippets} context-request slots and provides no useful information.
@@ -254,6 +257,7 @@ ${NO_NATIVE_FUNCTION_CALLING}
 ${NO_PROTOCOL_DELIBERATION}
 ${hintSection}
 ${roundStatusLine}
+Answer in English only.
 Review the fulfilled snippets above and decide if you need more context or can finalize.
 If the available snippets are sufficient, return your final findings directly in Markdown.
 If the evidence cannot support a claim, leave it as an open question rather than guessing.
@@ -280,6 +284,7 @@ Limits:
 - Request at most ${limits.maxSnippets} snippets per round.
 - Each file snippet should be at most ${limits.maxLines} lines.
 - Request only repo-relative paths.
+- \`line_start\` and \`line_end\` must be JSON numbers. Do not put prose, explanations, placeholders, strings, or comments in numeric fields.
 - Use \`type: 'tree'\` for 3-level directory listings. Do not request whole-repo searches.
 - If a domain-named directory (e.g., \`consult/\`) doesn't contain the expected file, request a tree of sibling generically-named directories (\`cli/\`, \`cmd/\`, \`commands/\`, \`bin/\`) — entry-point code often lives there.
 - Tools are disabled. Do not emit tool-call markup or tool-call intent.
@@ -299,6 +304,7 @@ ${truncateUtf8(invalidResponse, 4_000)}
 
 Try again now. If you need more context, return only the needs_context JSON object from the protocol above. If the evidence is enough, return final findings in Markdown.
 If your previous response used a custom JSON object or unsupported schema, rewrite it using either the exact needs_context object above or plain Markdown final findings.
+Answer in English only. In needs_context JSON, \`line_start\` and \`line_end\` must be JSON numbers, never prose or strings.
 Do not emit XML, function-call, tool-call, invoke, parameter, arg_key, arg_value, read_file, [TOOL_CALL], or "tool_calls" markup.
 `;
 }
@@ -314,6 +320,7 @@ ${NO_PROTOCOL_DELIBERATION}
 The final evidence pack will be assembled by ACA, not by you: ACA will read accepted snippets directly from disk after your response.
 Assume you know nothing beyond the prompt text and any ACA-appended evidence.
 If the task asks for a concrete repo fact that is not already shown verbatim, request the minimal supporting snippets needed to verify it.
+Answer in English only.
 Do not return an empty needs_context list unless the prompt already contains enough quoted evidence to answer the task.
 
 Return only this JSON object and no Markdown:
@@ -335,6 +342,7 @@ Limits:
 - Request at most ${limits.maxSnippets} snippets.
 - Each snippet should be at most ${limits.maxLines} lines.
 - Request only repo-relative paths.
+- \`line_start\` and \`line_end\` must be JSON numbers. Do not put prose, explanations, placeholders, strings, or comments in numeric fields.
 - Prefer narrow ranges that satisfy all witnesses before their review.
 - Request paths only when the prompt or current evidence concretely suggests them.
 - Avoid shotgun guesses across unrelated ecosystems or fallback docs (for example Cargo.toml, pyproject.toml, or README.md) unless the task specifically points there.
@@ -393,14 +401,21 @@ function normalizeContextRequests(rawRequests: unknown[], limits: ContextRequest
             continue;
         }
 
-        const rawStart = typeof record.line_start === 'number' ? record.line_start : Number(record.line_start ?? 1);
-        const rawEnd = typeof record.line_end === 'number' ? record.line_end : Number(record.line_end ?? rawStart + limits.maxLines - 1);
+        const rawStart = numericField(record.line_start, 1);
+        if (rawStart === null) continue;
+        const rawEnd = numericField(record.line_end, rawStart + limits.maxLines - 1);
+        if (rawEnd === null) continue;
         const lineStart = Number.isFinite(rawStart) ? Math.max(1, Math.floor(rawStart)) : 1;
         const proposedEnd = Number.isFinite(rawEnd) ? Math.floor(rawEnd) : lineStart + limits.maxLines - 1;
         const lineEnd = Math.max(lineStart, Math.min(proposedEnd, lineStart + limits.maxLines - 1));
         requests.push({ path, line_start: lineStart, line_end: lineEnd, reason });
     }
     return requests;
+}
+
+function numericField(value: unknown, fallback: number): number | null {
+    if (value === undefined || value === null) return fallback;
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 /**
@@ -457,29 +472,31 @@ function parseAlternateFileRequests(payload: unknown, limits: ContextRequestLimi
         const file = raw as Record<string, unknown>;
         const path = typeof file.path === 'string' ? file.path.trim() : '';
         if (!path) continue;
-        const { lineStart, lineEnd } = parseLineRange(file, limits);
+        const range = parseLineRange(file, limits);
+        if (!range) continue;
         const reason = typeof file.reason === 'string'
             ? file.reason.trim().slice(0, 300)
             : 'model requested file range using alternate context-request JSON';
-        requests.push({ path, line_start: lineStart, line_end: lineEnd, reason });
+        requests.push({ path, line_start: range.lineStart, line_end: range.lineEnd, reason });
     }
     return requests;
 }
 
-function parseLineRange(file: Record<string, unknown>, limits: ContextRequestLimits): { lineStart: number; lineEnd: number } {
+function parseLineRange(file: Record<string, unknown>, limits: ContextRequestLimits): { lineStart: number; lineEnd: number } | null {
     const hasExplicitStart = file.line_start !== undefined || file.lineStart !== undefined;
     const hasExplicitEnd = file.line_end !== undefined || file.lineEnd !== undefined;
+    const lines = typeof file.lines === 'string' ? file.lines.match(/^\s*(\d+)\s*-\s*(\d+)\s*$/) : null;
     const rawStart = hasExplicitStart
-        ? (typeof file.line_start === 'number' ? file.line_start : Number(file.line_start ?? file.lineStart))
+        ? numericField(file.line_start !== undefined ? file.line_start : file.lineStart, NaN)
         : NaN;
     const rawEnd = hasExplicitEnd
-        ? (typeof file.line_end === 'number' ? file.line_end : Number(file.line_end ?? file.lineEnd))
+        ? numericField(file.line_end !== undefined ? file.line_end : file.lineEnd, NaN)
         : NaN;
-    const lines = typeof file.lines === 'string' ? file.lines.match(/^\s*(\d+)\s*-\s*(\d+)\s*$/) : null;
-    const lineStart = Number.isFinite(rawStart)
+    if ((rawStart === null || rawEnd === null) && !lines) return null;
+    const lineStart = rawStart !== null && Number.isFinite(rawStart)
         ? Math.max(1, Math.floor(rawStart))
         : (lines ? Math.max(1, Number(lines[1])) : 1);
-    const proposedEnd = Number.isFinite(rawEnd)
+    const proposedEnd = rawEnd !== null && Number.isFinite(rawEnd)
         ? Math.floor(rawEnd)
         : (lines ? Number(lines[2]) : lineStart + limits.maxLines - 1);
     const lineEnd = Math.max(lineStart, Math.min(proposedEnd, lineStart + limits.maxLines - 1));

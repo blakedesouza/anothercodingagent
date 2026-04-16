@@ -433,11 +433,13 @@ function buildNoToolsConsultSystemMessages(mode: 'witness' | 'shared_context' | 
         content: `You are running a bounded ACA consult pass, not the normal autonomous ACA invoke workflow.
 ${NO_NATIVE_FUNCTION_CALLING}
 ${NO_PROTOCOL_DELIBERATION}
+Answer in English only.
 Do not call tools, ask to call tools, emit tool-call JSON, or emit XML/function markup such as \`<tool_call>\`, \`<call>\`, \`<function_calls>\`, or \`<invoke>\`.
 Follow the user prompt's protocol exactly.
 If the prompt asks for Markdown, return Markdown only.
 If the prompt asks for JSON, return JSON only.
 If more context is needed, use only the exact request format described in the prompt.
+In context-request JSON, numeric fields such as \`line_start\` and \`line_end\` must be JSON numbers, not strings, prose, explanations, placeholders, or comments.
 Do not add extra wrappers, agent narration, or next-step instructions outside the requested output.
 ${modeInstruction}${hintSection}`,
     }];

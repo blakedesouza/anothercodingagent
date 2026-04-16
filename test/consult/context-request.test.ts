@@ -35,6 +35,23 @@ describe('consult context requests', () => {
         }]);
     });
 
+    it('rejects malformed numeric fields in needs_context requests', () => {
+        const requests = parseContextRequests(
+            JSON.stringify({
+                needs_context: [{
+                    type: 'file',
+                    path: 'anti-drift.user.js',
+                    line_start: 'ставить точные номера строк невозможно',
+                    line_end: 500,
+                    reason: 'need lines',
+                }],
+            }),
+            { maxSnippets: 1, maxLines: 25, maxBytes: 1000, maxRounds: 1 },
+        );
+
+        expect(requests).toEqual([]);
+    });
+
     it('fulfills snippets inside the project only', () => {
         const dir = mkdtempSync(join(tmpdir(), 'aca-context-'));
         mkdirSync(join(dir, 'src'));
@@ -93,6 +110,8 @@ describe('consult context requests', () => {
         expect(contextPrompt).toContain('<parameter>');
         expect(contextPrompt).toContain('<minimax:tool_call>');
         expect(contextPrompt).toContain('needs_context');
+        expect(contextPrompt).toContain('Answer in English only');
+        expect(contextPrompt).toContain('must be JSON numbers');
         expect(contextPrompt).toContain('Assume you know nothing beyond the prompt text and any ACA-appended evidence');
         expect(contextPrompt).toContain('Missing snippets, ENOENT paths, or omitted files are not evidence');
 
@@ -133,6 +152,8 @@ describe('consult context requests', () => {
         expect(prompt).toContain('Invalid Previous Context Request');
         expect(prompt).toContain('return only the needs_context JSON object');
         expect(prompt).toContain('custom JSON object or unsupported schema');
+        expect(prompt).toContain('Answer in English only');
+        expect(prompt).toContain('must be JSON numbers');
         expect(prompt).toContain('Do not emit XML, function-call, tool-call, invoke, parameter, arg_key, arg_value, read_file, [TOOL_CALL], or "tool_calls" markup');
     });
 
@@ -148,6 +169,24 @@ describe('consult context requests', () => {
             line_end: 179,
             reason: 'model requested file range using alternate context-request JSON',
         }]);
+    });
+
+    it('rejects malformed numeric fields in alternate file-list requests', () => {
+        const requests = parseContextRequests(
+            JSON.stringify({
+                status: 'success',
+                data: {
+                    files: [{
+                        path: 'anti-drift.user.js',
+                        line_start: 'ставить точные номера строк невозможно',
+                        line_end: 80,
+                    }],
+                },
+            }),
+            { maxSnippets: 1, maxLines: 40, maxBytes: 1000, maxRounds: 1 },
+        );
+
+        expect(requests).toEqual([]);
     });
 
     it('detects context-request and tool-result JSON envelopes', () => {
@@ -173,7 +212,9 @@ describe('consult context requests', () => {
         expect(prompt).toContain('at most 80 lines');
         expect(prompt).toContain('ACA will read accepted snippets directly from disk');
         expect(prompt).toContain('If the task asks for a concrete repo fact that is not already shown verbatim');
+        expect(prompt).toContain('Answer in English only');
         expect(prompt).toContain('Do not return an empty needs_context list unless the prompt already contains enough quoted evidence');
+        expect(prompt).toContain('must be JSON numbers');
         expect(prompt).toContain('Do not summarize findings or quote code yourself');
         expect(prompt).toContain('Avoid shotgun guesses across unrelated ecosystems or fallback docs');
         expect(prompt).toContain('Missing or ENOENT snippets are not positive evidence');
@@ -352,6 +393,8 @@ describe('consult context requests', () => {
         expect(prompt).toContain('directory');
         expect(prompt).toContain('Request at most 4 snippets');
         expect(prompt).toContain('Witness Context Request Protocol');
+        expect(prompt).toContain('Answer in English only');
+        expect(prompt).toContain('must be JSON numbers');
     });
 
     it('buildContextRequestPrompt shows final-round warning when roundsRemaining=0', () => {
@@ -394,6 +437,8 @@ describe('consult context requests', () => {
         expect(prompt).toContain('Witness Context Request Protocol (Continuation)');
         expect(prompt).toContain('2');
         expect(prompt).toContain('continuation round');
+        expect(prompt).toContain('Answer in English only');
+        expect(prompt).toContain('must be JSON numbers');
     });
 
     it('buildContinuationPrompt with roundsRemaining=0 shows final-round warning', () => {

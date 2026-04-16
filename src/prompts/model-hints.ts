@@ -24,6 +24,10 @@ export const MODEL_HINTS: Record<string, string[]> = {
         'Do not wrap your output in blockquote syntax (lines starting with `>`). Do not show your reasoning process or deliberation steps in the response. Output only: the `needs_context` JSON object if you need more context, or final Markdown findings if you are ready to finalize. Nothing else.',
     ],
 
+    'deepseek/': [
+        'Answer in English only. If you need context, return valid JSON only: `line_start` and `line_end` must be numeric JSON values, never prose, placeholders, or quoted strings.',
+    ],
+
     // Fix C: GLM-5 is a thinking model that leaks intent as visible narration — it writes
     // "I'll now fetch..." or "Let me..." in the response text instead of making the tool call.
     // This narration-without-action pattern causes the turn engine to yield `assistant_final`
