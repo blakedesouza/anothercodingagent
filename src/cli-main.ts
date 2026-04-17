@@ -9,7 +9,7 @@
 
 import { Command } from 'commander';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { mkdirSync } from 'node:fs';
@@ -152,6 +152,7 @@ import {
 } from './cli/executor.js';
 import { createInterface } from 'node:readline';
 import { SessionGrantStore } from './permissions/session-grants.js';
+import { maybeAutoStartDebugUi } from './debug-ui/manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1447,6 +1448,13 @@ program
     });
 
 program
+    .command('debug-ui')
+    .description('Start the local ACA debug UI')
+    .action(async () => {
+        await import(pathToFileURL(join(__dirname, '..', 'scripts', 'aca-debug-ui-server.mjs')).href);
+    });
+
+program
     .command('witnesses')
     .description('Output witness model configurations as JSON')
     .option('--json', 'Output JSON (default)')
@@ -1556,9 +1564,9 @@ program
         },
     ) => {
         try {
-            const effectiveModel = options.model ?? 'zai-org/glm-5';
             const configResult = await loadConfig({ workspaceRoot: process.cwd() }).catch(() => null);
             const configRpRoot = configResult?.config.rpProjectRoot ?? null;
+            const effectiveModel = options.model ?? configResult?.config.rpModel ?? 'zai-org/glm-5';
             const summary = await runRpResearchWorkflow({
                 series: seriesParts.join(' '),
                 projectRoot: options.projectRoot ?? configRpRoot ?? undefined,
@@ -2219,5 +2227,6 @@ program
     });
 
 export async function runCli(argv: string[] = process.argv): Promise<void> {
+    await maybeAutoStartDebugUi(argv);
     await program.parseAsync(argv);
 }

@@ -24,6 +24,7 @@ Options:
 Commands:
   serve                   Start ACA as an MCP server on stdio transport
   describe                Output capability descriptor as JSON
+  debug-ui                Start the local ACA debug UI
   witnesses               Output witness model configurations as JSON
   consult                 Run ACA-native bounded witness consultation
   rp-research             Research a series for RP and generate an RP knowledge pack
