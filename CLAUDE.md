@@ -67,3 +67,25 @@ Live tests run the built `aca` binary against real NanoGPT models and prove actu
 ## Changelog
 
 `docs/changelog.md` is a living document. After completing any meaningful work (gap resolutions, block definitions, implementation milestones, refactors), append a dated entry summarizing what changed, why, and how.
+
+## NanoGPT Reference
+
+- **API key:** resolved by `loadSecrets()` — env var → `~/.aca/secrets.json` → `~/.api_keys`
+- **Flat-rate models endpoint:** use `/subscription/v1/models`, not `/v1/models`
+- **Pricing:** $8/mo flat rate; Claude/GPT/Gemini are PAID (not included); always use the best subscription models
+- **Default RP project root:** `/home/blake/projects/rpproject` (set in `~/.aca/config.json` as `rpProjectRoot`)
+- **Default RP model:** `zai-org/glm-5` (set in `~/.aca/config.json` as `rpModel`)
+
+## ACA Debugging Reference
+
+- **Model override:** project `.aca/config.json` overrides model; `~/.aca/sessions/<id>/` holds conversation forensics
+- **Project structure template:** `~/.claude/templates/` — 5-phase template including Phase 5 review protocol
+
+## Known Model Quirks & Fixes
+
+- **Qwen pseudo-tool-call contamination:** camelCase AND hyphenated terms (e.g. `pseudo-tool-call`, `tool-call`) prime Qwen to emit pseudo-tool-call markup. Fix: obfuscation + `LOADED_TERMS` blocklist in `identifier-obfuscation.ts`
+- **XML examples in prompts → false pseudo-tool-call:** literal `<tool_call>` etc. in prompt strings get quoted by Qwen reasoning. Fix: backtick-wrap in template literals (`` \`<tool_call>\` ``)
+- **Qwen `reasoning_content` leakage (fixed C11.3):** `stripModelPreamble` in `wrapStreamWithToolEmulation` covers all invoke paths
+- **DeepSeek tool-use bias (fixed C9):** 3 prompt patterns cause `llm.malformed`/unnecessary tool calls; coder+conceptual tasks must produce 0 tool calls
+- **DeepSeek large-context failure (fixed C11.3):** was protocol mismatch (emulated `tool_calls` in history), not context size
+- **Delegation pipeline (fixed M10.1c):** original 3 causes fixed; executor system prompt must be substantive or terminal-stall occurs on Qwen and Kimi
