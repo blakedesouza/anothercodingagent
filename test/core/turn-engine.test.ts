@@ -651,8 +651,9 @@ describe('TurnEngine', () => {
             [],
         );
 
-        expect(result.turn.outcome).toBe('budget_exceeded');
+        expect(result.turn.outcome).toBe('assistant_final');
         expect(result.steps).toHaveLength(1);
+        expect(result.steps[0].safetyStats?.guardrail).toBe('budget_exceeded_after_completion');
     });
 
     // Test 5: Consecutive tool limit (10 in interactive)

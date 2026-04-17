@@ -65,7 +65,7 @@ describe('Schema & Defaults', () => {
         });
 
         expect(result.config.schemaVersion).toBe(1);
-        expect(result.config.model.default).toBe('qwen/qwen3-coder-next');
+        expect(result.config.model.default).toBe(CONFIG_DEFAULTS.model.default);
         expect(result.config.model.temperature).toBe(0.1);
         expect(result.config.model.maxOutputTokens).toBe(16384);
         expect(result.config.defaultProvider).toBe('nanogpt');

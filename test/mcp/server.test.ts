@@ -170,7 +170,7 @@ describe('runAcaInvoke', () => {
         const parsed = JSON.parse(json);
         expect(parsed.task).toBe('read file');
         expect(parsed.contract_version).toBe(CONTRACT_VERSION);
-        expect(parsed.constraints.max_steps).toBe(20);
+        expect(parsed.constraints.max_steps).toBe(50);
         expect(parsed.constraints.max_total_tokens).toBe(200000);
         expect(parsed.deadline).toBe(10000);
         expect(deadline).toBe(10000);
@@ -300,7 +300,7 @@ describe('runAcaInvoke', () => {
 
         const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
         expect(parsed.constraints).toEqual({
-            max_steps: 20,
+            max_steps: 50,
             max_total_tokens: 200000,
         });
     });
@@ -604,7 +604,7 @@ describe('Authority mapping (M9.2)', () => {
         const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
         expect(parsed.constraints).toBeDefined();
         expect(parsed.constraints.allowed_tools).toEqual(['read_file', 'search_text']);
-        expect(parsed.constraints.max_steps).toBe(20);
+        expect(parsed.constraints.max_steps).toBe(50);
         expect(parsed.constraints.max_total_tokens).toBe(200000);
         expect(parsed.constraints.denied_tools).toBeUndefined();
 
@@ -622,7 +622,7 @@ describe('Authority mapping (M9.2)', () => {
 
         const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
         expect(parsed.constraints).toEqual({
-            max_steps: 20,
+            max_steps: 50,
             max_total_tokens: 200000,
         });
 
@@ -645,7 +645,7 @@ describe('Authority mapping (M9.2)', () => {
         // Empty array means "no tools allowed" — stricter than omitting
         expect(parsed.constraints).toBeDefined();
         expect(parsed.constraints.allowed_tools).toEqual([]);
-        expect(parsed.constraints.max_steps).toBe(20);
+        expect(parsed.constraints.max_steps).toBe(50);
         expect(parsed.constraints.max_total_tokens).toBe(200000);
 
         await client.close();
@@ -1132,7 +1132,7 @@ describe('Environment propagation (M10.1b)', () => {
         expect(parsed.contract_version).toBe(CONTRACT_VERSION);
         expect(parsed.schema_version).toBe(SCHEMA_VERSION);
         expect(parsed.task).toBe('read file.txt');
-        expect(parsed.constraints.max_steps).toBe(20);
+        expect(parsed.constraints.max_steps).toBe(50);
         expect(parsed.constraints.max_total_tokens).toBe(200000);
         expect(parsed.deadline).toBe(60000);
         expect(deadline).toBe(60000);

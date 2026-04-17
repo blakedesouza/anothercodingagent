@@ -102,6 +102,8 @@ export interface ResolvedConfig {
     trustedWorkspaces: Record<string, 'trusted' | 'untrusted'>;
     /** Default project root for `aca rp-research`. Overridden by --project-root or ACA_RP_PROJECT_ROOT. */
     rpProjectRoot: string | null;
+    /** Default model for `aca rp-research`. Overridden by --model. */
+    rpModel: string | null;
 }
 
 // --- Defaults ---
@@ -183,6 +185,7 @@ export const CONFIG_DEFAULTS: ResolvedConfig = {
     },
     trustedWorkspaces: {},
     rpProjectRoot: null,
+    rpModel: null,
 };
 
 // --- JSON Schema ---
@@ -322,6 +325,7 @@ export const configJsonSchema = {
             additionalProperties: { type: 'string', enum: ['trusted', 'untrusted'] },
         },
         rpProjectRoot: { type: ['string', 'null'] },
+        rpModel: { type: ['string', 'null'] },
     },
 };
 
