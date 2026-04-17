@@ -47,12 +47,12 @@ export interface WitnessModelConfig {
  */
 export const WITNESS_MODELS: readonly Readonly<WitnessModelConfig>[] = Object.freeze([
     Object.freeze({
-        name: 'deepseek',
-        displayName: 'DeepSeek',
-        model: 'deepseek/deepseek-v3.2',
-        fallbackModel: 'deepseek-chat',
-        maxOutputTokens: 65_536,
-        contextLength: 163_000,
+        name: 'minimax',
+        displayName: 'MiniMax',
+        model: 'minimax/minimax-m2.7',
+        fallbackModel: 'minimax/minimax-m2.5',
+        maxOutputTokens: 131_072,
+        contextLength: 204_800,
         timeout: DEFAULT_WITNESS_TIMEOUT_S,
         temperature: 0.6,
     }),

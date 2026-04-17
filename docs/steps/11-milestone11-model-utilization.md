@@ -21,7 +21,7 @@ From the NanoGPT subscription catalog (`GET /subscription/v1/models?detailed=tru
 | qwen/qwen3.5-397b-a17b | Witness | 258,048 | 65,536 | 32,000 |
 | google/gemma-4-31b-it | Witness | 262,144 | 131,072 | 32,000 |
 
-Current canonical ACA witness lineup is `deepseek/kimi/qwen/gemma`. Earlier milestone notes referenced a pre-M10 MiniMax witness slot; the audited product witness set now lives in `src/config/witness-models.ts` and `aca witnesses --json`.
+Current canonical ACA witness lineup is `minimax/kimi/qwen/gemma`. Earlier milestone notes referenced a pre-M10 MiniMax witness slot; the audited product witness set now lives in `src/config/witness-models.ts` and `aca witnesses --json`.
 
 The coder agent was operating at **6%** of its output capacity. That's why delegation failed — the model started working, ran out of output tokens, and got cut off mid-thought.
 
@@ -99,7 +99,7 @@ The idle timeout fix (reset timer on each SSE event) was implemented during M10.
 
 Update witness configurations to use actual model ceilings. Pull witness config into ACA so it's not scattered across separate Python tooling.
 
-- [x] **Pull witness config into ACA:** `src/config/witness-models.ts` is the canonical witness source of truth, with the current ACA-native lineup `deepseek/kimi/qwen/gemma` and ceilings sourced from NanoGPT `/subscription/v1/models?detailed=true` (queried 2026-04-05)
+- [x] **Pull witness config into ACA:** `src/config/witness-models.ts` is the canonical witness source of truth, with the current ACA-native lineup `minimax/kimi/qwen/gemma` and ceilings sourced from NanoGPT `/subscription/v1/models?detailed=true` (queried 2026-04-05)
 - [x] Expose the ACA-native witness config via `aca witnesses --json` so external tooling can read the current product witness set instead of copying values by hand
 - [x] Verify ACA-mode witnesses (via `aca invoke`) inherit the catalog limits from M11.2
 - [x] Test: ACA-mode witness invocation uses catalog limits, not old hardcoded values

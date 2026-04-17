@@ -12,15 +12,15 @@ describe('M11.5 — Witness Model Configuration', () => {
             expect(WITNESS_MODELS).toHaveLength(4);
         });
 
-        it('includes deepseek, kimi, qwen, gemma', () => {
+        it('includes minimax, kimi, qwen, gemma', () => {
             const names = WITNESS_MODELS.map(w => w.name);
-            expect(names).toEqual(['deepseek', 'kimi', 'qwen', 'gemma']);
+            expect(names).toEqual(['minimax', 'kimi', 'qwen', 'gemma']);
         });
 
         it('uses actual API ceilings for maxOutputTokens', () => {
             // Values from NanoGPT /subscription/v1/models?detailed=true (2026-04-05)
             const expected: Record<string, number> = {
-                deepseek: 65_536,
+                minimax: 131_072,
                 kimi: 65_536,
                 qwen: 65_536,
                 gemma: 131_072,
@@ -32,7 +32,7 @@ describe('M11.5 — Witness Model Configuration', () => {
 
         it('has correct context lengths from API', () => {
             const expected: Record<string, number> = {
-                deepseek: 163_000,
+                minimax: 204_800,
                 kimi: 256_000,
                 qwen: 258_048,
                 gemma: 262_144,
@@ -53,13 +53,13 @@ describe('M11.5 — Witness Model Configuration', () => {
             expect(kimi?.topP).toBe(0.95);
         });
 
-        it('fallback models are defined for deepseek, qwen, gemma', () => {
-            const deepseek = getWitnessModel('deepseek');
+        it('fallback models are defined for minimax, qwen, gemma', () => {
+            const minimax = getWitnessModel('minimax');
             const qwen = getWitnessModel('qwen');
             const gemma = getWitnessModel('gemma');
             const kimi = getWitnessModel('kimi');
 
-            expect(deepseek?.fallbackModel).toBe('deepseek-chat');
+            expect(minimax?.fallbackModel).toBe('minimax/minimax-m2.5');
             expect(qwen?.fallbackModel).toBe('qwen/qwen3.5-397b-a17b-thinking');
             expect(gemma?.fallbackModel).toBe('meta-llama/llama-4-maverick');
             expect(kimi?.fallbackModel).toBeUndefined();
@@ -78,10 +78,10 @@ describe('M11.5 — Witness Model Configuration', () => {
 
     describe('getWitnessModel()', () => {
         it('returns config for known witness name', () => {
-            const deepseek = getWitnessModel('deepseek');
-            expect(deepseek).toBeDefined();
-            expect(deepseek!.model).toBe('deepseek/deepseek-v3.2');
-            expect(deepseek!.displayName).toBe('DeepSeek');
+            const minimax = getWitnessModel('minimax');
+            expect(minimax).toBeDefined();
+            expect(minimax!.model).toBe('minimax/minimax-m2.7');
+            expect(minimax!.displayName).toBe('MiniMax');
         });
 
         it('returns undefined for unknown name', () => {
@@ -94,8 +94,8 @@ describe('M11.5 — Witness Model Configuration', () => {
             const ids = getAllWitnessModelIds();
             // 4 primary + 3 fallback (kimi has no fallback)
             expect(ids).toHaveLength(7);
-            expect(ids).toContain('deepseek/deepseek-v3.2');
-            expect(ids).toContain('deepseek-chat');
+            expect(ids).toContain('minimax/minimax-m2.7');
+            expect(ids).toContain('minimax/minimax-m2.5');
             expect(ids).toContain('moonshotai/kimi-k2.5');
             expect(ids).toContain('qwen/qwen3.5-397b-a17b');
             expect(ids).toContain('qwen/qwen3.5-397b-a17b-thinking');
@@ -109,16 +109,16 @@ describe('M11.5 — Witness Model Configuration', () => {
             const json = serializeWitnessConfigs();
             const parsed = JSON.parse(json);
 
-            expect(Object.keys(parsed)).toEqual(['deepseek', 'kimi', 'qwen', 'gemma']);
+            expect(Object.keys(parsed)).toEqual(['minimax', 'kimi', 'qwen', 'gemma']);
 
-            // Verify deepseek entry structure
-            expect(parsed.deepseek).toEqual({
+            // Verify minimax entry structure
+            expect(parsed.minimax).toEqual({
                 type: 'nanogpt',
-                model: 'deepseek/deepseek-v3.2',
-                fallback_model: 'deepseek-chat',
+                model: 'minimax/minimax-m2.7',
+                fallback_model: 'minimax/minimax-m2.5',
                 timeout: DEFAULT_WITNESS_TIMEOUT_S,
                 temperature: 0.6,
-                max_tokens: 65_536,
+                max_tokens: 131_072,
             });
 
             // Verify kimi has top_p but no fallback_model
