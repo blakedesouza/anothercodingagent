@@ -459,8 +459,22 @@ function parseConsultArtifactName(name) {
   match = name.match(/^aca-consult-structured-review-(.+)\.(md|json)$/);
   if (match) return { suffix: match[1], kind: `structured-review-${match[2]}`, role: 'structured_review', extension: match[2] };
 
+  match = name.match(/^aca-consult-shared-context-fallback-(.+)\.md$/);
+  if (match) return { suffix: match[1], kind: 'shared-context-fallback', role: 'shared_context', extension: 'md' };
+
   match = name.match(/^aca-consult-shared-context-(.+)\.md$/);
   if (match) return { suffix: match[1], kind: 'shared-context', role: 'shared_context', extension: 'md' };
+
+  match = name.match(/^aca-consult-([^-]+)-fallback-(.+)\.md$/);
+  if (match) {
+    return {
+      suffix: match[2],
+      kind: 'fallback',
+      role: 'witness',
+      witness: match[1],
+      extension: 'md',
+    };
+  }
 
   match = name.match(/^aca-consult-triage-raw-(.+)\.md$/);
   if (match) return { suffix: match[1], kind: 'triage-raw', role: 'triage', extension: 'md' };

@@ -1238,7 +1238,7 @@ const state = {
   sessionConversation: [],
   consultDetail: null,
   sessionFilter: 'all',
-  consultFilter: 'all',
+  consultFilter: 'running',
   search: '',
   timer: null,
 };
@@ -1276,7 +1276,9 @@ function bindStaticUi() {
   $('#autoToggle').addEventListener('click', toggleAutoRefresh);
   $('#sidebarSearch').addEventListener('input', (event) => {
     state.search = event.target.value.trim().toLowerCase();
+    if (state.view === 'consult') syncSelectedConsult();
     renderSidebar();
+    if (state.view === 'consult') renderDetail();
   });
   $('#tweaksToggle').addEventListener('click', () => $('#tweaks').classList.toggle('open'));
   $('#shutdownAction').addEventListener('click', shutdownUi);
@@ -1344,7 +1346,8 @@ function setView(view) {
     state.sessionFilter = state.sessionFilter || 'all';
   } else {
     state.search = '';
-    state.consultFilter = state.consultFilter || 'all';
+    state.consultFilter = state.consultFilter || 'running';
+    syncSelectedConsult();
   }
   $('#sidebarSearch').value = '';
   renderSidebar();
@@ -1364,9 +1367,7 @@ async function loadAll() {
   if (!state.selectedSessionId && state.sessions.length) {
     state.selectedSessionId = state.sessions[0].sessionId;
   }
-  if (!state.selectedConsultId && state.consults.length) {
-    state.selectedConsultId = state.consults[0].suffix;
-  }
+  syncSelectedConsult();
 
   renderChrome();
   renderSidebar();
@@ -1377,6 +1378,36 @@ async function loadAll() {
     await loadConsult(state.selectedConsultId, false);
   } else {
     renderDetail();
+  }
+}
+
+function filteredConsults() {
+  return state.consults.filter((consult) => {
+    const text = [
+      consult.suffix,
+      consult.status,
+      consult.startedAt,
+      consult.updatedAt,
+      JSON.stringify(consult.witnesses || {}),
+    ].join(' ').toLowerCase();
+    if (state.search && !text.includes(state.search)) return false;
+    if (state.consultFilter === 'running') return consult.status === 'running';
+    if (state.consultFilter === 'complete') return consult.status === 'complete';
+    if (state.consultFilter === 'degraded') return consult.status === 'degraded';
+    if (state.consultFilter === 'waiting') return consult.status === 'pending';
+    return true;
+  });
+}
+
+function syncSelectedConsult() {
+  const visibleConsults = filteredConsults();
+  if (!visibleConsults.length) {
+    state.selectedConsultId = null;
+    state.consultDetail = null;
+    return;
+  }
+  if (!state.selectedConsultId || !visibleConsults.some((consult) => consult.suffix === state.selectedConsultId)) {
+    state.selectedConsultId = visibleConsults[0].suffix;
   }
 }
 
@@ -1505,21 +1536,7 @@ function renderSessionSidebar() {
 }
 
 function renderConsultSidebar() {
-  const consults = state.consults.filter((consult) => {
-    const text = [
-      consult.suffix,
-      consult.status,
-      consult.startedAt,
-      consult.updatedAt,
-      JSON.stringify(consult.witnesses || {}),
-    ].join(' ').toLowerCase();
-    if (state.search && !text.includes(state.search)) return false;
-    if (state.consultFilter === 'running') return consult.status === 'running';
-    if (state.consultFilter === 'complete') return consult.status === 'complete';
-    if (state.consultFilter === 'degraded') return consult.status === 'degraded';
-    if (state.consultFilter === 'waiting') return consult.status === 'pending';
-    return true;
-  });
+  const consults = filteredConsults();
 
   $('#sidebarTitle').textContent = 'Consult Runs';
   $('#sidebarCounter').textContent = `${state.consults.length} total`;
@@ -1570,8 +1587,12 @@ function bindChipClicks(kind) {
   $$('#sidebarChips .chip').forEach((button) => {
     button.addEventListener('click', () => {
       if (kind === 'session') state.sessionFilter = button.dataset.filter;
-      else state.consultFilter = button.dataset.filter;
+      else {
+        state.consultFilter = button.dataset.filter;
+        syncSelectedConsult();
+      }
       renderSidebar();
+      if (kind === 'consult') renderDetail();
     });
   });
 }
