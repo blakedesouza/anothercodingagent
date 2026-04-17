@@ -17,6 +17,29 @@
 - For non-trivial tasks, share a brief approach before major edits.
 - Avoid unrelated refactors or dependency additions unless requested.
 - Add `TODO` notes for intentional placeholders/stubs.
+- If you change a symbol, contract, schema, counter, prompt, default, or tool shape, search for what it affects and update those places too.
+- Do not stop at the first passing test.
+
+## Change Blast Radius
+
+- Before editing, classify the change: local logic, shared helper, tool/schema contract, persisted metadata, replay/resume, derived state, prompt/protocol, retry/guardrail/default behavior, or counter/sequence/turn numbering.
+- If the change is anything other than local logic, assume blast radius.
+- For every changed symbol or contract, search producers, consumers, persistence, replay/resume, derived views, prompts/examples, and tests/fixtures.
+- Minimum search: `rg -n "SymbolName|field_name|error.code|tool_name|old_shape|new_shape" src test docs`
+- Before stopping, answer: what writes this value, what reads it, whether it is persisted, whether it is reconstructed later, whether there is any derived representation, whether tests assert the old shape, and whether prompts/docs teach the old behavior.
+- If any of those answers is unknown, the work is not done.
+
+## Invariants
+
+- Counters increment across iterations.
+- IDs and sequence numbers stay unique across turns.
+- Persisted metadata round-trips through save/load/resume.
+- Resume/replay rebuilds the same state as a live run.
+- One canonical identity exists per file/resource.
+- Compressed context still matches raw behavior.
+- Prompts/examples match real tool schemas.
+- Repair/fallback/default paths follow the same contract as the main path.
+- Tests cover second-turn, second-run, and resumed-state behavior.
 
 ## Verification
 
