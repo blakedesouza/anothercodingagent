@@ -17,7 +17,7 @@ const CONSULT_TMP_DIR = process.env.ACA_CONSULT_TMP_DIR || tmpdir();
 const METADATA_PATH = process.env.ACA_DEBUG_UI_METADATA_PATH || join(ACA_HOME, 'debug-ui.json');
 const MAX_JSONL_BYTES = 8 * 1024 * 1024;
 const MAX_PREVIEW_BYTES = 96 * 1024;
-const KNOWN_WITNESSES = ['deepseek', 'kimi', 'qwen', 'gemma'];
+const SEEDED_WITNESSES = parseWitnessSeed(process.env.ACA_DEBUG_UI_WITNESS_SEED || '');
 const APP_HTML_URL = new URL('./aca-debug-ui-app.html', import.meta.url);
 
 let db = null;
@@ -88,6 +88,13 @@ function shutdown(code) {
   }
   server.close(() => process.exit(code));
   setTimeout(() => process.exit(code), 750).unref();
+}
+
+function parseWitnessSeed(raw) {
+  return [...new Set(String(raw || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean))];
 }
 
 async function handleRequest(req, res) {
@@ -403,7 +410,7 @@ function consultDetail(suffix) {
     return {
       suffix,
       status: 'missing',
-      witnesses: Object.fromEntries(KNOWN_WITNESSES.map((name) => [name, { name, status: 'pending', artifacts: [] }])),
+      witnesses: Object.fromEntries(SEEDED_WITNESSES.map((name) => [name, { name, status: 'pending', artifacts: [] }])),
       triage: { status: 'pending', artifacts: [] },
       artifacts: [],
     };
@@ -481,7 +488,10 @@ function summarizeConsultGroup(group, includePreviews) {
   const resultArtifact = group.files.find((file) => file.kind === 'result');
   const result = resultArtifact ? safeJson(readLimitedText(resultArtifact.path, MAX_PREVIEW_BYTES)) : null;
   const resultWitnesses = result?.witnesses && typeof result.witnesses === 'object' ? result.witnesses : {};
-  const witnessNames = [...new Set([...KNOWN_WITNESSES, ...Object.keys(resultWitnesses)])];
+  const artifactWitnessNames = group.files
+    .map((file) => file.witness)
+    .filter((name) => typeof name === 'string' && name.trim() !== '');
+  const witnessNames = [...new Set([...SEEDED_WITNESSES, ...artifactWitnessNames, ...Object.keys(resultWitnesses)])];
   const witnesses = {};
 
   for (const witnessName of witnessNames) {

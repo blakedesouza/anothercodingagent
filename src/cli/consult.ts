@@ -1,23 +1,35 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { sanitizeModelJson } from '../providers/tool-emulation.js';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { appendEvidencePack, buildEvidencePack, type EvidencePackSummary } from '../consult/evidence-pack.js';
 import {
+    buildAdvisoryEmptyResponseLastChancePrompt,
+    buildAdvisoryEmptyResponseRetryPrompt,
+    annotateContextRequestsWithGrounding,
     appendSharedContextPack,
+    buildAdvisoryWitnessLastChancePrompt,
+    buildAdvisoryWitnessPrompt,
     buildContextRequestPrompt,
     buildContextRequestRetryPrompt,
+    buildAdvisoryContextRequestRetryPrompt,
     buildContinuationPrompt,
     buildFinalizationPrompt,
+    buildFinalizationLastChancePrompt,
     buildFinalizationRetryPrompt,
+    buildSharedContextContinuationPrompt,
     buildSharedContextRequestPrompt,
     containsProtocolEnvelopeJson,
     containsPseudoToolCall,
+    extractPromptGroundedFileSources,
     fulfillContextRequests,
+    inspectContextRequests,
     parseContextRequests,
     stripBlockquoteMarkers,
     truncateUtf8,
+    type ContextProvenance,
+    type ContextRequestDiagnostic,
     type ContextRequest,
     type ContextRequestLimits,
     type ContextSnippet,
@@ -53,6 +65,7 @@ export interface ConsultOptions {
     sharedContextMaxSnippets?: number;
     sharedContextMaxLines?: number;
     sharedContextMaxBytes?: number;
+    triage?: 'auto' | 'always' | 'never';
     skipTriage?: boolean;
     out?: string;
 }
@@ -71,9 +84,37 @@ interface WitnessResult {
         context_request_retry?: InvokeSafety;
         final?: InvokeSafety;
         final_retry?: InvokeSafety;
+        final_last_chance?: InvokeSafety;
     } | null;
+    context_attempt_diagnostics: WitnessContextAttemptDiagnostic[];
+    finalization_diagnostics: FinalizationAttemptDiagnostic[];
     context_requests: ReturnType<typeof parseContextRequests>;
+    context_request_diagnostics: ContextRequestDiagnostic[];
     context_snippets: Omit<ContextSnippet, 'text'>[];
+}
+
+interface WitnessContextAttemptDiagnostic {
+    stage: 'initial' | 'initial_retry' | 'initial_last_chance' | 'continuation' | 'continuation_retry';
+    round: number;
+    outcome: 'report' | 'requests' | 'invalid' | 'invoke_error';
+    error: string | null;
+    request_count: number;
+    diagnostic_count: number;
+}
+
+interface FinalizationAttemptDiagnostic {
+    stage: 'final' | 'final_retry' | 'final_last_chance' | 'fallback';
+    outcome: 'report' | 'invalid' | 'invoke_error' | 'generated';
+    error: string | null;
+    report_source?: 'markdown' | 'salvaged_structured';
+}
+
+interface SharedContextAttemptDiagnostic {
+    stage: 'initial' | 'continuation';
+    outcome: 'requests' | 'no_requests' | 'invalid' | 'invoke_error';
+    error: string | null;
+    request_count: number;
+    diagnostic_count: number;
 }
 
 interface ConsultResult {
@@ -87,10 +128,17 @@ interface ConsultResult {
         status: 'ok' | 'skipped' | 'error';
         model: string | null;
         request_path: string | null;
+        triage_input_path: string | null;
         error: string | null;
         usage: InvokeUsage | null;
-        safety: InvokeSafety | null;
+        safety: InvokeSafety | {
+            context_request?: InvokeSafety;
+            extra_rounds?: Array<{ context_request?: InvokeSafety }>;
+        } | null;
+        scout_attempt_diagnostics: SharedContextAttemptDiagnostic[];
+        provenance_summary: string[];
         context_requests: ReturnType<typeof parseContextRequests>;
+        context_request_diagnostics: ContextRequestDiagnostic[];
         context_snippets: Omit<ContextSnippet, 'text'>[];
     };
     witnesses: Record<string, WitnessResult>;
@@ -124,22 +172,31 @@ const TRIAGE_MODEL_CANDIDATES = [
 const DEFAULT_SHARED_CONTEXT_SNIPPETS = 8;
 const DEFAULT_SHARED_CONTEXT_LINES = 160;
 const DEFAULT_SHARED_CONTEXT_BYTES = 16_000;
+const DEFAULT_CONSULT_WITNESS_NAMES = ['minimax', 'qwen'] as const;
+const STRICT_ADVISORY_WITNESS_NAMES = new Set<string>(['minimax']);
 const REQUIRED_TRIAGE_SECTIONS = [
     'consensus findings',
     'dissent',
     'likely false positives',
     'open questions',
 ] as const;
+type ConsultTaskMode = 'review' | 'advisory';
+type ConsultTriageMode = 'auto' | 'always' | 'never';
+
+type AdvisoryWitnessClassification =
+    | { status: 'report'; report: string }
+    | { status: 'invalid'; error: string; retryable: boolean };
 
 const CONTEXT_SNIPPET_SCHEMA: Record<string, unknown> = {
     type: 'object',
     properties: {
+        type: { type: 'string', enum: ['file', 'tree'] },
         path: { type: 'string' },
         line_start: { type: 'number' },
         line_end: { type: 'number' },
         reason: { type: 'string' },
     },
-    required: ['path', 'line_start', 'line_end', 'reason'],
+    required: ['type', 'path', 'reason'],
     additionalProperties: false,
 };
 
@@ -175,10 +232,18 @@ function uniqueModels(models: Array<string | null | undefined>): string[] {
 
 function selectWitnesses(raw: string | undefined): WitnessModelConfig[] {
     const names = parseList(raw);
-    if (names.length === 0 || names.includes('all')) return [...WITNESS_MODELS];
+    if (names.length === 0 || names.includes('default')) {
+        return DEFAULT_CONSULT_WITNESS_NAMES.map(name => {
+            const witness = WITNESS_MODELS.find(item => item.name === name);
+            if (!witness) throw new Error(`unknown default witness: ${name}`);
+            return witness;
+        });
+    }
+    if (names.includes('all')) return [...WITNESS_MODELS];
     const selected: WitnessModelConfig[] = [];
     for (const name of names) {
-        const witness = WITNESS_MODELS.find(item => item.name === name);
+        const canonicalName = name === 'deepseek' ? 'minimax' : name;
+        const witness = WITNESS_MODELS.find(item => item.name === canonicalName);
         if (!witness) throw new Error(`unknown witness: ${name}`);
         selected.push(witness);
     }
@@ -202,6 +267,42 @@ function mergeUsage(...usages: Array<InvokeUsage | null | undefined>): InvokeUsa
 function errorMessage(response: InvokeResponse, stderr: string): string {
     if (response.errors?.length) return response.errors.map(error => `${error.code}: ${error.message}`).join('; ');
     return stderr.trim() || 'unknown invoke error';
+}
+
+function isEmptyInvokeErrorMessage(message: string): boolean {
+    const normalized = message.toLowerCase();
+    return normalized.includes('llm.empty')
+        || normalized.includes('empty response')
+        || normalized.includes('returned no text');
+}
+
+function usesStrictAdvisoryRubric(witness: Pick<WitnessModelConfig, 'name' | 'model'>): boolean {
+    return STRICT_ADVISORY_WITNESS_NAMES.has(witness.name)
+        || witness.model.toLowerCase().includes('minimax/');
+}
+
+function resolveTriageMode(options: ConsultOptions): ConsultTriageMode {
+    if (options.skipTriage) return 'never';
+    const requested = options.triage ?? 'auto';
+    if (requested === 'auto' || requested === 'always' || requested === 'never') return requested;
+    throw new Error(`invalid triage mode: ${requested}`);
+}
+
+function shouldRunTriage(
+    triageMode: ConsultTriageMode,
+    triageableCount: number,
+    witnessResults: Record<string, WitnessResult>,
+    sharedContext: ConsultResult['shared_context'] | undefined,
+    structuredReview: ConsultResult['structured_review'],
+): boolean {
+    if (triageMode === 'never' || triageableCount === 0) return false;
+    if (triageMode === 'always') return true;
+
+    const anyWitnessError = Object.values(witnessResults).some(result => result.status !== 'ok');
+    const sharedContextError = sharedContext?.status === 'error';
+    const structuredReviewNeedsJudge = structuredReview?.status === 'error'
+        || (structuredReview?.status === 'ok' && structuredReview.disagreement_count > 0);
+    return anyWitnessError || sharedContextError || structuredReviewNeedsJudge;
 }
 
 function isUnavailableModelFailure(response: InvokeResponse, stderr: string): boolean {
@@ -252,6 +353,83 @@ function extractMarkdownField(text: string): string | null {
     return null;
 }
 
+function extractSalvageableFinalReport(text: string): string | null {
+    const parsed = parseJsonObject(text);
+    if (!parsed || containsProtocolEnvelopeJson(text)) return null;
+
+    const findings = collectStructuredReportLines(parsed, ['findings', 'issues', 'summary', 'observations', 'concerns']);
+    const openQuestions = collectStructuredReportLines(parsed, ['open_questions', 'openQuestions', 'questions', 'unknowns']);
+    if (findings.length === 0 && openQuestions.length === 0) return null;
+
+    const findingLines = findings.length > 0 ? findings : ['No grounded findings.'];
+    const questionLines = openQuestions.length > 0 ? openQuestions : ['None.'];
+
+    return [
+        '_ACA reformatted malformed structured finalization output into Markdown._',
+        '',
+        '## Findings',
+        ...findingLines.map(line => `- ${line}`),
+        '',
+        '## Open Questions',
+        ...questionLines.map(line => `- ${line}`),
+    ].join('\n');
+}
+
+function collectStructuredReportLines(
+    parsed: Record<string, unknown>,
+    keys: string[],
+): string[] {
+    for (const key of keys) {
+        const value = parsed[key];
+        const lines = structuredValueToLines(value);
+        if (lines.length > 0) return lines;
+    }
+    return [];
+}
+
+function structuredValueToLines(value: unknown, depth = 0): string[] {
+    if (depth > 2) return [];
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed === '' ? [] : [trimmed];
+    }
+    if (Array.isArray(value)) {
+        return value.flatMap(item => structuredValueToLines(item, depth + 1));
+    }
+    if (typeof value !== 'object' || value === null) return [];
+
+    const objectValue = value as Record<string, unknown>;
+    const pairedLine = combineStructuredReportFields(objectValue);
+    if (pairedLine !== null) return [pairedLine];
+
+    for (const key of ['text', 'message', 'content', 'finding', 'issue', 'question', 'summary']) {
+        const lines = structuredValueToLines(objectValue[key], depth + 1);
+        if (lines.length > 0) return lines;
+    }
+
+    return [];
+}
+
+function combineStructuredReportFields(value: Record<string, unknown>): string | null {
+    const title = firstStructuredScalar(value, ['title', 'label', 'name']);
+    const detail = firstStructuredScalar(value, ['detail', 'details', 'explanation', 'reason', 'message', 'content', 'question']);
+    if (title && detail) return `${title}: ${detail}`;
+    return null;
+}
+
+function firstStructuredScalar(
+    value: Record<string, unknown>,
+    keys: string[],
+): string | null {
+    for (const key of keys) {
+        const candidate = value[key];
+        if (typeof candidate !== 'string') continue;
+        const trimmed = candidate.trim();
+        if (trimmed !== '') return trimmed;
+    }
+    return null;
+}
+
 function extractFirstPassFinalMarkdown(text: string): string | null {
     const parsed = parseJsonObject(text);
     if (parsed?.action !== 'final') return null;
@@ -266,6 +444,155 @@ function extractPlainMarkdownReport(text: string): string | null {
     return text;
 }
 
+function inferConsultTaskMode(taskText: string): ConsultTaskMode {
+    const text = taskText.toLowerCase();
+    const reviewSignal = /\b(review|audit|bug|issue|regression|fix|broken|failure|vulnerability|repo|repository|code|implementation|function|class|method|file|path|line|lines|snippet|witness|consult)\b/.test(text)
+        || /(?:^|[\s`(])(?:src|test|docs|scripts|package\.json|tsconfig\.json|vitest\.config\.ts|plan\.md)\b/.test(text)
+        || /[A-Za-z0-9_/.-]+\.(?:ts|tsx|js|jsx|json|md|yml|yaml|py|sh)\b/.test(text);
+    if (reviewSignal) return 'review';
+    const advisorySignal = /\b(manager|management|leadership|executive|operations|operational|capacity|planning|workload|template|framework|strategy|process|policy|governance|staffing|roadmap|prioritization|trade-?off|false precision)\b/.test(text);
+    return advisorySignal ? 'advisory' : 'review';
+}
+
+function isLowValueAdvisoryReport(report: string, taskMode: ConsultTaskMode): boolean {
+    if (taskMode !== 'advisory') return false;
+    const normalized = report
+        .toLowerCase()
+        .replace(/[`*_>#-]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (normalized === '') return true;
+    const wordCount = normalized.split(' ').filter(Boolean).length;
+    if (wordCount > 8) return false;
+    return /^no (bug|bugs|issue|issues|problem|problems|finding|findings|grounded findings) found\.?$/.test(normalized)
+        || normalized === 'no bug found.'
+        || normalized === 'no bug found'
+        || normalized === 'no issues found.'
+        || normalized === 'no issues found';
+}
+
+function advisoryWordCount(text: string): number {
+    return text
+        .replace(/[`*_>#-]/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean)
+        .length;
+}
+
+function parseMarkdownH2Sections(report: string): Map<string, string> {
+    const sections = new Map<string, string>();
+    const matches = [...report.matchAll(/^##\s+(.+?)\s*$/gm)];
+    if (matches.length === 0) return sections;
+    for (let index = 0; index < matches.length; index += 1) {
+        const heading = matches[index][1].trim().toLowerCase();
+        const bodyStart = matches[index].index! + matches[index][0].length;
+        const bodyEnd = index + 1 < matches.length ? matches[index + 1].index! : report.length;
+        sections.set(heading, report.slice(bodyStart, bodyEnd).trim());
+    }
+    return sections;
+}
+
+function advisoryQualityError(report: string, strictRubric: boolean): string | null {
+    if (!strictRubric) return null;
+    const sections = parseMarkdownH2Sections(report);
+    const recommendation = sections.get('recommendation') ?? '';
+    const why = sections.get('why') ?? '';
+    const tradeoffs = sections.get('tradeoffs') ?? '';
+    const caveats = sections.get('caveats') ?? '';
+
+    if (!recommendation || !why || !tradeoffs || !caveats) {
+        return 'under-specified advisory report emitted in advisory direct-answer pass';
+    }
+    if (advisoryWordCount(recommendation) < 12 || advisoryWordCount(why) < 12) {
+        return 'under-specified advisory report emitted in advisory direct-answer pass';
+    }
+
+    const tradeoffLines = tradeoffs
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean);
+    const hasTradeoffBullet = tradeoffLines.some(line => /^[-*]\s+\S/.test(line));
+    if (!hasTradeoffBullet && advisoryWordCount(tradeoffs) < 10) {
+        return 'under-specified advisory report emitted in advisory direct-answer pass';
+    }
+    if (advisoryWordCount(caveats) < 1) {
+        return 'under-specified advisory report emitted in advisory direct-answer pass';
+    }
+    return null;
+}
+
+function classifyAdvisoryWitnessAnswer(text: string, strictRubric = false): AdvisoryWitnessClassification {
+    if (containsPseudoToolCall(text)) {
+        return {
+            status: 'invalid',
+            error: 'pseudo-tool call emitted in advisory direct-answer pass',
+            retryable: true,
+        };
+    }
+
+    const markdownField = extractMarkdownField(text);
+    if (markdownField !== null) {
+        if (isLowValueAdvisoryReport(markdownField, 'advisory')) {
+            return {
+                status: 'invalid',
+                error: 'low-value advisory report emitted in advisory direct-answer pass',
+                retryable: true,
+            };
+        }
+        const qualityError = advisoryQualityError(markdownField, strictRubric);
+        if (qualityError !== null) {
+            return {
+                status: 'invalid',
+                error: qualityError,
+                retryable: true,
+            };
+        }
+        return { status: 'report', report: markdownField };
+    }
+
+    if (containsEmptyStructuredFinal(text)) {
+        return {
+            status: 'invalid',
+            error: 'empty advisory report emitted in advisory direct-answer pass',
+            retryable: true,
+        };
+    }
+
+    if (containsProtocolEnvelopeJson(text)) {
+        return {
+            status: 'invalid',
+            error: 'repo-context request emitted in advisory direct-answer pass',
+            retryable: true,
+        };
+    }
+
+    const plainReport = extractPlainMarkdownReport(text);
+    if (plainReport !== null) {
+        if (isLowValueAdvisoryReport(plainReport, 'advisory')) {
+            return {
+                status: 'invalid',
+                error: 'low-value advisory report emitted in advisory direct-answer pass',
+                retryable: true,
+            };
+        }
+        const qualityError = advisoryQualityError(plainReport, strictRubric);
+        if (qualityError !== null) {
+            return {
+                status: 'invalid',
+                error: qualityError,
+                retryable: true,
+            };
+        }
+        return { status: 'report', report: plainReport };
+    }
+
+    return {
+        status: 'invalid',
+        error: 'empty or non-report output emitted in advisory direct-answer pass',
+        retryable: true,
+    };
+}
+
 function containsEmptyStructuredFinal(text: string): boolean {
     const parsed = parseJsonObject(text);
     return parsed?.action === 'final'
@@ -275,42 +602,74 @@ function containsEmptyStructuredFinal(text: string): boolean {
 
 type WitnessFirstPassClassification =
     | { status: 'report'; report: string }
-    | { status: 'needs_context'; requests: ReturnType<typeof parseContextRequests> }
-    | { status: 'invalid'; error: string; retryable: boolean };
+    | { status: 'needs_context'; requests: ReturnType<typeof parseContextRequests>; diagnostics: ContextRequestDiagnostic[] }
+    | { status: 'invalid'; error: string; retryable: boolean; diagnostics: ContextRequestDiagnostic[] };
 
 function classifyWitnessFirstPass(
     text: string,
     limits: { maxContextSnippets: number; maxContextLines: number; maxContextBytes: number },
+    anchors?: Parameters<typeof parseContextRequests>[2],
+    taskMode: ConsultTaskMode = 'review',
 ): WitnessFirstPassClassification {
     if (containsPseudoToolCall(text)) {
         return {
             status: 'invalid',
             error: 'pseudo-tool call emitted in no-tools context-request pass',
             retryable: true,
+            diagnostics: [],
         };
     }
 
     const firstPassMarkdown = extractFirstPassFinalMarkdown(text);
-    if (firstPassMarkdown !== null) return { status: 'report', report: firstPassMarkdown };
+    if (firstPassMarkdown !== null) {
+        if (isLowValueAdvisoryReport(firstPassMarkdown, taskMode)) {
+            return {
+                status: 'invalid',
+                error: 'low-value advisory report emitted in no-tools context-request pass',
+                retryable: true,
+                diagnostics: [],
+            };
+        }
+        return { status: 'report', report: firstPassMarkdown };
+    }
 
     if (containsEmptyStructuredFinal(text)) {
         return {
             status: 'invalid',
             error: 'empty final report emitted in no-tools context-request pass',
             retryable: true,
+            diagnostics: [],
         };
     }
 
-    const requests = parseContextRequests(text, {
+    const inspection = inspectContextRequests(text, {
         maxSnippets: limits.maxContextSnippets,
         maxLines: limits.maxContextLines,
         maxBytes: limits.maxContextBytes,
         maxRounds: 1,
-    });
-    if (requests.length > 0) return { status: 'needs_context', requests };
+    }, anchors);
+    if (inspection.requests.length > 0) {
+        if (taskMode === 'advisory') {
+            return {
+                status: 'invalid',
+                error: 'repo-context request emitted in advisory consult pass',
+                retryable: true,
+                diagnostics: inspection.diagnostics,
+            };
+        }
+        return { status: 'needs_context', requests: inspection.requests, diagnostics: inspection.diagnostics };
+    }
 
     const plainReport = extractPlainMarkdownReport(text);
     if (plainReport && !containsProtocolEnvelopeJson(text)) {
+        if (isLowValueAdvisoryReport(plainReport, taskMode)) {
+            return {
+                status: 'invalid',
+                error: 'low-value advisory report emitted in no-tools context-request pass',
+                retryable: true,
+                diagnostics: [],
+            };
+        }
         return { status: 'report', report: plainReport };
     }
 
@@ -318,16 +677,20 @@ function classifyWitnessFirstPass(
         status: 'invalid',
         error: 'non-report output emitted in no-tools context-request pass',
         retryable: true,
+        diagnostics: inspection.diagnostics,
     };
 }
 
 type WitnessFinalClassification =
-    | { status: 'report'; report: string }
+    | { status: 'report'; report: string; source: 'markdown' | 'salvaged_structured' }
     | { status: 'invalid'; error: string; retryable: boolean };
 
 function classifyWitnessFinal(text: string): WitnessFinalClassification {
     const finalMarkdown = extractMarkdownField(text);
-    if (finalMarkdown !== null) return { status: 'report', report: finalMarkdown };
+    if (finalMarkdown !== null) return { status: 'report', report: finalMarkdown, source: 'markdown' };
+
+    const salvagedReport = extractSalvageableFinalReport(text);
+    if (salvagedReport !== null) return { status: 'report', report: salvagedReport, source: 'salvaged_structured' };
 
     if (containsEmptyStructuredFinal(text)) {
         return {
@@ -338,7 +701,7 @@ function classifyWitnessFinal(text: string): WitnessFinalClassification {
     }
 
     const plainReport = extractPlainMarkdownReport(text);
-    if (plainReport !== null) return { status: 'report', report: plainReport };
+    if (plainReport !== null) return { status: 'report', report: plainReport, source: 'markdown' };
 
     if (containsPseudoToolCall(text)) {
         return {
@@ -360,6 +723,25 @@ function classifyWitnessFinal(text: string): WitnessFinalClassification {
         status: 'invalid',
         error: 'empty or non-report output emitted in no-tools finalization pass',
         retryable: true,
+    };
+}
+
+function buildWitnessContextAttemptDiagnostic(params: {
+    stage: WitnessContextAttemptDiagnostic['stage'];
+    round: number;
+    classification: WitnessFirstPassClassification;
+}): WitnessContextAttemptDiagnostic {
+    return {
+        stage: params.stage,
+        round: params.round,
+        outcome: params.classification.status === 'report'
+            ? 'report'
+            : params.classification.status === 'needs_context'
+                ? 'requests'
+                : 'invalid',
+        error: params.classification.status === 'invalid' ? params.classification.error : null,
+        request_count: params.classification.status === 'needs_context' ? params.classification.requests.length : 0,
+        diagnostic_count: 'diagnostics' in params.classification ? params.classification.diagnostics.length : 0,
     };
 }
 
@@ -397,6 +779,211 @@ function validateTriageReport(text: string): { report: string | null; errors: st
     return { report, errors };
 }
 
+function buildWitnessFallbackReport(params: {
+    error: string;
+    requests: ContextRequest[];
+    snippets: ContextSnippet[];
+    diagnostics: ContextRequestDiagnostic[];
+    contextAttemptDiagnostics: WitnessContextAttemptDiagnostic[];
+    finalizationDiagnostics: FinalizationAttemptDiagnostic[];
+}): string {
+    const requestLines = params.requests.length > 0
+        ? params.requests.map(request => {
+            const suffix = request.type === 'tree'
+                ? `${request.path}/`
+                : `${request.path}:${request.line_start}-${request.line_end}`;
+            return `- \`${suffix}\` — ${request.reason || 'no reason provided'}`;
+        }).join('\n')
+        : '- No accepted context requests were fulfilled.';
+    const snippetLines = params.snippets.length > 0
+        ? params.snippets.map(snippet => {
+            const suffix = snippet.type === 'tree'
+                ? `${snippet.path}/`
+                : `${snippet.path}:${snippet.line_start}-${snippet.line_end}`;
+            const status = snippet.status === 'ok' ? 'ok' : `error: ${snippet.error ?? 'unknown'}`;
+            return `- \`${suffix}\` — ${status}`;
+        }).join('\n')
+        : '- No snippets were fulfilled.';
+    const diagnosticLines = params.diagnostics.length > 0
+        ? params.diagnostics.map(diagnostic => `- ${diagnostic.reason}: ${diagnostic.message}`).join('\n')
+        : '- None.';
+    const contextAttemptLines = params.contextAttemptDiagnostics.length > 0
+        ? params.contextAttemptDiagnostics.map(diagnostic => {
+            const error = diagnostic.error ? ` — ${diagnostic.error}` : '';
+            return `- round ${diagnostic.round} ${diagnostic.stage}: ${diagnostic.outcome} (requests=${diagnostic.request_count}, diagnostics=${diagnostic.diagnostic_count})${error}`;
+        }).join('\n')
+        : '- None.';
+    const finalizationLines = params.finalizationDiagnostics.length > 0
+        ? params.finalizationDiagnostics.map(diagnostic => {
+            const source = diagnostic.report_source ? ` (${diagnostic.report_source})` : '';
+            const error = diagnostic.error ? ` — ${diagnostic.error}` : '';
+            return `- ${diagnostic.stage}: ${diagnostic.outcome}${source}${error}`;
+        }).join('\n')
+        : '- None.';
+
+    return `## Findings
+
+ACA generated this fallback witness note because the witness retrieved context but did not produce a valid no-tools final report.
+
+## Retrieved Requests
+
+${requestLines}
+
+## Retrieved Snippets
+
+${snippetLines}
+
+## Request Diagnostics
+
+${diagnosticLines}
+
+## Context Attempt Timeline
+
+${contextAttemptLines}
+
+## Finalization Timeline
+
+${finalizationLines}
+
+## Open Questions
+
+- The witness finalization failed with: ${params.error}
+- Treat this as degraded witness evidence. Rely on the ACA-read snippets above, not on a model-authored conclusion.
+`;
+}
+
+function buildSharedContextFallbackReport(params: {
+    error: string;
+    requests: ContextRequest[];
+    snippets: ContextSnippet[];
+    diagnostics: ContextRequestDiagnostic[];
+    scoutAttemptDiagnostics: SharedContextAttemptDiagnostic[];
+    provenanceSummary: string[];
+}): string {
+    const requestLines = params.requests.length > 0
+        ? params.requests.map(request => {
+            const suffix = request.type === 'tree'
+                ? `${request.path}/`
+                : `${request.path}:${request.line_start}-${request.line_end}`;
+            return `- \`${suffix}\` — ${request.reason || 'no reason provided'}`;
+        }).join('\n')
+        : '- No shared-context requests were accepted.';
+    const snippetLines = params.snippets.length > 0
+        ? params.snippets.map(snippet => {
+            const suffix = snippet.type === 'tree'
+                ? `${snippet.path}/`
+                : `${snippet.path}:${snippet.line_start}-${snippet.line_end}`;
+            const status = snippet.status === 'ok' ? 'ok' : `error: ${snippet.error ?? 'unknown'}`;
+            return `- \`${suffix}\` — ${status}`;
+        }).join('\n')
+        : '- No shared-context snippets were fulfilled.';
+    const diagnosticLines = params.diagnostics.length > 0
+        ? params.diagnostics.map(diagnostic => `- ${diagnostic.reason}: ${diagnostic.message}`).join('\n')
+        : '- None.';
+    const attemptLines = params.scoutAttemptDiagnostics.length > 0
+        ? params.scoutAttemptDiagnostics.map(diagnostic => {
+            const error = diagnostic.error ? ` — ${diagnostic.error}` : '';
+            return `- ${diagnostic.stage}: ${diagnostic.outcome} (requests=${diagnostic.request_count}, diagnostics=${diagnostic.diagnostic_count})${error}`;
+        }).join('\n')
+        : '- None.';
+    const provenanceLines = params.provenanceSummary.length > 0
+        ? params.provenanceSummary.map(line => `- ${line}`).join('\n')
+        : '- None.';
+
+    return `## Findings
+
+ACA generated this shared-context degraded note because the scout did not complete a clean raw-evidence pass.
+
+## Retrieved Requests
+
+${requestLines}
+
+## Retrieved Snippets
+
+${snippetLines}
+
+## Request Diagnostics
+
+${diagnosticLines}
+
+## Scout Attempt Timeline
+
+${attemptLines}
+
+## Request Provenance
+
+${provenanceLines}
+
+## Open Questions
+
+- The shared-context scout failed with: ${params.error}
+- Treat this as weak retrieval evidence. Prefer ACA-read snippets above over any missing-evidence inference.
+`;
+}
+
+function formatContextTarget(item: Pick<ContextRequest | ContextSnippet, 'type' | 'path' | 'line_start' | 'line_end'>): string {
+    if (item.type === 'tree') return `${item.path}/`;
+    return `${item.path}:${item.line_start}-${item.line_end}`;
+}
+
+function describeWindowPolicy(provenance: ContextProvenance | undefined): string {
+    switch (provenance?.window_policy) {
+        case 'symbol_window_v1':
+            return 'ACA symbol window';
+        case 'expand_window_v1':
+            return 'ACA expansion window';
+        case 'file_open_head_v1':
+            return 'ACA-opened file head';
+        case 'explicit_range_v1':
+            return 'model-specified range';
+        default:
+            return 'unspecified window';
+    }
+}
+
+function describeSharedContextProvenance(provenance: ContextProvenance | undefined, item: Pick<ContextRequest | ContextSnippet, 'type' | 'path'>): string {
+    if (item.type === 'tree') return 'directory discovery request';
+    if (!provenance) return 'no recorded provenance';
+    const window = describeWindowPolicy(provenance);
+    switch (provenance.source_kind) {
+        case 'symbol':
+            return `symbol anchor \`${provenance.source_ref}\` at line ${provenance.anchor_line ?? 'unknown'} via ${window}`;
+        case 'snippet':
+            return `ACA snippet anchor \`${provenance.source_ref}\`${provenance.anchor_line ? ` around line ${provenance.anchor_line}` : ''} via ${window}`;
+        case 'tree':
+            return `tree listing \`${provenance.source_ref}\` via ${window}`;
+        case 'direct':
+            if (provenance.source_ref.startsWith('prompt_path:')) {
+                return `task-mentioned path \`${provenance.source_ref.slice('prompt_path:'.length)}\` via ${window}`;
+            }
+            if (provenance.source_ref.startsWith('evidence_pack_path:')) {
+                return `ACA evidence path \`${provenance.source_ref.slice('evidence_pack_path:'.length)}\` via ${window}`;
+            }
+            return `direct scout request \`${provenance.source_ref}\` via ${window}`;
+        default:
+            return `unknown provenance via ${window}`;
+    }
+}
+
+function buildSharedContextProvenanceSummary(requests: ContextRequest[], snippets: ContextSnippet[]): string[] {
+    const count = Math.max(requests.length, snippets.length);
+    const lines: string[] = [];
+    for (let index = 0; index < count; index += 1) {
+        const request = requests[index];
+        const snippet = snippets[index];
+        const item = snippet ?? request;
+        if (!item) continue;
+        const target = formatContextTarget(item);
+        const provenance = snippet?.provenance ?? request?.provenance;
+        const summary = describeSharedContextProvenance(provenance, item);
+        const status = snippet
+            ? (snippet.status === 'ok' ? 'fulfilled ok' : `fulfilled error: ${snippet.error ?? 'unknown'}`)
+            : 'not fulfilled';
+        lines.push(`\`${target}\` — ${summary}; ${status}`);
+    }
+    return lines;
+}
+
 function currentAcaCommand(): { command: string; args: string[] } {
     const entrypoint = process.argv[1] ?? 'aca';
     if (entrypoint.endsWith('.ts')) {
@@ -405,16 +992,28 @@ function currentAcaCommand(): { command: string; args: string[] } {
     return { command: process.execPath, args: [entrypoint] };
 }
 
-function renderPrompt(question: string): string {
+function renderPrompt(question: string, taskMode: ConsultTaskMode): string {
+    const taskTypeSection = taskMode === 'review'
+        ? `## Task Type
+This is a repo/code review task.
+
+## Review Rules
+- Return concrete findings only.
+- Include file paths and line numbers when possible.
+- If no grounded issue is found, say that directly.`
+        : `## Task Type
+This is an advisory or analysis task, not necessarily a code bug hunt.
+
+## Response Rules
+- Answer the task directly and substantively.
+- If repository context is irrelevant, say so briefly and then continue with the actual answer.
+- Do not collapse to "No bug found" or "No issues found" for conceptual or advisory tasks.`;
     return `# ACA Consult
 
 ## Task
 ${question}
 
-## Review Rules
-- Return concrete findings only.
-- Include file paths and line numbers when possible.
-- If no bug is found, say that directly.
+${taskTypeSection}
 `;
 }
 
@@ -423,7 +1022,7 @@ function buildNoToolsConsultSystemMessages(mode: 'witness' | 'shared_context' | 
         ? 'You are the shared raw evidence scout. Select raw snippets only. Do not produce review findings.'
         : mode === 'triage'
             ? 'You are the triage pass. Aggregate only the supplied witness evidence. Do not perform a fresh review.'
-            : 'You are a witness review pass. Review the supplied task and context only.';
+            : 'You are a witness consult pass. Answer the supplied task using only the supplied context.';
     const hints = model ? getModelHints(model) : [];
     const hintSection = hints.length > 0
         ? `\n<model_hints>\n${hints.join('\n')}\n</model_hints>`
@@ -524,10 +1123,15 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     maxContextLines: number;
     maxContextBytes: number;
     maxContextRounds: number;
-}): Promise<WitnessResult> {
+}, taskMode: ConsultTaskMode): Promise<WitnessResult> {
     const responsePath = join(tmpdir(), `aca-consult-${witness.name}-response-${suffix}.md`);
     const requestPath = join(tmpdir(), `aca-consult-${witness.name}-context-request-${suffix}.md`);
     const finalRawPath = join(tmpdir(), `aca-consult-${witness.name}-final-raw-${suffix}.md`);
+    const sentinelPath = join(tmpdir(), `aca-consult-${witness.name}-pending-${suffix}.md`);
+    writeFileSync(sentinelPath, `# ${witness.name} — waiting for model response\n\nStarted: ${new Date().toISOString()}\nSuffix: ${suffix}\n`);
+    const removeSentinel = (): void => {
+        try { unlinkSync(sentinelPath); } catch { /* already removed */ }
+    };
     const limitsObj: ContextRequestLimits = {
         maxSnippets: limits.maxContextSnippets,
         maxLines: limits.maxContextLines,
@@ -539,6 +1143,9 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     // Accumulated state across rounds.
     const allSnippets: ContextSnippet[] = [];
     const allRequests: ContextRequest[] = [];
+    const allRequestDiagnostics: ContextRequestDiagnostic[] = [];
+    const contextAttemptDiagnostics: WitnessContextAttemptDiagnostic[] = [];
+    const finalizationDiagnostics: FinalizationAttemptDiagnostic[] = [];
     const roundSafeties: Array<{ context_request?: InvokeSafety; context_request_retry?: InvokeSafety }> = [];
     const allInvokeResponses: Array<InvokeResponse | undefined> = [];
 
@@ -548,6 +1155,463 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     const symbolLocations = identifiers.length > 0
         ? await resolveSymbolLocations(identifiers, projectDir)
         : [];
+    const groundedDirectFileSources = extractPromptGroundedFileSources(prompt);
+
+    if (taskMode === 'advisory') {
+        const strictAdvisoryRubric = usesStrictAdvisoryRubric(witness);
+        const firstPrompt = buildAdvisoryWitnessPrompt(prompt, strictAdvisoryRubric);
+        const firstAttempt = await invoke(witness.model, firstPrompt, projectDir, {
+            maxSteps: 1,
+            maxTotalTokens: 30_000,
+            outPath: requestPath,
+            systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
+        });
+        allInvokeResponses.push(firstAttempt.response);
+
+        if (firstAttempt.response.status !== 'success') {
+            const firstError = errorMessage(firstAttempt.response, firstAttempt.stderr);
+            contextAttemptDiagnostics.push({
+                stage: 'initial',
+                round: 1,
+                outcome: 'invoke_error',
+                error: firstError,
+                request_count: 0,
+                diagnostic_count: 0,
+            });
+            if (isEmptyInvokeErrorMessage(firstError)) {
+                const emptyRetryPrompt = buildAdvisoryEmptyResponseRetryPrompt(prompt, firstError, strictAdvisoryRubric);
+                const retryAttempt = await invoke(witness.model, emptyRetryPrompt, projectDir, {
+                    maxSteps: 1,
+                    maxTotalTokens: 12_000,
+                    systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
+                });
+                allInvokeResponses.push(retryAttempt.response);
+
+                if (retryAttempt.response.status === 'success') {
+                    const retryClass = classifyAdvisoryWitnessAnswer(stripBlockquoteMarkers(retryAttempt.response.result ?? ''), strictAdvisoryRubric);
+                    contextAttemptDiagnostics.push({
+                        stage: 'initial_retry',
+                        round: 1,
+                        outcome: retryClass.status === 'report' ? 'report' : 'invalid',
+                        error: retryClass.status === 'invalid' ? retryClass.error : null,
+                        request_count: 0,
+                        diagnostic_count: 0,
+                    });
+                    if (retryClass.status === 'report') {
+                        writeFileSync(responsePath, retryClass.report);
+                        removeSentinel();
+                        return {
+                            name: witness.name,
+                            model: witness.model,
+                            status: 'ok',
+                            error: null,
+                            response_path: responsePath,
+                            raw_request_path: requestPath,
+                            triage_input_path: responsePath,
+                            usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+                            safety: {
+                                context_request: firstAttempt.response.safety,
+                                context_request_retry: retryAttempt.response.safety,
+                            },
+                            context_attempt_diagnostics: contextAttemptDiagnostics,
+                            finalization_diagnostics: finalizationDiagnostics,
+                            context_requests: [],
+                            context_request_diagnostics: [],
+                            context_snippets: [],
+                        };
+                    }
+
+                    const lastChancePrompt = buildAdvisoryEmptyResponseLastChancePrompt(
+                        prompt,
+                        [firstError, retryClass.error],
+                        strictAdvisoryRubric,
+                    );
+                    const lastChanceAttempt = await invoke(witness.model, lastChancePrompt, projectDir, {
+                        maxSteps: 1,
+                        maxTotalTokens: 12_000,
+                        systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
+                    });
+                    allInvokeResponses.push(lastChanceAttempt.response);
+                    if (lastChanceAttempt.response.status === 'success') {
+                        const lastChanceClass = classifyAdvisoryWitnessAnswer(stripBlockquoteMarkers(lastChanceAttempt.response.result ?? ''), strictAdvisoryRubric);
+                        contextAttemptDiagnostics.push({
+                            stage: 'initial_last_chance',
+                            round: 1,
+                            outcome: lastChanceClass.status === 'report' ? 'report' : 'invalid',
+                            error: lastChanceClass.status === 'invalid' ? lastChanceClass.error : null,
+                            request_count: 0,
+                            diagnostic_count: 0,
+                        });
+                        if (lastChanceClass.status === 'report') {
+                            writeFileSync(responsePath, lastChanceClass.report);
+                            removeSentinel();
+                            return {
+                                name: witness.name,
+                                model: witness.model,
+                                status: 'ok',
+                                error: null,
+                                response_path: responsePath,
+                                raw_request_path: requestPath,
+                                triage_input_path: responsePath,
+                                usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+                                safety: {
+                                    context_request: firstAttempt.response.safety,
+                                    context_request_retry: retryAttempt.response.safety,
+                                    final_last_chance: lastChanceAttempt.response.safety,
+                                },
+                                context_attempt_diagnostics: contextAttemptDiagnostics,
+                                finalization_diagnostics: finalizationDiagnostics,
+                                context_requests: [],
+                                context_request_diagnostics: [],
+                                context_snippets: [],
+                            };
+                        }
+
+                        removeSentinel();
+                        return {
+                            name: witness.name,
+                            model: witness.model,
+                            status: 'error',
+                            error: lastChanceClass.error,
+                            response_path: null,
+                            raw_request_path: requestPath,
+                            triage_input_path: null,
+                            usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+                            safety: {
+                                context_request: firstAttempt.response.safety,
+                                context_request_retry: retryAttempt.response.safety,
+                                final_last_chance: lastChanceAttempt.response.safety,
+                            },
+                            context_attempt_diagnostics: contextAttemptDiagnostics,
+                            finalization_diagnostics: [],
+                            context_requests: [],
+                            context_request_diagnostics: [],
+                            context_snippets: [],
+                        };
+                    }
+
+                    const lastChanceError = errorMessage(lastChanceAttempt.response, lastChanceAttempt.stderr);
+                    contextAttemptDiagnostics.push({
+                        stage: 'initial_last_chance',
+                        round: 1,
+                        outcome: 'invoke_error',
+                        error: lastChanceError,
+                        request_count: 0,
+                        diagnostic_count: 0,
+                    });
+                    removeSentinel();
+                    return {
+                        name: witness.name,
+                        model: witness.model,
+                        status: 'error',
+                        error: lastChanceError,
+                        response_path: null,
+                        raw_request_path: requestPath,
+                        triage_input_path: null,
+                        usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+                        safety: {
+                            context_request: firstAttempt.response.safety,
+                            context_request_retry: retryAttempt.response.safety,
+                            final_last_chance: lastChanceAttempt.response.safety,
+                        },
+                        context_attempt_diagnostics: contextAttemptDiagnostics,
+                        finalization_diagnostics: [],
+                        context_requests: [],
+                        context_request_diagnostics: [],
+                        context_snippets: [],
+                    };
+                }
+
+                const retryError = errorMessage(retryAttempt.response, retryAttempt.stderr);
+                contextAttemptDiagnostics.push({
+                    stage: 'initial_retry',
+                    round: 1,
+                    outcome: 'invoke_error',
+                    error: retryError,
+                    request_count: 0,
+                    diagnostic_count: 0,
+                });
+                const lastChancePrompt = buildAdvisoryEmptyResponseLastChancePrompt(prompt, [firstError, retryError], strictAdvisoryRubric);
+                const lastChanceAttempt = await invoke(witness.model, lastChancePrompt, projectDir, {
+                    maxSteps: 1,
+                    maxTotalTokens: 12_000,
+                    systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
+                });
+                allInvokeResponses.push(lastChanceAttempt.response);
+                if (lastChanceAttempt.response.status === 'success') {
+                    const lastChanceClass = classifyAdvisoryWitnessAnswer(stripBlockquoteMarkers(lastChanceAttempt.response.result ?? ''), strictAdvisoryRubric);
+                    contextAttemptDiagnostics.push({
+                        stage: 'initial_last_chance',
+                        round: 1,
+                        outcome: lastChanceClass.status === 'report' ? 'report' : 'invalid',
+                        error: lastChanceClass.status === 'invalid' ? lastChanceClass.error : null,
+                        request_count: 0,
+                        diagnostic_count: 0,
+                    });
+                    if (lastChanceClass.status === 'report') {
+                        writeFileSync(responsePath, lastChanceClass.report);
+                        removeSentinel();
+                        return {
+                            name: witness.name,
+                            model: witness.model,
+                            status: 'ok',
+                            error: null,
+                            response_path: responsePath,
+                            raw_request_path: requestPath,
+                            triage_input_path: responsePath,
+                            usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+                            safety: {
+                                context_request: firstAttempt.response.safety,
+                                context_request_retry: retryAttempt.response.safety,
+                                final_last_chance: lastChanceAttempt.response.safety,
+                            },
+                            context_attempt_diagnostics: contextAttemptDiagnostics,
+                            finalization_diagnostics: finalizationDiagnostics,
+                            context_requests: [],
+                            context_request_diagnostics: [],
+                            context_snippets: [],
+                        };
+                    }
+
+                    removeSentinel();
+                    return {
+                        name: witness.name,
+                        model: witness.model,
+                        status: 'error',
+                        error: lastChanceClass.error,
+                        response_path: null,
+                        raw_request_path: requestPath,
+                        triage_input_path: null,
+                        usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+                        safety: {
+                            context_request: firstAttempt.response.safety,
+                            context_request_retry: retryAttempt.response.safety,
+                            final_last_chance: lastChanceAttempt.response.safety,
+                        },
+                        context_attempt_diagnostics: contextAttemptDiagnostics,
+                        finalization_diagnostics: [],
+                        context_requests: [],
+                        context_request_diagnostics: [],
+                        context_snippets: [],
+                    };
+                }
+
+                const lastChanceError = errorMessage(lastChanceAttempt.response, lastChanceAttempt.stderr);
+                contextAttemptDiagnostics.push({
+                    stage: 'initial_last_chance',
+                    round: 1,
+                    outcome: 'invoke_error',
+                    error: lastChanceError,
+                    request_count: 0,
+                    diagnostic_count: 0,
+                });
+                removeSentinel();
+                return {
+                    name: witness.name,
+                    model: witness.model,
+                    status: 'error',
+                    error: lastChanceError,
+                    response_path: null,
+                    raw_request_path: requestPath,
+                    triage_input_path: null,
+                    usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+                    safety: {
+                        context_request: firstAttempt.response.safety,
+                        context_request_retry: retryAttempt.response.safety,
+                        final_last_chance: lastChanceAttempt.response.safety,
+                    },
+                    context_attempt_diagnostics: contextAttemptDiagnostics,
+                    finalization_diagnostics: [],
+                    context_requests: [],
+                    context_request_diagnostics: [],
+                    context_snippets: [],
+                };
+            }
+            removeSentinel();
+            return {
+                name: witness.name,
+                model: witness.model,
+                status: 'error',
+                error: firstError,
+                response_path: null,
+                raw_request_path: requestPath,
+                triage_input_path: null,
+                usage: usageOrNull(firstAttempt.response),
+                safety: firstAttempt.response.safety ?? null,
+                context_attempt_diagnostics: contextAttemptDiagnostics,
+                finalization_diagnostics: [],
+                context_requests: [],
+                context_request_diagnostics: [],
+                context_snippets: [],
+            };
+        }
+
+        const firstClass = classifyAdvisoryWitnessAnswer(stripBlockquoteMarkers(firstAttempt.response.result ?? ''), strictAdvisoryRubric);
+        contextAttemptDiagnostics.push({
+            stage: 'initial',
+            round: 1,
+            outcome: firstClass.status === 'report' ? 'report' : 'invalid',
+            error: firstClass.status === 'invalid' ? firstClass.error : null,
+            request_count: 0,
+            diagnostic_count: 0,
+        });
+        if (firstClass.status === 'report') {
+            writeFileSync(responsePath, firstClass.report);
+            removeSentinel();
+            return {
+                name: witness.name,
+                model: witness.model,
+                status: 'ok',
+                error: null,
+                response_path: responsePath,
+                raw_request_path: requestPath,
+                triage_input_path: responsePath,
+                usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+                safety: firstAttempt.response.safety ?? null,
+                context_attempt_diagnostics: contextAttemptDiagnostics,
+                finalization_diagnostics: finalizationDiagnostics,
+                context_requests: [],
+                context_request_diagnostics: [],
+                context_snippets: [],
+            };
+        }
+
+        const retryPrompt = buildAdvisoryContextRequestRetryPrompt(
+            prompt,
+            firstAttempt.response.result ?? '',
+            firstClass.error,
+            limitsObj,
+            strictAdvisoryRubric,
+        );
+        const retryAttempt = await invoke(witness.model, retryPrompt, projectDir, {
+            maxSteps: 1,
+            maxTotalTokens: 30_000,
+            systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
+        });
+        allInvokeResponses.push(retryAttempt.response);
+
+        if (retryAttempt.response.status === 'success') {
+            const retryClass = classifyAdvisoryWitnessAnswer(stripBlockquoteMarkers(retryAttempt.response.result ?? ''), strictAdvisoryRubric);
+            contextAttemptDiagnostics.push({
+                stage: 'initial_retry',
+                round: 1,
+                outcome: retryClass.status === 'report' ? 'report' : 'invalid',
+                error: retryClass.status === 'invalid' ? retryClass.error : null,
+                request_count: 0,
+                diagnostic_count: 0,
+            });
+            if (retryClass.status === 'report') {
+                writeFileSync(responsePath, retryClass.report);
+                removeSentinel();
+                return {
+                    name: witness.name,
+                    model: witness.model,
+                    status: 'ok',
+                    error: null,
+                    response_path: responsePath,
+                    raw_request_path: requestPath,
+                    triage_input_path: responsePath,
+                    usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+                    safety: {
+                        context_request: firstAttempt.response.safety,
+                        context_request_retry: retryAttempt.response.safety,
+                    },
+                    context_attempt_diagnostics: contextAttemptDiagnostics,
+                    finalization_diagnostics: finalizationDiagnostics,
+                    context_requests: [],
+                    context_request_diagnostics: [],
+                    context_snippets: [],
+                };
+            }
+
+            const lastChancePrompt = buildAdvisoryWitnessLastChancePrompt(
+                prompt,
+                [firstAttempt.response.result ?? '', retryAttempt.response.result ?? ''],
+                retryClass.error,
+                strictAdvisoryRubric,
+            );
+            const lastChanceAttempt = await invoke(witness.model, lastChancePrompt, projectDir, {
+                maxSteps: 1,
+                maxTotalTokens: 30_000,
+                systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
+            });
+            allInvokeResponses.push(lastChanceAttempt.response);
+            if (lastChanceAttempt.response.status === 'success') {
+                const lastChanceClass = classifyAdvisoryWitnessAnswer(stripBlockquoteMarkers(lastChanceAttempt.response.result ?? ''), strictAdvisoryRubric);
+                contextAttemptDiagnostics.push({
+                    stage: 'initial_last_chance',
+                    round: 1,
+                    outcome: lastChanceClass.status === 'report' ? 'report' : 'invalid',
+                    error: lastChanceClass.status === 'invalid' ? lastChanceClass.error : null,
+                    request_count: 0,
+                    diagnostic_count: 0,
+                });
+                if (lastChanceClass.status === 'report') {
+                    writeFileSync(responsePath, lastChanceClass.report);
+                    removeSentinel();
+                    return {
+                        name: witness.name,
+                        model: witness.model,
+                        status: 'ok',
+                        error: null,
+                        response_path: responsePath,
+                        raw_request_path: requestPath,
+                        triage_input_path: responsePath,
+                        usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+                        safety: {
+                            context_request: firstAttempt.response.safety,
+                            context_request_retry: retryAttempt.response.safety,
+                            final_last_chance: lastChanceAttempt.response.safety,
+                        },
+                        context_attempt_diagnostics: contextAttemptDiagnostics,
+                        finalization_diagnostics: finalizationDiagnostics,
+                        context_requests: [],
+                        context_request_diagnostics: [],
+                        context_snippets: [],
+                    };
+                }
+            } else {
+                contextAttemptDiagnostics.push({
+                    stage: 'initial_last_chance',
+                    round: 1,
+                    outcome: 'invoke_error',
+                    error: errorMessage(lastChanceAttempt.response, lastChanceAttempt.stderr),
+                    request_count: 0,
+                    diagnostic_count: 0,
+                });
+            }
+        } else {
+            contextAttemptDiagnostics.push({
+                stage: 'initial_retry',
+                round: 1,
+                outcome: 'invoke_error',
+                error: errorMessage(retryAttempt.response, retryAttempt.stderr),
+                request_count: 0,
+                diagnostic_count: 0,
+            });
+        }
+
+        removeSentinel();
+        return {
+            name: witness.name,
+            model: witness.model,
+            status: 'error',
+            error: firstClass.error,
+            response_path: null,
+            raw_request_path: requestPath,
+            triage_input_path: requestPath,
+            usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
+            safety: {
+                context_request: firstAttempt.response.safety,
+                context_request_retry: retryAttempt.response.safety,
+            },
+            context_attempt_diagnostics: contextAttemptDiagnostics,
+            finalization_diagnostics: finalizationDiagnostics,
+            context_requests: [],
+            context_request_diagnostics: [],
+            context_snippets: [],
+        };
+    }
 
     // Build and issue the round-1 context-request prompt.
     const firstPrompt = buildContextRequestPrompt(
@@ -563,6 +1627,15 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     allInvokeResponses.push(firstAttempt.response);
 
     if (firstAttempt.response.status !== 'success') {
+        contextAttemptDiagnostics.push({
+            stage: 'initial',
+            round: 1,
+            outcome: 'invoke_error',
+            error: errorMessage(firstAttempt.response, firstAttempt.stderr),
+            request_count: 0,
+            diagnostic_count: 0,
+        });
+        removeSentinel();
         return {
             name: witness.name,
             model: witness.model,
@@ -573,7 +1646,10 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
             triage_input_path: null,
             usage: usageOrNull(firstAttempt.response),
             safety: firstAttempt.response.safety ?? null,
+            context_attempt_diagnostics: contextAttemptDiagnostics,
+            finalization_diagnostics: [],
             context_requests: [],
+            context_request_diagnostics: [],
             context_snippets: [],
         };
     }
@@ -594,9 +1670,24 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     while (roundsUsed < maxRounds) {
         roundsUsed++;
         const roundText = currentResponse.result ?? '';
+        const requestAnchors = {
+            symbolLocations,
+            priorSnippets: allSnippets,
+            groundedDirectFileSources,
+        };
+        const attemptStage = roundsUsed === 1 ? 'initial' : 'continuation';
+        const retryStage = roundsUsed === 1 ? 'initial_retry' : 'continuation_retry';
 
-        let classification = classifyWitnessFirstPass(stripBlockquoteMarkers(roundText), limits);
+        let classification = classifyWitnessFirstPass(stripBlockquoteMarkers(roundText), limits, requestAnchors, taskMode);
         let retryResponse: { response: InvokeResponse; stderr: string } | null = null;
+        if ('diagnostics' in classification) {
+            allRequestDiagnostics.push(...classification.diagnostics);
+        }
+        contextAttemptDiagnostics.push(buildWitnessContextAttemptDiagnostic({
+            stage: attemptStage,
+            round: roundsUsed,
+            classification,
+        }));
 
         if (classification.status === 'invalid' && classification.retryable) {
             const retryPrompt = buildContextRequestRetryPrompt(prompt, roundText, limitsObj);
@@ -607,11 +1698,28 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
             });
             allInvokeResponses.push(retryResponse.response);
             if (retryResponse.response.status === 'success') {
-                const retryClass = classifyWitnessFirstPass(stripBlockquoteMarkers(retryResponse.response.result ?? ''), limits);
+                const retryClass = classifyWitnessFirstPass(stripBlockquoteMarkers(retryResponse.response.result ?? ''), limits, requestAnchors, taskMode);
+                if ('diagnostics' in retryClass) {
+                    allRequestDiagnostics.push(...retryClass.diagnostics);
+                }
+                contextAttemptDiagnostics.push(buildWitnessContextAttemptDiagnostic({
+                    stage: retryStage,
+                    round: roundsUsed,
+                    classification: retryClass,
+                }));
                 if (retryClass.status === 'report' || retryClass.status === 'needs_context') {
                     classification = retryClass;
                     lastEffectiveResponseText = retryResponse.response.result ?? '';
                 }
+            } else {
+                contextAttemptDiagnostics.push({
+                    stage: retryStage,
+                    round: roundsUsed,
+                    outcome: 'invoke_error',
+                    error: errorMessage(retryResponse.response, retryResponse.stderr),
+                    request_count: 0,
+                    diagnostic_count: 0,
+                });
             }
         } else {
             lastEffectiveResponseText = roundText;
@@ -631,6 +1739,7 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
 
         if (classification.status === 'invalid') {
             // Unrecoverable — report error immediately.
+            removeSentinel();
             return {
                 name: witness.name,
                 model: witness.model,
@@ -641,7 +1750,10 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
                 triage_input_path: requestPath,
                 usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
                 safety: buildRoundSafeties(roundSafeties),
+                context_attempt_diagnostics: contextAttemptDiagnostics,
+                finalization_diagnostics: finalizationDiagnostics,
                 context_requests: allRequests,
+                context_request_diagnostics: allRequestDiagnostics,
                 context_snippets: allSnippets.map(({ text: _text, ...snippet }) => snippet),
             };
         }
@@ -676,6 +1788,15 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
 
         if (nextAttempt.response.status !== 'success') {
             // Provider error in continuation — return error immediately.
+            contextAttemptDiagnostics.push({
+                stage: 'continuation',
+                round: roundsUsed + 1,
+                outcome: 'invoke_error',
+                error: errorMessage(nextAttempt.response, nextAttempt.stderr),
+                request_count: 0,
+                diagnostic_count: 0,
+            });
+            removeSentinel();
             return {
                 name: witness.name,
                 model: witness.model,
@@ -686,7 +1807,10 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
                 triage_input_path: null,
                 usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
                 safety: buildRoundSafeties(roundSafeties),
+                context_attempt_diagnostics: contextAttemptDiagnostics,
+                finalization_diagnostics: finalizationDiagnostics,
                 context_requests: allRequests,
+                context_request_diagnostics: allRequestDiagnostics,
                 context_snippets: allSnippets.map(({ text: _text, ...snippet }) => snippet),
             };
         }
@@ -696,6 +1820,7 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
 
     // If the witness finalized voluntarily, return immediately.
     if (lastClassification?.status === 'report') {
+        removeSentinel();
         return {
             name: witness.name,
             model: witness.model,
@@ -706,7 +1831,10 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
             triage_input_path: responsePath,
             usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
             safety: buildRoundSafeties(roundSafeties),
+            context_attempt_diagnostics: contextAttemptDiagnostics,
+            finalization_diagnostics: finalizationDiagnostics,
             context_requests: allRequests,
+            context_request_diagnostics: allRequestDiagnostics,
             context_snippets: allSnippets.map(({ text: _text, ...snippet }) => snippet),
         };
     }
@@ -724,7 +1852,13 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     const finalClassification = finalResponse.status === 'success'
         ? classifyWitnessFinal(finalResponse.result ?? '')
         : null;
+    finalizationDiagnostics.push(finalResponse.status === 'success'
+        ? finalClassification?.status === 'report'
+            ? { stage: 'final', outcome: 'report', error: null, report_source: finalClassification.source }
+            : { stage: 'final', outcome: 'invalid', error: finalClassification?.error ?? 'unknown finalization classification failure' }
+        : { stage: 'final', outcome: 'invoke_error', error: errorMessage(finalResponse, final.stderr) });
     let finalRetry: { response: InvokeResponse; stderr: string } | null = null;
+    let finalLastChance: { response: InvokeResponse; stderr: string } | null = null;
     let effectiveFinalClassification = finalClassification;
     if (finalResponse.status === 'success' && finalClassification?.status === 'invalid' && finalClassification.retryable) {
         finalRetry = await invoke(
@@ -740,10 +1874,53 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
         allInvokeResponses.push(finalRetry.response);
         if (finalRetry.response.status === 'success') {
             const retryClass = classifyWitnessFinal(finalRetry.response.result ?? '');
+            finalizationDiagnostics.push(retryClass.status === 'report'
+                ? { stage: 'final_retry', outcome: 'report', error: null, report_source: retryClass.source }
+                : { stage: 'final_retry', outcome: 'invalid', error: retryClass.error });
             if (retryClass.status === 'report') {
                 effectiveFinalClassification = retryClass;
                 writeFileSync(responsePath, retryClass.report);
+            } else if (retryClass.status === 'invalid' && allSnippets.length > 0) {
+                finalLastChance = await invoke(
+                    witness.model,
+                    buildFinalizationLastChancePrompt(
+                        prompt,
+                        lastEffectiveResponseText,
+                        allSnippets,
+                        [finalResponse.result ?? '', finalRetry.response.result ?? ''],
+                        witness.model,
+                    ),
+                    projectDir,
+                    {
+                        maxSteps: 1,
+                        maxTotalTokens: 30_000,
+                        systemMessages: buildNoToolsConsultSystemMessages('witness', witness.model),
+                    },
+                );
+                allInvokeResponses.push(finalLastChance.response);
+                if (finalLastChance.response.status === 'success') {
+                    const lastChanceClass = classifyWitnessFinal(finalLastChance.response.result ?? '');
+                    finalizationDiagnostics.push(lastChanceClass.status === 'report'
+                        ? { stage: 'final_last_chance', outcome: 'report', error: null, report_source: lastChanceClass.source }
+                        : { stage: 'final_last_chance', outcome: 'invalid', error: lastChanceClass.error });
+                    if (lastChanceClass.status === 'report') {
+                        effectiveFinalClassification = lastChanceClass;
+                        writeFileSync(responsePath, lastChanceClass.report);
+                    }
+                } else {
+                    finalizationDiagnostics.push({
+                        stage: 'final_last_chance',
+                        outcome: 'invoke_error',
+                        error: errorMessage(finalLastChance.response, finalLastChance.stderr),
+                    });
+                }
             }
+        } else {
+            finalizationDiagnostics.push({
+                stage: 'final_retry',
+                outcome: 'invoke_error',
+                error: errorMessage(finalRetry.response, finalRetry.stderr),
+            });
         }
     } else if (finalResponse.status === 'success' && finalClassification?.status === 'report') {
         writeFileSync(responsePath, finalClassification.report);
@@ -751,26 +1928,50 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
 
     const finalSucceeded = finalResponse.status === 'success'
         && effectiveFinalClassification?.status === 'report';
+    const finalError = finalSucceeded
+        ? null
+        : finalResponse.status === 'success'
+        ? (finalClassification?.status === 'invalid' ? finalClassification.error : null)
+        : errorMessage(finalResponse, final.stderr);
     const roundsSafety = buildRoundSafeties(roundSafeties);
     const finalSafety = typeof roundsSafety === 'object' && roundsSafety !== null && 'context_request' in roundsSafety
-        ? { ...roundsSafety, final: final.response.safety, final_retry: finalRetry?.response.safety }
-        : { context_request: undefined, final: final.response.safety, final_retry: finalRetry?.response.safety };
+        ? { ...roundsSafety, final: final.response.safety, final_retry: finalRetry?.response.safety, final_last_chance: finalLastChance?.response.safety }
+        : { context_request: undefined, final: final.response.safety, final_retry: finalRetry?.response.safety, final_last_chance: finalLastChance?.response.safety };
+    let fallbackResponsePath: string | null = null;
+    if (!finalSucceeded && allSnippets.length > 0 && finalError) {
+        fallbackResponsePath = join(tmpdir(), `aca-consult-${witness.name}-fallback-${suffix}.md`);
+        finalizationDiagnostics.push({
+            stage: 'fallback',
+            outcome: 'generated',
+            error: finalError,
+        });
+        writeFileSync(fallbackResponsePath, buildWitnessFallbackReport({
+            error: finalError,
+            requests: allRequests,
+            snippets: allSnippets,
+            diagnostics: allRequestDiagnostics,
+            contextAttemptDiagnostics,
+            finalizationDiagnostics,
+        }));
+    }
 
+    removeSentinel();
     return {
         name: witness.name,
         model: witness.model,
         status: finalSucceeded ? 'ok' : 'error',
-        error: finalSucceeded
-            ? null
-            : finalResponse.status === 'success'
-            ? (finalClassification?.status === 'invalid' ? finalClassification.error : null)
-            : errorMessage(finalResponse, final.stderr),
-        response_path: finalSucceeded ? responsePath : null,
+        error: finalError,
+        response_path: finalSucceeded ? responsePath : fallbackResponsePath,
         raw_request_path: requestPath,
-        triage_input_path: finalResponse.result ? (finalSucceeded ? responsePath : finalRawPath) : null,
+        triage_input_path: finalSucceeded
+            ? responsePath
+            : fallbackResponsePath ?? (finalResponse.result ? finalRawPath : null),
         usage: mergeUsage(...allInvokeResponses.map(r => r?.usage)),
         safety: finalSafety,
+        context_attempt_diagnostics: contextAttemptDiagnostics,
+        finalization_diagnostics: finalizationDiagnostics,
         context_requests: allRequests,
+        context_request_diagnostics: allRequestDiagnostics,
         context_snippets: allSnippets.map(({ text: _text, ...snippet }) => snippet),
     };
 }
@@ -802,12 +2003,33 @@ async function buildSharedContext(prompt: string, projectDir: string, suffix: st
     maxBytes: number;
 }): Promise<NonNullable<ConsultResult['shared_context']> & { snippetsWithText: ContextSnippet[] }> {
     const requestPath = join(tmpdir(), `aca-consult-shared-context-${suffix}.md`);
+    const fallbackPath = join(tmpdir(), `aca-consult-shared-context-fallback-${suffix}.md`);
+    const attemptDiagnostics: SharedContextAttemptDiagnostic[] = [];
+    const summarizeProvenance = (requests: ContextRequest[], snippets: ContextSnippet[]): string[] =>
+        buildSharedContextProvenanceSummary(requests, snippets);
+    const writeFallback = (error: string, requests: ContextRequest[], diagnostics: ContextRequestDiagnostic[], snippets: ContextSnippet[]): string => {
+        const provenanceSummary = summarizeProvenance(requests, snippets);
+        writeFileSync(fallbackPath, buildSharedContextFallbackReport({
+            error,
+            requests,
+            snippets,
+            diagnostics,
+            scoutAttemptDiagnostics: attemptDiagnostics,
+            provenanceSummary,
+        }));
+        return fallbackPath;
+    };
+    const identifiers = extractCodeIdentifiers(prompt);
+    const symbolLocations = identifiers.length > 0
+        ? await resolveSymbolLocations(identifiers, projectDir)
+        : [];
+    const groundedDirectFileSources = extractPromptGroundedFileSources(prompt);
     const scoutPrompt = buildSharedContextRequestPrompt(prompt, {
         maxSnippets: options.maxSnippets,
         maxLines: options.maxLines,
         maxBytes: options.maxBytes,
         maxRounds: 1,
-    });
+    }, symbolLocations.length > 0 ? symbolLocations : undefined);
     const scout = await invokeWithFallbackModels(options.models, scoutPrompt, projectDir, {
         maxSteps: 1,
         maxTotalTokens: 30_000,
@@ -817,60 +2039,231 @@ async function buildSharedContext(prompt: string, projectDir: string, suffix: st
     });
 
     if (scout.response.status !== 'success') {
+        attemptDiagnostics.push({
+            stage: 'initial',
+            outcome: 'invoke_error',
+            error: errorMessage(scout.response, scout.stderr),
+            request_count: 0,
+            diagnostic_count: 0,
+        });
+        const triageInputPath = writeFallback(errorMessage(scout.response, scout.stderr), [], [], []);
         return {
             status: 'error',
             model: scout.model,
             request_path: requestPath,
+            triage_input_path: triageInputPath,
             error: errorMessage(scout.response, scout.stderr),
             usage: usageOrNull(scout.response),
             safety: scout.response.safety ?? null,
+            scout_attempt_diagnostics: attemptDiagnostics,
+            provenance_summary: [],
             context_requests: [],
+            context_request_diagnostics: [],
             context_snippets: [],
             snippetsWithText: [],
         };
     }
 
     if (containsPseudoToolCall(scout.response.result ?? '')) {
+        attemptDiagnostics.push({
+            stage: 'initial',
+            outcome: 'invalid',
+            error: 'pseudo-tool call emitted in shared raw context scout pass',
+            request_count: 0,
+            diagnostic_count: 0,
+        });
+        const triageInputPath = writeFallback('pseudo-tool call emitted in shared raw context scout pass', [], [], []);
         return {
             status: 'error',
             model: scout.model,
             request_path: requestPath,
+            triage_input_path: triageInputPath,
             error: 'pseudo-tool call emitted in shared raw context scout pass',
             usage: usageOrNull(scout.response),
             safety: scout.response.safety ?? null,
+            scout_attempt_diagnostics: attemptDiagnostics,
+            provenance_summary: [],
             context_requests: [],
+            context_request_diagnostics: [],
             context_snippets: [],
             snippetsWithText: [],
         };
     }
 
-    const requests = parseContextRequests(scout.response.result ?? '', {
+    const firstInspection = inspectContextRequests(scout.response.result ?? '', {
+        maxSnippets: options.maxSnippets,
+        maxLines: options.maxLines,
+        maxBytes: options.maxBytes,
+        maxRounds: 1,
+    }, undefined, {
+        disallowExplicitFileRanges: true,
+        symbolLocations: symbolLocations.length > 0 ? symbolLocations : undefined,
+        groundedDirectFileSources,
+    });
+    attemptDiagnostics.push({
+        stage: 'initial',
+        outcome: firstInspection.requests.length > 0 ? 'requests' : 'no_requests',
+        error: null,
+        request_count: firstInspection.requests.length,
+        diagnostic_count: firstInspection.diagnostics.length,
+    });
+    const firstRequests = firstInspection.requests;
+    const firstSnippets = fulfillContextRequests(firstRequests, projectDir, {
         maxSnippets: options.maxSnippets,
         maxLines: options.maxLines,
         maxBytes: options.maxBytes,
         maxRounds: 1,
     });
-    const snippets = fulfillContextRequests(requests, projectDir, {
-        maxSnippets: options.maxSnippets,
-        maxLines: options.maxLines,
-        maxBytes: options.maxBytes,
-        maxRounds: 1,
-    });
+    const needsFollowUp = firstRequests.some(request => request.type === 'tree')
+        || firstSnippets.some(snippet => snippet.status === 'error');
+
+    let requests = [...firstRequests];
+    let diagnostics = [...firstInspection.diagnostics];
+    let snippets = [...firstSnippets];
+    let safety: InvokeSafety | { context_request?: InvokeSafety; extra_rounds?: Array<{ context_request?: InvokeSafety }> } | null = scout.response.safety ?? null;
+    let usage = usageOrNull(scout.response);
+
+    if (needsFollowUp) {
+        const continuationPrompt = buildSharedContextContinuationPrompt(prompt, firstSnippets, {
+            maxSnippets: options.maxSnippets,
+            maxLines: options.maxLines,
+            maxBytes: options.maxBytes,
+            maxRounds: 2,
+        });
+        const continuation = await invokeWithFallbackModels([scout.model], continuationPrompt, projectDir, {
+            maxSteps: 1,
+            maxTotalTokens: 30_000,
+            systemMessages: buildNoToolsConsultSystemMessages('shared_context'),
+        });
+        if (continuation.response.result) {
+            appendFileSync(
+                requestPath,
+                `\n\n## Shared Scout Continuation Raw Response\n\n${continuation.response.result}\n`,
+            );
+        }
+        if (continuation.response.status !== 'success') {
+            attemptDiagnostics.push({
+                stage: 'continuation',
+                outcome: 'invoke_error',
+                error: errorMessage(continuation.response, continuation.stderr),
+                request_count: 0,
+                diagnostic_count: 0,
+            });
+            const triageInputPath = writeFallback(
+                errorMessage(continuation.response, continuation.stderr),
+                requests,
+                diagnostics,
+                snippets,
+            );
+            return {
+                status: 'error',
+                model: continuation.model,
+                request_path: requestPath,
+                triage_input_path: triageInputPath,
+                error: errorMessage(continuation.response, continuation.stderr),
+                usage: mergeUsage(usage, usageOrNull(continuation.response)),
+                safety: {
+                    context_request: scout.response.safety,
+                    extra_rounds: [{ context_request: continuation.response.safety }],
+                },
+                scout_attempt_diagnostics: attemptDiagnostics,
+                provenance_summary: summarizeProvenance(requests, snippets),
+                context_requests: requests,
+                context_request_diagnostics: diagnostics,
+                context_snippets: snippets.map(({ text: _text, ...snippet }) => snippet),
+                snippetsWithText: snippets,
+            };
+        }
+        if (containsPseudoToolCall(continuation.response.result ?? '')) {
+            attemptDiagnostics.push({
+                stage: 'continuation',
+                outcome: 'invalid',
+                error: 'pseudo-tool call emitted in shared raw context scout continuation pass',
+                request_count: 0,
+                diagnostic_count: 0,
+            });
+            const triageInputPath = writeFallback(
+                'pseudo-tool call emitted in shared raw context scout continuation pass',
+                requests,
+                diagnostics,
+                snippets,
+            );
+            return {
+                status: 'error',
+                model: continuation.model,
+                request_path: requestPath,
+                triage_input_path: triageInputPath,
+                error: 'pseudo-tool call emitted in shared raw context scout continuation pass',
+                usage: mergeUsage(usage, usageOrNull(continuation.response)),
+                safety: {
+                    context_request: scout.response.safety,
+                    extra_rounds: [{ context_request: continuation.response.safety }],
+                },
+                scout_attempt_diagnostics: attemptDiagnostics,
+                provenance_summary: summarizeProvenance(requests, snippets),
+                context_requests: requests,
+                context_request_diagnostics: diagnostics,
+                context_snippets: snippets.map(({ text: _text, ...snippet }) => snippet),
+                snippetsWithText: snippets,
+            };
+        }
+
+        const secondInspection = inspectContextRequests(continuation.response.result ?? '', {
+            maxSnippets: options.maxSnippets,
+            maxLines: options.maxLines,
+            maxBytes: options.maxBytes,
+            maxRounds: 1,
+        }, {
+            priorSnippets: firstSnippets,
+        });
+        attemptDiagnostics.push({
+            stage: 'continuation',
+            outcome: secondInspection.requests.length > 0 ? 'requests' : 'no_requests',
+            error: null,
+            request_count: secondInspection.requests.length,
+            diagnostic_count: secondInspection.diagnostics.length,
+        });
+        diagnostics = [...diagnostics, ...secondInspection.diagnostics];
+        const groundedSecondRequests = secondInspection.requests;
+        const secondSnippets = fulfillContextRequests(groundedSecondRequests, projectDir, {
+            maxSnippets: options.maxSnippets,
+            maxLines: options.maxLines,
+            maxBytes: options.maxBytes,
+            maxRounds: 1,
+        });
+        requests = [...requests, ...groundedSecondRequests];
+        snippets = [...snippets, ...secondSnippets];
+        usage = mergeUsage(usage, usageOrNull(continuation.response));
+        safety = {
+            context_request: scout.response.safety,
+            extra_rounds: [{ context_request: continuation.response.safety }],
+        };
+    }
 
     return {
         status: 'ok',
         model: scout.model,
         request_path: requestPath,
+        triage_input_path: null,
         error: null,
-        usage: usageOrNull(scout.response),
-        safety: scout.response.safety ?? null,
+        usage,
+        safety,
+        scout_attempt_diagnostics: attemptDiagnostics,
+        provenance_summary: summarizeProvenance(requests, snippets),
         context_requests: requests,
+        context_request_diagnostics: diagnostics,
         context_snippets: snippets.map(({ text: _text, ...snippet }) => snippet),
         snippetsWithText: snippets,
     };
 }
 
-function buildTriagePrompt(witnesses: Record<string, WitnessResult>): string {
+function buildTriagePrompt(
+    witnesses: Record<string, WitnessResult>,
+    sharedContext?: NonNullable<ConsultResult['shared_context']>,
+): string {
+    const sharedSection = sharedContext?.triage_input_path
+        ? `## shared_context (${sharedContext.model ?? 'unknown'})\n\nStatus: degraded (${sharedContext.error ?? 'unknown failure'})\n\n${readFileSync(sharedContext.triage_input_path, 'utf8')}`
+        : null;
     const sections = Object.values(witnesses).map(result => {
         const body = result.triage_input_path
             ? readFileSync(result.triage_input_path, 'utf8')
@@ -879,13 +2272,14 @@ function buildTriagePrompt(witnesses: Record<string, WitnessResult>): string {
             ? 'ok'
             : `degraded (${result.error ?? 'unknown failure'})`;
         return `## ${result.name} (${result.model})\n\nStatus: ${status}\n\n${body}`;
-    }).join('\n\n---\n\n');
+    });
+    const combinedSections = sharedSection ? [sharedSection, ...sections] : sections;
     return `# ACA Consult Triage
 
 You are an aggregation-only triage pass.
 ${NO_NATIVE_FUNCTION_CALLING}
 ${NO_PROTOCOL_DELIBERATION}
-The witness reports below are your only evidence. Do not do a fresh code review.
+The witness reports and shared scout note below are your only evidence. Do not do a fresh code review.
 Do not request files, list directories, call tools, or emit XML/function/tool markup such as \`<call>\`, \`<tool_call>\`, \`<function_calls>\`, or \`<invoke>\`.
 Do not quote or reproduce literal pseudo-tool markup from witness reports; refer to it generically as pseudo-tool-call markup.
 If evidence is missing, mark it as an open question instead of trying to fetch more context.
@@ -901,13 +2295,18 @@ Return a concise Markdown report with:
 
 If ACA enforces structured output for this request, put the Markdown report in the "markdown" field.
 
-${sections}
+${combinedSections.join('\n\n---\n\n')}
 `;
 }
 
-function buildTriageRetryPrompt(witnesses: Record<string, WitnessResult>, invalidResponse: string, reasons: string[]): string {
+function buildTriageRetryPrompt(
+    witnesses: Record<string, WitnessResult>,
+    sharedContext: NonNullable<ConsultResult['shared_context']> | undefined,
+    invalidResponse: string,
+    reasons: string[],
+): string {
     const problems = reasons.map(reason => `- ${reason}`).join('\n');
-    return `${buildTriagePrompt(witnesses)}
+    return `${buildTriagePrompt(witnesses, sharedContext)}
 
 ## Invalid Previous Triage Response
 
@@ -938,9 +2337,13 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
     const rawQuestion = options.question ?? '';
     const { obfuscated: obfuscatedQuestion, legend } = obfuscateIdentifiers(rawQuestion);
     const questionForPrompt = legend ? `${legend}\n\n${obfuscatedQuestion}` : obfuscatedQuestion;
-    const promptBase = options.promptFile
+    const promptSource = options.promptFile
         ? readFileSync(options.promptFile, 'utf8')
-        : renderPrompt(questionForPrompt);
+        : rawQuestion;
+    const taskMode = inferConsultTaskMode(promptSource);
+    const promptBase = options.promptFile
+        ? promptSource
+        : renderPrompt(questionForPrompt, taskMode);
     const pack = (options.packRepo || (options.packPath?.length ?? 0) > 0)
         ? buildEvidencePack({
             projectDir,
@@ -966,6 +2369,7 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
         ? appendSharedContextPack(prompt, sharedContext.model ?? TRIAGE_MODEL, sharedContext.snippetsWithText)
         : prompt;
     const witnesses = selectWitnesses(options.witnesses);
+    const triageMode = resolveTriageMode(options);
     const limits = {
         maxContextSnippets: options.maxContextSnippets ?? 3,
         maxContextLines: options.maxContextLines ?? 120,
@@ -973,11 +2377,12 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
         maxContextRounds: options.maxContextRounds ?? 3,
     };
     const witnessEntries = await Promise.all(
-        witnesses.map(async witness => [witness.name, await runWitness(witness, promptForWitnesses, projectDir, suffix, limits)] as const),
+        witnesses.map(async witness => [witness.name, await runWitness(witness, promptForWitnesses, projectDir, suffix, limits, taskMode)] as const),
     );
     const witnessResults = Object.fromEntries(witnessEntries);
     const successCount = Object.values(witnessResults).filter(result => result.status === 'ok').length;
-    const triageableCount = Object.values(witnessResults).filter(result => result.triage_input_path !== null).length;
+    const triageableCount = Object.values(witnessResults).filter(result => result.triage_input_path !== null).length
+        + (sharedContext?.triage_input_path ? 1 : 0);
 
     // --- Structured review aggregation (M7A.5 pipeline) ---
     // Runs deterministic Jaccard-clustering aggregation on witness markdown output.
@@ -1019,14 +2424,18 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
         model: null,
         path: null,
         raw_path: null,
-        error: options.skipTriage ? 'skipped by --skip-triage' : 'no triageable witness evidence',
+        error: triageMode === 'never'
+            ? 'skipped by triage=never'
+            : triageableCount === 0
+                ? 'no triageable witness evidence'
+                : 'skipped by triage=auto',
         usage: null,
         safety: null,
     };
-    if (!options.skipTriage && triageableCount > 0) {
+    if (shouldRunTriage(triageMode, triageableCount, witnessResults, sharedContext, structuredReview)) {
         const triagePath = join(tmpdir(), `aca-consult-triage-${suffix}.md`);
         const triageRawPath = join(tmpdir(), `aca-consult-triage-raw-${suffix}.md`);
-        const triageInvoke = await invokeWithFallbackModels([...TRIAGE_MODEL_CANDIDATES], buildTriagePrompt(witnessResults), projectDir, {
+        const triageInvoke = await invokeWithFallbackModels([...TRIAGE_MODEL_CANDIDATES], buildTriagePrompt(witnessResults, sharedContext), projectDir, {
             maxSteps: 1,
             maxTotalTokens: 30_000,
             outPath: triageRawPath,
@@ -1040,6 +2449,7 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
                 [triageInvoke.model],
                 buildTriageRetryPrompt(
                     witnessResults,
+                    sharedContext,
                     triageInvoke.response.result ?? '',
                     firstTriagePseudoToolCall
                         ? ['pseudo-tool call emitted in no-tools triage pass', ...firstTriageValidation.errors]
@@ -1090,10 +2500,14 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
                 status: sharedContext.status,
                 model: sharedContext.model,
                 request_path: sharedContext.request_path,
+                triage_input_path: sharedContext.triage_input_path,
                 error: sharedContext.error,
                 usage: sharedContext.usage,
                 safety: sharedContext.safety,
+                scout_attempt_diagnostics: sharedContext.scout_attempt_diagnostics,
+                provenance_summary: sharedContext.provenance_summary,
                 context_requests: sharedContext.context_requests,
+                context_request_diagnostics: sharedContext.context_request_diagnostics,
                 context_snippets: sharedContext.context_snippets,
             },
         } : {}),

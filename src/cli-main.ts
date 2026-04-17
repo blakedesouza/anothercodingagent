@@ -1469,7 +1469,7 @@ program
     .option('--question <question>', 'Question to ask witnesses')
     .option('--prompt-file <path>', 'Prompt file to use instead of --question')
     .option('--project-dir <path>', 'Project directory', process.cwd())
-    .option('--witnesses <list>', 'Comma-separated witness list, or all', 'all')
+    .option('--witnesses <list>', 'Comma-separated witness list; defaults to minimax,qwen')
     .option('--pack-repo', 'Build an evidence pack from the repo', false)
     .option('--pack-path <path>', 'File or directory to include in the evidence pack', (value, previous: string[]) => [...previous, value], [])
     .option('--pack-max-files <n>', 'Maximum evidence-pack files', value => Number(value), 5)
@@ -1484,13 +1484,14 @@ program
     .option('--shared-context-max-snippets <n>', 'Maximum shared raw snippets selected by the scout', value => Number(value), 8)
     .option('--shared-context-max-lines <n>', 'Maximum lines per shared raw snippet', value => Number(value), 160)
     .option('--shared-context-max-bytes <n>', 'Maximum bytes per shared raw snippet', value => Number(value), 16_000)
+    .option('--triage <mode>', 'Triage mode: auto, always, or never', 'auto')
     .option('--skip-triage', 'Skip triage aggregation', false)
     .option('--out <path>', 'Write result JSON to this path')
     .action(async (options: {
         question?: string;
         promptFile?: string;
         projectDir: string;
-        witnesses: string;
+        witnesses?: string;
         packRepo: boolean;
         packPath: string[];
         packMaxFiles: number;
@@ -1505,6 +1506,7 @@ program
         sharedContextMaxSnippets: number;
         sharedContextMaxLines: number;
         sharedContextMaxBytes: number;
+        triage: 'auto' | 'always' | 'never';
         skipTriage: boolean;
         out?: string;
     }) => {

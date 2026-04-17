@@ -60,14 +60,14 @@ describe('resolveSymbolLocations', () => {
         expect(locs[0].snippet).toContain('countHardRejectedToolCalls');
     });
 
-    it('finds buildContextRequestPrompt in context-request.ts at line 144', async () => {
+    it('finds buildContextRequestPrompt in context-request.ts at line 179', async () => {
         const locs = await resolveSymbolLocations(
             ['buildContextRequestPrompt'],
             PROJECT_DIR,
         );
         expect(locs).toHaveLength(1);
         expect(locs[0].file).toContain('context-request.ts');
-        expect(locs[0].line).toBe(144);
+        expect(locs[0].line).toBe(179);
     });
 
     it('returns empty array for a nonexistent identifier', async () => {
@@ -114,6 +114,6 @@ describe('buildContextRequestPrompt with symbol locations', () => {
             3,
             3,
         );
-        expect(prompt).not.toContain('symbol_locations');
+        expect(prompt).not.toContain('The following code identifiers were found in the question.');
     });
 });

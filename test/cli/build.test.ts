@@ -93,7 +93,7 @@ describe('M8.1 — Build & Package', () => {
         expect(exitCode).toBe(0);
 
         const witnesses = JSON.parse(stdout.trim());
-        expect(Object.keys(witnesses)).toEqual(['deepseek', 'kimi', 'qwen', 'gemma']);
+        expect(Object.keys(witnesses)).toEqual(['minimax', 'kimi', 'qwen', 'gemma']);
     });
 
     it('dev mode (tsx loader) also works with --version', () => {
