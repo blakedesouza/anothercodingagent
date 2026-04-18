@@ -619,6 +619,83 @@ describe('consult context requests', () => {
         expect(prompt).toContain('Do not emit XML, function-call, tool-call, invoke, parameter, arg_key, arg_value, read_file, [TOOL_CALL], or "tool_calls" markup');
     });
 
+    it('adds a grounded tree-then-file correction for ungrounded file-open retries', () => {
+        const prompt = buildContextRequestRetryPrompt(
+            'What npm package name is declared by this repository?',
+            '{"needs_context":[{"type":"file","path":"package.json","reason":"guess"}]}',
+            { maxSnippets: 2, maxLines: 50, maxBytes: 1000, maxRounds: 1 },
+            [{
+                request_index: 0,
+                reason: 'file_not_grounded',
+                message: 'file request path was not grounded by prior snippets, tree listings, or symbol locations',
+                type: 'file',
+                path: 'package.json',
+            }],
+            'minimax/minimax-m2.7',
+        );
+
+        expect(prompt).toContain('<model_hints>');
+        expect(prompt).toContain('If ACA has not already exposed that exact path');
+        expect(prompt).toContain('Correction:');
+        expect(prompt).toContain('"type":"tree","path":"."');
+        expect(prompt).toContain('"type":"file","path":"package.json"');
+    });
+
+    it('adds a concrete root-path correction for empty tree requests', () => {
+        const prompt = buildContextRequestRetryPrompt(
+            'What npm package name is declared by this repository?',
+            '{"needs_context":[{"type":"tree","path":"","reason":"locate package.json"}]}',
+            { maxSnippets: 2, maxLines: 50, maxBytes: 1000, maxRounds: 1 },
+            [{
+                request_index: 0,
+                reason: 'placeholder_path',
+                message: 'request path was empty or still contained placeholder markers',
+                type: 'tree',
+            }],
+            'minimax/minimax-m2.7',
+        );
+
+        expect(prompt).toContain('For the repo root directory, use `"path": "."` exactly.');
+    });
+
+    it('includes model hints in the initial witness context-request prompt', () => {
+        const prompt = buildContextRequestPrompt(
+            'What npm package name is declared by this repository?',
+            { maxSnippets: 2, maxLines: 50, maxBytes: 1000, maxRounds: 1 },
+            1,
+            1,
+            undefined,
+            'minimax/minimax-m2.7',
+        );
+
+        expect(prompt).toContain('<model_hints>');
+        expect(prompt).toContain('do not jump straight to a guessed file path');
+        expect(prompt).toContain('For the repo root directory, use `"path": "."`');
+    });
+
+    it('normalizes empty tree paths to the repo root', () => {
+        const inspection = inspectContextRequests(
+            JSON.stringify({
+                needs_context: [{
+                    type: 'tree',
+                    path: '',
+                    reason: 'locate package.json',
+                }],
+            }),
+            { maxSnippets: 1, maxLines: 80, maxBytes: 2000, maxRounds: 1 },
+            { symbolLocations: [], priorSnippets: [] },
+        );
+
+        expect(inspection.requests).toEqual([{
+            type: 'tree',
+            path: '.',
+            line_start: 0,
+            line_end: 0,
+            reason: 'locate package.json',
+        }]);
+        expect(inspection.diagnostics).toEqual([]);
+    });
+
     it('parses alternate file-list context requests from routed models', () => {
         const requests = parseContextRequests(
             '{"status":"success","data":{"files":[{"path":"src/providers/nanogpt-driver.ts","lines":"140-220"}]}}',

@@ -182,7 +182,12 @@ export function buildContextRequestPrompt(
     roundsRemaining?: number,
     totalRounds?: number,
     symbolLocations?: SymbolLocation[],
+    model?: string,
 ): string {
+    const hints = model ? getModelHints(model) : [];
+    const hintSection = hints.length > 0
+        ? `\n<model_hints>\n${hints.join('\n')}\n</model_hints>\n`
+        : '';
     const roundStatusLine = buildRoundStatusLine(roundsRemaining, totalRounds);
     const symbolBlock = symbolLocations && symbolLocations.length > 0
         ? `\n<symbol_locations>\nThe following code identifiers were found in the question. Their definition\nlocations in this project are pre-verified — use them as your starting point:\n\n${symbolLocations.map(loc => `- ${loc.identifier} → ${loc.file} line ${loc.line}`).join('\n')}\n</symbol_locations>\n`
@@ -194,6 +199,7 @@ ${symbolBlock}
 You are in ACA-native context-request mode.
 ${NO_NATIVE_FUNCTION_CALLING}
 ${NO_PROTOCOL_DELIBERATION}
+${hintSection}
 ${roundStatusLine}
 Answer in English only.
 First decide whether the available evidence is enough. If it is enough, return your final findings directly in Markdown.
@@ -239,7 +245,7 @@ To explore a directory before requesting specific files, use \`"type": "tree"\` 
 \`\`\`json
 {
   "needs_context": [
-    { "type": "tree", "path": "<real/repo/relative/directory>", "reason": "<your reason for exploring this directory>" }
+    { "type": "tree", "path": ".", "reason": "locate the exact file path before opening it" }
   ]
 }
 \`\`\`
@@ -261,6 +267,7 @@ Limits:
 - Request only repo-relative paths.
 - Do not request raw \`line_start\` / \`line_end\` ranges in witness mode. ACA chooses the snippet window for accepted file requests.
 - \`anchor_line\` must be a JSON number. Do not put prose, explanations, placeholders, strings, or comments in numeric fields.
+- For the repo root directory, use \`"path": "."\`. Do not use an empty string for a tree request.
 - If you do not have a verified anchor, request a narrow \`type: "tree"\` listing first or finalize with an open question.
 - Use \`type: 'tree'\` for a 3-level directory listing when you are unsure of exact file names. Do not request whole-repo searches.
 - Use \`type: 'symbol'\` only for identifiers listed in \`<symbol_locations>\` or otherwise explicitly cited in ACA-provided evidence.
@@ -338,6 +345,7 @@ Use \`"type": "expand"\` only around a line ACA already exposed via a symbol loc
 Use \`"type": "symbol"\` only for a pre-verified identifier that ACA already listed.
 
 Use \`"type": "tree"\` for a directory listing if you still need to explore a directory.
+For the repo root directory, use \`"path": "."\`. Do not use an empty string.
 
 Limits:
 - Request at most ${limits.maxSnippets} snippets per round.
@@ -353,8 +361,51 @@ Limits:
 `;
 }
 
-export function buildContextRequestRetryPrompt(prompt: string, invalidResponse: string, limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS): string {
-    return `${buildContextRequestPrompt(prompt, limits)}
+function buildContextRetryCorrectionBlock(diagnostics: ContextRequestDiagnostic[]): string {
+    const hasUngroundedFile = diagnostics.some(diagnostic => diagnostic.reason === 'file_not_grounded');
+    const hasPlaceholderTreePath = diagnostics.some(
+        diagnostic => diagnostic.reason === 'placeholder_path' && diagnostic.type === 'tree',
+    );
+    const sections: string[] = [];
+    if (hasUngroundedFile) {
+        sections.push(`
+
+Correction:
+- Your previous request tried to open a file path ACA had not grounded yet.
+- If you need an obvious root config or entry file such as \`package.json\`, first request a narrow tree of \`.\` and only open the file after ACA exposes that path.
+
+Corrected pattern:
+\`\`\`json
+{"needs_context":[{"type":"tree","path":".","reason":"locate the exact file path before opening it"}]}
+\`\`\`
+Then, after ACA exposes the file path in a tree result:
+\`\`\`json
+{"needs_context":[{"type":"file","path":"package.json","reason":"read the declared package name"}]}
+\`\`\``);
+    }
+    if (hasPlaceholderTreePath) {
+        sections.push(`
+
+Correction:
+- Your previous tree request used an empty or placeholder path.
+- For the repo root directory, use \`"path": "."\` exactly. Do not use an empty string.`);
+    }
+    return sections.join('\n');
+}
+
+function normalizeTreeRequestPath(path: string): string {
+    const trimmed = path.trim();
+    return trimmed === '' ? '.' : trimmed;
+}
+
+export function buildContextRequestRetryPrompt(
+    prompt: string,
+    invalidResponse: string,
+    limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS,
+    diagnostics: ContextRequestDiagnostic[] = [],
+    model?: string,
+): string {
+    return `${buildContextRequestPrompt(prompt, limits, undefined, undefined, undefined, model)}
 
 ## Invalid Previous Context Request
 
@@ -363,6 +414,7 @@ Your previous response attempted to call tools, emitted tool-call markup, or fai
 \`\`\`text
 ${truncateUtf8(invalidResponse, 4_000)}
 \`\`\`
+${buildContextRetryCorrectionBlock(diagnostics)}
 
 Try again now. If you need more context, return only the needs_context JSON object from the protocol above. If the evidence is enough, return final findings in Markdown.
 If your previous response used a custom JSON object or unsupported schema, rewrite it using either the exact needs_context object above or plain Markdown final findings.
@@ -860,7 +912,8 @@ function normalizeAnchoredContextRequests(
             continue;
         }
 
-        const path = typeof record.path === 'string' ? record.path.trim() : '';
+        const rawPath = typeof record.path === 'string' ? record.path : '';
+        const path = rawType === 'tree' ? normalizeTreeRequestPath(rawPath) : rawPath.trim();
         if (!path || path.includes('<') || path.includes('>')) {
             diagnostics.push({
                 request_index: requestIndex,
@@ -1025,7 +1078,8 @@ function normalizeContextRequests(
             });
             return;
         }
-        const path = typeof record.path === 'string' ? record.path.trim() : '';
+        const rawPath = typeof record.path === 'string' ? record.path : '';
+        const path = rawType === 'tree' ? normalizeTreeRequestPath(rawPath) : rawPath.trim();
         // Reject placeholder paths that were copied verbatim from the example JSON.
         if (!path || path.includes('<') || path.includes('>')) {
             diagnostics.push({

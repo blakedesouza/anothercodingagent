@@ -12,6 +12,12 @@
 export const MODEL_HINTS: Record<string, string[]> = {
     // Populated in C11.3 based on C11.1 failure catalog.
 
+    // Fix D: MiniMax sometimes jumps straight to obvious root config files
+    // (for example package.json) without first grounding the path via a tree listing.
+    'minimax/': [
+        'In witness context-request mode, do not jump straight to a guessed file path just because it is a common convention. If ACA has not already exposed that exact path via the prompt, a prior snippet, or a tree listing, request a narrow `type: "tree"` listing first and only then open the discovered file.',
+    ],
+
     // Fix A (C11.8): kimi anchors on conceptual similarity instead of literal function names.
     // When a function is named in the task, find the file that literally defines it.
     'moonshotai/kimi': [

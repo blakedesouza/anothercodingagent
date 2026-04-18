@@ -279,6 +279,58 @@ describe('runConsult', () => {
         ]);
     });
 
+    it('adds minimax grounding guidance to initial and retry context-request prompts', async () => {
+        let firstPrompt = '';
+        let retryPrompt = '';
+
+        runAcaInvokeMock.mockImplementation(async (task: string, options?: { model?: string }) => {
+            if (task.includes('Invalid Previous Context Request')) {
+                retryPrompt = task;
+                expect(options?.model).toBe('minimax/minimax-m2.7');
+                return makeInvokeSuccess('The npm package name declared by this repository is `anothercodingagent`.');
+            }
+            if (task.includes('## Witness Context Request Protocol')) {
+                firstPrompt = task;
+                expect(options?.model).toBe('minimax/minimax-m2.7');
+                return makeInvokeSuccess('{"needs_context":[{"type":"file","path":"package.json","reason":"Standard location for npm package name declaration"}]}');
+            }
+            throw new Error(`unexpected consult prompt/model: ${options?.model ?? 'unknown'}`);
+        });
+
+        const result = await runConsult({
+            question: 'What npm package name is declared by this repository?',
+            projectDir: tmpProjectDir(),
+            witnesses: 'minimax',
+            skipTriage: true,
+        });
+
+        expect(firstPrompt).toContain('<model_hints>');
+        expect(firstPrompt).toContain('do not jump straight to a guessed file path');
+        expect(retryPrompt).toContain('Correction:');
+        expect(retryPrompt).toContain('"type":"tree","path":"."');
+        expect(retryPrompt).toContain('"type":"file","path":"package.json"');
+        expect(result.success_count).toBe(1);
+        expect(result.witnesses.minimax.status).toBe('ok');
+        expect(result.witnesses.minimax.context_attempt_diagnostics).toEqual([
+            {
+                stage: 'initial',
+                round: 1,
+                outcome: 'invalid',
+                error: 'non-report output emitted in no-tools context-request pass',
+                request_count: 0,
+                diagnostic_count: 1,
+            },
+            {
+                stage: 'initial_retry',
+                round: 1,
+                outcome: 'report',
+                error: null,
+                request_count: 0,
+                diagnostic_count: 0,
+            },
+        ]);
+    });
+
     it('rejects advisory prompt-reflection leakage and retries for a clean answer', async () => {
         runAcaInvokeMock.mockImplementation(async (task: string) => {
             if (task.includes('Invalid Previous Context Request')) {

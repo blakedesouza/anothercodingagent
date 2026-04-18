@@ -1673,6 +1673,7 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     const firstPrompt = buildContextRequestPrompt(
         prompt, limitsObj, maxRounds, maxRounds,
         symbolLocations.length > 0 ? symbolLocations : undefined,
+        witness.model,
     );
     const firstAttempt = await invoke(witness.model, firstPrompt, projectDir, {
         maxSteps: 1,
@@ -1746,7 +1747,13 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
         }));
 
         if (classification.status === 'invalid' && classification.retryable) {
-            const retryPrompt = buildContextRequestRetryPrompt(prompt, roundText, limitsObj);
+            const retryPrompt = buildContextRequestRetryPrompt(
+                prompt,
+                roundText,
+                limitsObj,
+                classification.diagnostics,
+                witness.model,
+            );
             retryResponse = await invoke(witness.model, retryPrompt, projectDir, {
                 maxSteps: 1,
                 maxTotalTokens: 30_000,
