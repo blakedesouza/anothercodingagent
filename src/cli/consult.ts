@@ -457,9 +457,17 @@ function containsPromptReflectionLeak(text: string): boolean {
     const strongSignals = [
         /\banalyze the request\b/i,
         /\bdetermine the content\b/i,
+        /\bevaluate context needs\b/i,
+        /\bformat output\b/i,
         /\bdraft the response\b/i,
+        /\bdrafting the response\b/i,
         /\brefine for constraints\b/i,
+        /\brefining constraints\b/i,
         /\bfinal review against constraints\b/i,
+        /\bfinal plan\b/i,
+        /\bconstruction\b/i,
+        /\bself-correction\b/i,
+        /\blet'?s assemble\b/i,
         /\bdo not show reasoning process\b/i,
         /\bdo not wrap output in blockquote syntax\b/i,
         /\boutput only:\s*(?:the )?`needs_context` json object\b/i,
@@ -467,9 +475,10 @@ function containsPromptReflectionLeak(text: string): boolean {
     if (strongSignals.some(pattern => pattern.test(text))) return true;
 
     const weakSignals = [
-        /\btask type:\b/i,
-        /\breview rules:\b/i,
-        /\bconstraints:\b/i,
+        /\btask type:\s*/i,
+        /\breview rules:\s*/i,
+        /\bconstraints:\s*/i,
+        /\bformat output:\s*/i,
         /\bthe prompt says\b/i,
         /\bi will output\b/i,
         /\bone more check\b/i,

@@ -321,6 +321,76 @@ describe('runConsult', () => {
         ]);
     });
 
+    it('rejects live-shaped advisory deliberation leakage before saving the witness report', async () => {
+        runAcaInvokeMock.mockImplementation(async (task: string) => {
+            if (task.includes('Invalid Previous Context Request')) {
+                expect(task).toContain('protocol deliberation leaked into advisory direct-answer pass');
+                return makeInvokeSuccess('## Recommendation\nTrack business workload drivers, connect them to measured resource costs, and refresh the template on a fixed cadence so planning stays tied to actual demand.\n\n## Why\nThat keeps capacity planning anchored to observable inputs, makes forecast assumptions auditable, and lets a manager update the model quickly when the workload mix changes.\n\n## Tradeoffs\n- The template is only as good as the telemetry behind it, so teams pay some measurement overhead to keep it trustworthy.\n\n## Caveats\n- None.');
+            }
+            if (task.includes('Advisory Witness Direct-Answer Protocol')) {
+                return makeInvokeSuccess(`1.  **Task:** How should a manager build a workload driver template for capacity planning?
+    *   **Task Type:** Advisory/Analysis (not code bug hunt).
+    *   **Constraints:**
+        *   Do not deliberate over protocol/output format in the response.
+
+2.  **Determine Content:**
+    *   Repository context is irrelevant.
+
+3.  **Format Output:**
+    *   Markdown only.
+
+4.  **Drafting the Response:**
+    *   Provide structured steps.
+
+5.  **Refining Constraints:**
+    *   Start with the final answer immediately.
+
+6.  **Final Plan:**
+    *   State that repo context is irrelevant.
+
+7.  **Construction:**
+    *   Section: Key Steps
+
+    *Self-Correction on "Repo Context":* I should include this sentence.
+
+    *Let's assemble.*
+
+Repository context is irrelevant for this conceptual advisory task.
+
+# Building a Workload Driver Template for Capacity Planning`);
+            }
+            throw new Error(`unexpected consult prompt: ${task.slice(0, 120)}`);
+        });
+
+        const result = await runConsult({
+            question: 'How should a manager build a workload driver template for capacity planning?',
+            projectDir: tmpProjectDir(),
+            witnesses: 'qwen',
+            skipTriage: true,
+        });
+
+        expect(result.success_count).toBe(1);
+        expect(result.witnesses.qwen.status).toBe('ok');
+        expect(result.witnesses.qwen.context_attempt_diagnostics).toEqual([
+            {
+                stage: 'initial',
+                round: 1,
+                outcome: 'invalid',
+                error: 'protocol deliberation leaked into advisory direct-answer pass',
+                request_count: 0,
+                diagnostic_count: 0,
+            },
+            {
+                stage: 'initial_retry',
+                round: 1,
+                outcome: 'report',
+                error: null,
+                request_count: 0,
+                diagnostic_count: 0,
+            },
+        ]);
+    });
+
     it('rejects under-specified advisory answers and retries for a richer structured answer', async () => {
         runAcaInvokeMock.mockImplementation(async (task: string) => {
             if (task.includes('Invalid Previous Context Request')) {
