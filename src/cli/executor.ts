@@ -9,6 +9,7 @@
 import type { ModelResponseFormat, RequestMessage } from '../types/provider.js';
 import { statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
+import { buildMethodCatalog, type MethodCatalog } from './method-catalog.js';
 
 export const CONTRACT_VERSION = '1.0.0';
 export const SCHEMA_VERSION = '1.1.0';
@@ -23,6 +24,7 @@ export interface CapabilityDescriptor {
     input_schema: Record<string, unknown>;
     output_schema: Record<string, unknown>;
     constraints: DescriptorConstraints;
+    methods: MethodCatalog;
 }
 
 export interface DescriptorConstraints {
@@ -350,6 +352,7 @@ export function buildDescriptor(toolNames: string[]): CapabilityDescriptor {
                 'triage',
             ],
         },
+        methods: buildMethodCatalog(),
     };
 }
 

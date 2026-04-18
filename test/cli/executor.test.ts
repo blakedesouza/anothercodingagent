@@ -41,6 +41,7 @@ describe('Executor Mode', () => {
             expect(descriptor.output_schema).toBeDefined();
             expect(descriptor.output_schema.type).toBe('object');
             expect(descriptor.constraints).toBeDefined();
+            expect(descriptor.methods).toBeDefined();
         });
 
         it('includes constraints with expected fields', () => {
@@ -52,6 +53,9 @@ describe('Executor Mode', () => {
             expect(descriptor.constraints.ephemeral_sessions).toBe(true);
             expect(descriptor.constraints.supported_tools).toEqual(TOOL_NAMES);
             expect(descriptor.constraints.supported_profiles).toContain('rp-researcher');
+            expect(Array.isArray(descriptor.methods.intents)).toBe(true);
+            expect(descriptor.methods.methods.some(method => method.id === 'consult')).toBe(true);
+            expect(descriptor.methods.methods.some(method => method.id === 'invoke.rp-researcher')).toBe(true);
         });
 
         it('input_schema requires task field', () => {

@@ -136,6 +136,7 @@ import { runInit, runConfigure, runTrust, runUntrust } from './cli/setup.js';
 import { runConsult } from './cli/consult.js';
 import { formatRpResearchSummary, runRpResearchWorkflow, type RpNetworkMode, type RpSourceScope } from './cli/rp-research.js';
 import { TOOL_NAMES } from './cli/tool-names.js';
+import { runMethodsJson, runMethodsText } from './cli/method-catalog.js';
 import { startServer } from './mcp/server.js';
 import {
     runDescribe,
@@ -1444,6 +1445,15 @@ program
     .option('--json', 'Output JSON (default)')
     .action(() => {
         process.stdout.write(runDescribe(TOOL_NAMES) + '\n');
+        process.exit(0);
+    });
+
+program
+    .command('methods')
+    .description('Output ACA workflow/method catalog')
+    .option('--json', 'Output JSON instead of readable text')
+    .action((options: { json?: boolean }) => {
+        process.stdout.write((options.json ? runMethodsJson() : runMethodsText()) + '\n');
         process.exit(0);
     });
 

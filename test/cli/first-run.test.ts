@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { loadSecrets } from '../../src/config/secrets.js';
+import { ensureBuiltCliFresh } from '../helpers/built-cli.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const DIST_INDEX = join(ROOT, 'dist', 'index.js');
@@ -18,13 +19,7 @@ let hasApiKey = false;
 let apiKeyEnv: Record<string, string> = {};
 
 beforeAll(async () => {
-    if (!existsSync(DIST_INDEX)) {
-        execFileSync('npm', ['run', 'build'], {
-            cwd: ROOT,
-            encoding: 'utf-8',
-            timeout: 60_000,
-        });
-    }
+    ensureBuiltCliFresh(ROOT, DIST_INDEX);
     const result = await loadSecrets();
     const key = result.secrets.nanogpt;
     if (key && key.trim() !== '') {

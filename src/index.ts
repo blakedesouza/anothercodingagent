@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runDescribe } from './cli/executor.js';
+import { runMethodsJson, runMethodsText } from './cli/method-catalog.js';
 import { TOOL_NAMES } from './cli/tool-names.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -24,6 +25,7 @@ Options:
 Commands:
   serve                   Start ACA as an MCP server on stdio transport
   describe                Output capability descriptor as JSON
+  methods                 Output ACA workflow/method catalog
   debug-ui                Start the local ACA debug UI
   witnesses               Output witness model configurations as JSON
   consult                 Run ACA-native bounded witness consultation
@@ -52,6 +54,10 @@ function isTopLevelHelpRequest(args: readonly string[]): boolean {
 
 function isFastDescribeRequest(args: readonly string[]): boolean {
     return args[0] === 'describe' && args.slice(1).every((arg) => arg === '--json');
+}
+
+function isFastMethodsRequest(args: readonly string[]): boolean {
+    return args[0] === 'methods' && args.slice(1).length > 0 && args.slice(1).every((arg) => arg === '--json');
 }
 
 function isSingleUnknownTopLevelFlag(args: readonly string[]): boolean {
@@ -87,6 +93,16 @@ async function main(): Promise<void> {
 
     if (isFastDescribeRequest(args)) {
         process.stdout.write(runDescribe([...TOOL_NAMES]) + '\n');
+        return;
+    }
+
+    if (isFastMethodsRequest(args)) {
+        process.stdout.write(runMethodsJson() + '\n');
+        return;
+    }
+
+    if (args[0] === 'methods') {
+        process.stdout.write(runMethodsText() + '\n');
         return;
     }
 

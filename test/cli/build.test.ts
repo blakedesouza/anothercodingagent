@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { getKnownModelIds } from '../../src/providers/model-registry.js';
+import { ensureBuiltCliFresh } from '../helpers/built-cli.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const DIST_INDEX = join(ROOT, 'dist', 'index.js');
@@ -31,10 +32,7 @@ function runDist(...args: string[]): { stdout: string; stderr: string; exitCode:
 
 describe('M8.1 — Build & Package', () => {
     beforeAll(() => {
-        // Ensure build output exists (build should have been run before tests)
-        if (!existsSync(DIST_INDEX)) {
-            execFileSync('npm', ['run', 'build'], { cwd: ROOT, encoding: 'utf-8', timeout: 30_000 });
-        }
+        ensureBuiltCliFresh(ROOT, DIST_INDEX);
     });
 
     it('dist/index.js exists and is non-empty', () => {
@@ -86,6 +84,29 @@ describe('M8.1 — Build & Package', () => {
         const descriptor = JSON.parse(stdout.trim());
         expect(descriptor.name).toBe('aca');
         expect(Array.isArray(descriptor.constraints.supported_tools)).toBe(true);
+        expect(Array.isArray(descriptor.methods.methods)).toBe(true);
+    });
+
+    it('methods --json exposes the ACA workflow catalog', () => {
+        const { stdout, exitCode } = runDist('methods', '--json');
+        expect(exitCode).toBe(0);
+
+        const catalog = JSON.parse(stdout.trim()) as {
+            intents: Array<{ intent: string; preferred_methods: string[] }>;
+            methods: Array<{ id: string; invocation: string }>;
+        };
+        expect(catalog.intents.some(intent => intent.intent === 'multi_model_second_opinion')).toBe(true);
+        expect(catalog.methods.some(method => method.id === 'invoke')).toBe(true);
+        expect(catalog.methods.some(method => method.id === 'consult')).toBe(true);
+        expect(catalog.methods.some(method => method.id === 'rp-research')).toBe(true);
+    });
+
+    it('methods without --json renders readable workflow guidance', () => {
+        const { stdout, exitCode } = runDist('methods');
+        expect(exitCode).toBe(0);
+        expect(stdout).toContain('ACA Methods');
+        expect(stdout).toContain('aca consult --question <text> [options]');
+        expect(stdout).toContain('aca invoke < stdin-json');
     });
 
     it('witnesses --json remains accepted as a backward-compatible alias', () => {

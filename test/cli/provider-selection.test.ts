@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ensureBuiltCliFresh } from '../helpers/built-cli.js';
 import {
     RP_REPAIR_MAX_TOOL_CALLS,
     buildRpRepairTurnConfig,
@@ -16,13 +17,7 @@ const DIST_INDEX = join(ROOT, 'dist', 'index.js');
 const TEST_HOME = mkdtempSync(join(tmpdir(), 'aca-provider-home-'));
 
 beforeAll(() => {
-    if (!existsSync(DIST_INDEX)) {
-        execFileSync('npm', ['run', 'build'], {
-            cwd: ROOT,
-            encoding: 'utf-8',
-            timeout: 60_000,
-        });
-    }
+    ensureBuiltCliFresh(ROOT, DIST_INDEX);
 });
 
 afterAll(() => {
