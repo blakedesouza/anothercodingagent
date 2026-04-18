@@ -83,7 +83,7 @@ describe('getModelHints', () => {
     it('returns empty array when registry has only non-matching entries', () => {
         populateHints({
             'kimi/': ['hint K'],
-            'deepseek/': ['hint D'],
+            'minimax/': ['hint M'],
         });
         expect(getModelHints('qwen/qwen3-coder')).toEqual([]);
     });

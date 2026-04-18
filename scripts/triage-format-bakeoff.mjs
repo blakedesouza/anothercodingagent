@@ -3,7 +3,7 @@
 const NANOGPT_URL = process.env.NANOGPT_URL ||
   'https://nano-gpt.com/api/subscription/v1/chat/completions';
 
-const MODELS = (process.argv[2] || 'deepseek/deepseek-v3.2,moonshotai/kimi-k2.5')
+const MODELS = (process.argv[2] || 'zai-org/glm-5,moonshotai/kimi-k2.5')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);

@@ -3,8 +3,8 @@
 const NANOGPT_URL = 'https://api.nano-gpt.com/v1/chat/completions';
 
 const MODELS = [
+  'zai-org/glm-5',
   'moonshotai/kimi-k2.5',
-  'deepseek/deepseek-v3.2',
 ];
 
 const RUNS = Number.parseInt(process.argv[2] || '1', 10);

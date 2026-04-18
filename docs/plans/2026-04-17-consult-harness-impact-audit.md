@@ -24,15 +24,14 @@ If that assumption changes, parts of this audit need to be reinterpreted as comp
 Observed consult state in the repo:
 
 - `src/config/witness-models.ts` now makes `minimax/minimax-m2.7` the first witness seat.
-- `src/cli/consult.ts` `selectWitnesses()` still accepts `deepseek` and rewrites it to the MiniMax seat while preserving outward witness name `deepseek`.
-- `~/.codex/skills/consult/scripts/run_consult.py` still rewrites `minimax -> deepseek` and compatibility modes like `minimax+kimi` to `deepseek,kimi`.
-- `src/cli/consult.ts` `usesStrictAdvisoryRubric()` still keys only on model strings containing `deepseek`.
+- `src/cli/consult.ts` `selectWitnesses()` accepts `deepseek` only as a compatibility alias and resolves it to the MiniMax seat.
+- `~/.codex/skills/consult/scripts/run_consult.py` now normalizes `deepseek -> minimax` instead of rewriting MiniMax back to a stale DeepSeek label.
+- `src/cli/consult.ts` applies strict advisory handling to the primary reliability seat rather than keying off a dead DeepSeek model string.
 
 Result:
 
-- consult has an intentional seat swap
-- but the surrounding harness still partly behaves as if DeepSeek were real
-- so witness naming, prompt policy, tests, and skill-wrapper behavior have drifted apart
+- consult has an intentional seat swap that is now reflected in the mainline runtime
+- the remaining drift is concentrated in stale utilities, scripts, and current docs that still describe old DeepSeek-era assumptions
 
 ## Validation Evidence
 
@@ -49,22 +48,23 @@ Failure pattern from `test/cli/consult.test.ts`:
 - tests still expect DeepSeek-specific advisory behavior and witness naming
 - degraded/triage expectations still refer to `deepseek` as the concrete model
 
-Live witness bakeoff status already established outside this file:
+Live witness status established outside this file:
 
-- strongest current 2-seat pair remains `minimax + qwen`
-- `qwen` still has malformed packed-review failures
-- `glm-5` is not yet reliable enough as a default witness seat
+- the current clean default pair is `minimax + gemma`
+- `qwen` remains useful as an opt-in diversity seat, but it is too flaky on advisory prompts for default duty
+- `glm-5` remains strongest as triage, not yet the default second witness
 
 ## Decisions Applied
 
 Implemented on 2026-04-17:
 
-- default consult witness pair is now `minimax + qwen`
+- default consult witness pair is now `minimax + gemma`
 - `deepseek` remains only as an input compatibility alias; the mainline runtime/test surface now uses `minimax`
 - default ACA triage mode is now `auto` instead of always-on
 - consult CLI now accepts `--triage auto|always|never`
 - `--skip-triage` is preserved as compatibility and maps to `never`
 - local debug UI no longer hardcodes a DeepSeek-era 4-seat roster; fallback witness cards are now seedable through `ACA_DEBUG_UI_WITNESS_SEED`
+- active helper scripts no longer default to a stale DeepSeek witness/triage lineup
 - witness-mode anchored file opens now accept prompt/evidence-pack-grounded paths, aligning that path with shared-context grounding
 - direct non-repo questions now route to advisory mode instead of falling back to review mode by default
 - strict advisory rubrics are skipped for explicit exact-format prompts such as `Answer with exactly: 4`
@@ -80,7 +80,7 @@ Validation after implementation:
 - live canaries after rebuild:
   - `deepseek` compatibility alias resolves to real `minimax`
   - direct exact-answer consults now save clean final artifacts (`4`) instead of review-style witness dumps
-  - default advisory consults now reject Qwen prompt-deliberation leakage on the first pass and recover to a clean witness report on retry
+  - broader canaries on the current default pair `minimax + gemma` completed cleanly without triage escalation
 
 ## Major Change Surfaces
 
@@ -97,8 +97,8 @@ Relevant code:
 Current behavior:
 
 - runtime canonicalizes `deepseek -> minimax`
-- wrapper canonicalizes `minimax -> deepseek`
-- outward witness names still present as `deepseek`
+- wrapper canonicalizes `deepseek -> minimax`
+- outward result artifacts now show the real witness seat name and concrete model
 
 Impact radius:
 
@@ -310,10 +310,9 @@ Audit conclusion:
 
 Relevant files already showing drift:
 
-- `test/cli/build.test.ts` still expects witness keys `['deepseek', 'kimi', 'qwen', 'gemma']`
-- `test/cli/consult.test.ts` still hardcodes DeepSeek model IDs and labels in many places
-- `src/prompts/model-hints.ts` still has `deepseek/` prompt hints
-- `~/.codex/skills/consult/scripts/run_consult.py` still aliases MiniMax back to `deepseek`
+- utility scripts still default to DeepSeek-era model IDs or pairings
+- current planning docs still describe the abandoned `minimax + qwen` branch as if it were the mainline default
+- local fixture/artifact directories can still contain historical DeepSeek-named files, even when the current runtime no longer uses that seat
 
 Impact radius:
 
@@ -355,10 +354,8 @@ Intentional:
 
 Unintentional drift:
 
-- DeepSeek compatibility naming leaking across wrapper, tests, labels, and model IDs
-- strict advisory rubric still bound to `deepseek` model strings
-- advisory retry prompt reintroducing repo-oriented protocol surface
-- witness-mode anchored grounding not honoring evidence-pack anchors
+- stale DeepSeek-era assumptions in helper scripts and current docs
+- witness quality calibration still lagging behind the now-stable protocol layer
 
 ## Recommended Fix Order
 
@@ -401,7 +398,7 @@ After the runtime policy is settled:
 - update `test/cli/consult.test.ts`
 - update `test/cli/build.test.ts`
 - update the consult skill wrapper
-- update any prompt hints that still target dead DeepSeek behavior
+- update any utility scripts or docs that still target dead DeepSeek behavior
 
 ### 6. Revisit triage policy after the core drift is fixed
 
@@ -426,7 +423,7 @@ Then repeat live canaries for:
 
 Recommended seat focus:
 
-- `minimax + qwen`
+- `minimax + gemma`
 
 ## Bottom Line
 

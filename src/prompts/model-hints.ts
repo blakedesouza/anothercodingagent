@@ -31,10 +31,6 @@ export const MODEL_HINTS: Record<string, string[]> = {
         'Start with the final answer immediately. Do not restate the task, constraints, checks, or plan before answering, and do not include internal self-review after the answer.',
     ],
 
-    'deepseek/': [
-        'Answer in English only. If you need context, return valid JSON only: `line_start` and `line_end` must be numeric JSON values, never prose, placeholders, or quoted strings.',
-    ],
-
     // Fix C: GLM-5 is a thinking model that leaks intent as visible narration — it writes
     // "I'll now fetch..." or "Let me..." in the response text instead of making the tool call.
     // This narration-without-action pattern causes the turn engine to yield `assistant_final`

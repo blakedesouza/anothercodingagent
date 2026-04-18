@@ -19,9 +19,9 @@ import { DEFAULT_API_TIMEOUT_MS } from './schema.js';
 export const DEFAULT_WITNESS_TIMEOUT_S = DEFAULT_API_TIMEOUT_MS / 1000;
 
 export interface WitnessModelConfig {
-    /** Short canonical name used by consult_ring.py (e.g., "deepseek") */
+    /** Short canonical name used by consult_ring.py (e.g., "minimax") */
     name: string;
-    /** Display name for reports (e.g., "DeepSeek") */
+    /** Display name for reports (e.g., "MiniMax") */
     displayName: string;
     /** NanoGPT model ID */
     model: string;
