@@ -172,7 +172,7 @@ const TRIAGE_MODEL_CANDIDATES = [
 const DEFAULT_SHARED_CONTEXT_SNIPPETS = 8;
 const DEFAULT_SHARED_CONTEXT_LINES = 160;
 const DEFAULT_SHARED_CONTEXT_BYTES = 16_000;
-const DEFAULT_CONSULT_WITNESS_NAMES = ['minimax', 'qwen'] as const;
+const DEFAULT_CONSULT_WITNESS_NAMES = ['minimax', 'gemma'] as const;
 const STRICT_ADVISORY_WITNESS_NAMES = new Set<string>(['minimax']);
 const REQUIRED_TRIAGE_SECTIONS = [
     'consensus findings',

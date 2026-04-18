@@ -1469,7 +1469,7 @@ program
     .option('--question <question>', 'Question to ask witnesses')
     .option('--prompt-file <path>', 'Prompt file to use instead of --question')
     .option('--project-dir <path>', 'Project directory', process.cwd())
-    .option('--witnesses <list>', 'Comma-separated witness list; defaults to minimax,qwen')
+    .option('--witnesses <list>', 'Comma-separated witness list; defaults to minimax,gemma')
     .option('--pack-repo', 'Build an evidence pack from the repo', false)
     .option('--pack-path <path>', 'File or directory to include in the evidence pack', (value, previous: string[]) => [...previous, value], [])
     .option('--pack-max-files <n>', 'Maximum evidence-pack files', value => Number(value), 5)

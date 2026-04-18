@@ -210,7 +210,7 @@ describe('runConsult', () => {
         expect(readFileSync(result.witnesses.minimax.response_path!, 'utf8').trim()).toBe('4');
     });
 
-    it('defaults to minimax and qwen, and auto-skips triage when the witnesses align', async () => {
+    it('defaults to minimax and gemma, and auto-skips triage when the witnesses align', async () => {
         const invokedModels: string[] = [];
 
         runAcaInvokeMock.mockImplementation(async (_task: string, options?: { model?: string }) => {
@@ -218,8 +218,8 @@ describe('runConsult', () => {
             if (options?.model === 'minimax/minimax-m2.7') {
                 return makeInvokeSuccess('## Findings\n\nMiniMax witness report.');
             }
-            if (options?.model === 'qwen/qwen3.5-397b-a17b') {
-                return makeInvokeSuccess('## Findings\n\nQwen witness report.');
+            if (options?.model === 'google/gemma-4-31b-it') {
+                return makeInvokeSuccess('## Findings\n\nGemma witness report.');
             }
             throw new Error(`unexpected consult model: ${options?.model ?? 'unknown'}`);
         });
@@ -230,10 +230,10 @@ describe('runConsult', () => {
         });
 
         expect(result.total_witnesses).toBe(2);
-        expect(Object.keys(result.witnesses)).toEqual(['minimax', 'qwen']);
+        expect(Object.keys(result.witnesses)).toEqual(['minimax', 'gemma']);
         expect(result.triage.status).toBe('skipped');
         expect(result.triage.error).toBe('skipped by triage=auto');
-        expect(invokedModels).toEqual(['minimax/minimax-m2.7', 'qwen/qwen3.5-397b-a17b']);
+        expect(invokedModels).toEqual(['minimax/minimax-m2.7', 'google/gemma-4-31b-it']);
     });
 
     it('rejects repo-context fishing for advisory prompts and retries for a direct answer', async () => {
