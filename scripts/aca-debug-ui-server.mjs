@@ -17,6 +17,7 @@ const CONSULT_TMP_DIR = process.env.ACA_CONSULT_TMP_DIR || tmpdir();
 const METADATA_PATH = process.env.ACA_DEBUG_UI_METADATA_PATH || join(ACA_HOME, 'debug-ui.json');
 const MAX_JSONL_BYTES = 8 * 1024 * 1024;
 const MAX_PREVIEW_BYTES = 96 * 1024;
+const STALE_CONSULT_MS = Number.parseInt(process.env.ACA_DEBUG_UI_STALE_CONSULT_MS || '', 10) || 10 * 60 * 1000;
 const SEEDED_WITNESSES = parseWitnessSeed(process.env.ACA_DEBUG_UI_WITNESS_SEED || '');
 const APP_HTML_URL = new URL('./aca-debug-ui-app.html', import.meta.url);
 
@@ -502,6 +503,23 @@ function summarizeConsultGroup(group, includePreviews) {
   const resultArtifact = group.files.find((file) => file.kind === 'result');
   const result = resultArtifact ? safeJson(readLimitedText(resultArtifact.path, MAX_PREVIEW_BYTES)) : null;
   const resultWitnesses = result?.witnesses && typeof result.witnesses === 'object' ? result.witnesses : {};
+  const structuredArtifacts = group.files
+    .filter((file) => file.role === 'structured_review')
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const structuredReviewJson = structuredArtifacts.find((file) => file.kind === 'structured-review-json');
+  const fallbackStructuredReview = !result && structuredReviewJson
+    ? safeJson(readLimitedText(structuredReviewJson.path, MAX_PREVIEW_BYTES))
+    : null;
+  const structuredReview = result?.structured_review || fallbackStructuredReview || null;
+  const hasStructuredReview = structuredArtifacts.length > 0;
+  const staleWithoutResult = !result && isStaleTimestamp(group.updatedAt, STALE_CONSULT_MS);
+  const inferredGroupStatus = result
+    ? result.triage?.status === 'ok' || result.success_count === result.total_witnesses
+      ? 'complete'
+      : result.degraded ? 'degraded' : 'complete'
+    : hasStructuredReview ? 'complete'
+      : staleWithoutResult ? 'degraded'
+        : group.files.length > 0 ? 'running' : 'pending';
   const artifactWitnessNames = group.files
     .map((file) => file.witness)
     .filter((name) => typeof name === 'string' && name.trim() !== '');
@@ -517,7 +535,11 @@ function summarizeConsultGroup(group, includePreviews) {
     const requestFile = witnessFiles.find((file) => file.kind === 'context-request');
     const pendingFile = witnessFiles.find((file) => file.kind === 'pending');
     const status = resultWitness?.status
-      || (responseFile ? 'ok' : finalRawFile || requestFile ? 'running' : pendingFile ? 'waiting' : 'pending');
+      || (responseFile ? 'ok' : finalRawFile || requestFile
+        ? inferredGroupStatus === 'degraded' ? 'degraded' : 'running'
+        : pendingFile
+          ? inferredGroupStatus === 'degraded' ? 'degraded' : 'waiting'
+          : 'pending');
     const selectedPreviewPath = resultWitness?.response_path || resultWitness?.triage_input_path || responseFile?.path || finalRawFile?.path || requestFile?.path;
     witnesses[witnessName] = {
       name: witnessName,
@@ -534,38 +556,33 @@ function summarizeConsultGroup(group, includePreviews) {
   const triageArtifacts = group.files
     .filter((file) => file.role === 'triage')
     .sort((a, b) => a.name.localeCompare(b.name));
-  const structuredArtifacts = group.files
-    .filter((file) => file.role === 'structured_review')
-    .sort((a, b) => a.name.localeCompare(b.name));
   const sharedContextArtifacts = group.files
     .filter((file) => file.role === 'shared_context')
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const triagePath = result?.triage?.path || result?.triage?.raw_path || triageArtifacts.find((file) => file.kind === 'triage')?.path || triageArtifacts[0]?.path;
-  const status = result
-    ? result.triage?.status === 'ok' || result.success_count === result.total_witnesses
-      ? 'complete'
-      : result.degraded ? 'degraded' : 'complete'
-    : group.files.length > 0 ? 'running' : 'pending';
 
   return {
     suffix: group.suffix,
     startedAt: group.startedAt,
     updatedAt: group.updatedAt,
-    status,
+    status: inferredGroupStatus,
     resultPath: resultArtifact?.path || result?.result_path || null,
     successCount: result?.success_count ?? Object.values(witnesses).filter((witness) => witness.status === 'ok').length,
-    totalWitnesses: result?.total_witnesses ?? witnessNames.length,
-    degraded: Boolean(result?.degraded),
+    totalWitnesses: result?.total_witnesses ?? structuredReview?.summary?.totalWitnesses ?? witnessNames.length,
+    degraded: Boolean(result?.degraded || inferredGroupStatus === 'degraded'),
     witnesses,
     sharedContext: {
       status: result?.shared_context?.status || (sharedContextArtifacts.length ? 'ok' : 'skipped'),
       artifacts: sharedContextArtifacts.map((file) => artifactSummary(file, includePreviews)),
     },
-    structuredReview: result?.structured_review || null,
+    structuredReview,
     structuredArtifacts: structuredArtifacts.map((file) => artifactSummary(file, includePreviews)),
     triage: {
-      status: result?.triage?.status || (triageArtifacts.length ? 'running' : 'pending'),
+      status: result?.triage?.status
+        || (triageArtifacts.length
+          ? inferredGroupStatus === 'complete' ? 'ok' : inferredGroupStatus === 'degraded' ? 'degraded' : 'running'
+          : 'pending'),
       model: result?.triage?.model || null,
       error: result?.triage?.error || null,
       usage: result?.triage?.usage || null,
@@ -613,6 +630,13 @@ function consultStartedAt(suffix) {
   const millis = Number.parseInt(String(suffix).split('-')[0], 10);
   if (!Number.isFinite(millis) || millis <= 0) return null;
   return new Date(millis).toISOString();
+}
+
+function isStaleTimestamp(isoString, maxAgeMs) {
+  if (!isoString) return false;
+  const millis = Date.parse(isoString);
+  if (!Number.isFinite(millis)) return false;
+  return Date.now() - millis >= maxAgeMs;
 }
 
 function summarizeTurns(events, tools) {
