@@ -136,9 +136,11 @@ describe('runConsult', () => {
         runAcaInvokeMock.mockImplementation(async (task: string, options?: { model?: string }) => {
             if (task.includes('Invalid Previous Context Request')) {
                 expect(task).toContain('No bug found.');
-                expect(task).toContain('This task is advisory/conceptual, not a repo-inspection task.');
-                expect(task).toContain('A bare response like "No bug found." or "No issues found." is invalid for this task.');
+                expect(task).toContain('This task is conceptual/advisory by default.');
+                expect(task).toContain('Do not collapse to "No bug found." or "No issues found." for advisory tasks.');
                 expect(task).toContain('## Recommendation');
+                expect(task).toContain('Advisory Witness Direct-Answer Protocol');
+                expect(task).not.toContain('Witness Context Request Protocol');
                 return makeInvokeSuccess('## Recommendation\nUse effective capacity, recurring-work baselines, explicit buffers, and scenario ranges so the planning template distinguishes sustainable throughput from aspirational demand.\n\n## Why\nThat structure keeps recurring obligations visible, makes uncertainty explicit, and gives a manager a repeatable way to translate incoming demand into staffing pressure.\n\n## Tradeoffs\n- Heavier structure improves planning discipline, but it takes upkeep and can become stale if the workload drivers are not reviewed regularly.\n\n## Caveats\n- None.');
             }
             if (task.includes('Advisory Witness Direct-Answer Protocol')) {
@@ -183,6 +185,31 @@ describe('runConsult', () => {
         expect(readFileSync(result.witnesses.minimax.response_path!, 'utf8')).toContain('effective capacity');
     });
 
+    it('routes direct non-repo prompts through advisory mode', async () => {
+        let witnessPrompt = '';
+
+        runAcaInvokeMock.mockImplementation(async (task: string) => {
+            if (task.includes('Advisory Witness Direct-Answer Protocol')) {
+                witnessPrompt = task;
+                return makeInvokeSuccess('4');
+            }
+            throw new Error(`unexpected consult prompt: ${task.slice(0, 120)}`);
+        });
+
+        const result = await runConsult({
+            question: 'Answer with exactly: 4',
+            projectDir: tmpProjectDir(),
+            witnesses: 'minimax',
+            skipTriage: true,
+        });
+
+        expect(witnessPrompt).toContain('Advisory Witness Direct-Answer Protocol');
+        expect(witnessPrompt).not.toContain('Witness Context Request Protocol');
+        expect(witnessPrompt).not.toContain('## Recommendation');
+        expect(result.success_count).toBe(1);
+        expect(readFileSync(result.witnesses.minimax.response_path!, 'utf8').trim()).toBe('4');
+    });
+
     it('defaults to minimax and qwen, and auto-skips triage when the witnesses align', async () => {
         const invokedModels: string[] = [];
 
@@ -214,7 +241,7 @@ describe('runConsult', () => {
             if (task.includes('Invalid Previous Context Request')) {
                 expect(task).toContain('"type":"tree"');
                 expect(task).toContain('repo-context request emitted in advisory direct-answer pass');
-                expect(task).toContain('Do not request repository trees, files, symbols, or line snippets');
+                expect(task).toContain('Do not request repository trees, files, symbols, snippets, or line numbers');
                 return makeInvokeSuccess('## Recommendation\nSeparate recurring work from project work, allocate capacity by lane, and present commitments as operating ranges instead of a single precision number.\n\n## Why\nThat keeps operational load from being hidden inside project plans and gives leadership a planning model that reflects uncertainty rather than pretending it does not exist.\n\n## Tradeoffs\n- Capacity lanes improve clarity, but they can create political friction when leaders want every initiative treated as equally urgent.\n\n## Caveats\n- None.');
             }
             if (task.includes('Advisory Witness Direct-Answer Protocol')) {
@@ -238,6 +265,48 @@ describe('runConsult', () => {
                 round: 1,
                 outcome: 'invalid',
                 error: 'repo-context request emitted in advisory direct-answer pass',
+                request_count: 0,
+                diagnostic_count: 0,
+            },
+            {
+                stage: 'initial_retry',
+                round: 1,
+                outcome: 'report',
+                error: null,
+                request_count: 0,
+                diagnostic_count: 0,
+            },
+        ]);
+    });
+
+    it('rejects advisory prompt-reflection leakage and retries for a clean answer', async () => {
+        runAcaInvokeMock.mockImplementation(async (task: string) => {
+            if (task.includes('Invalid Previous Context Request')) {
+                expect(task).toContain('protocol deliberation leaked into advisory direct-answer pass');
+                expect(task).toContain('Do not restate the task, constraints, plan, checks, or protocol instructions.');
+                return makeInvokeSuccess('## Recommendation\nUse a workload driver template that separates recurring operational load from project demand, tracks the real input variables that change capacity, and revisits those variables on a fixed cadence.\n\n## Why\nThat gives the manager a stable baseline for sustainable throughput, makes constraint changes visible early, and keeps planning anchored to observable workload drivers instead of optimistic estimates.\n\n## Tradeoffs\n- The template adds process overhead, but it is cheaper than discovering capacity shortfalls after commitments are already made.\n\n## Caveats\n- None.');
+            }
+            if (task.includes('Advisory Witness Direct-Answer Protocol')) {
+                return makeInvokeSuccess('1. **Analyze the Request:**\n- Task Type: Advisory.\n- Constraints: Do not show reasoning process.\n\n2. **Decision:**\nI will output the final answer now.');
+            }
+            throw new Error(`unexpected consult prompt: ${task.slice(0, 120)}`);
+        });
+
+        const result = await runConsult({
+            question: 'How should a manager build a workload driver template for capacity planning?',
+            projectDir: tmpProjectDir(),
+            witnesses: 'minimax',
+            skipTriage: true,
+        });
+
+        expect(result.success_count).toBe(1);
+        expect(result.witnesses.minimax.status).toBe('ok');
+        expect(result.witnesses.minimax.context_attempt_diagnostics).toEqual([
+            {
+                stage: 'initial',
+                round: 1,
+                outcome: 'invalid',
+                error: 'protocol deliberation leaked into advisory direct-answer pass',
                 request_count: 0,
                 diagnostic_count: 0,
             },

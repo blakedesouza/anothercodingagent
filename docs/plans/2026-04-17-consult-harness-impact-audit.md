@@ -66,12 +66,21 @@ Implemented on 2026-04-17:
 - `--skip-triage` is preserved as compatibility and maps to `never`
 - local debug UI no longer hardcodes a DeepSeek-era 4-seat roster; fallback witness cards are now seedable through `ACA_DEBUG_UI_WITNESS_SEED`
 - witness-mode anchored file opens now accept prompt/evidence-pack-grounded paths, aligning that path with shared-context grounding
+- direct non-repo questions now route to advisory mode instead of falling back to review mode by default
+- strict advisory rubrics are skipped for explicit exact-format prompts such as `Answer with exactly: 4`
+- advisory retry prompts now stay inside the advisory protocol instead of re-embedding the repo-oriented context-request contract
+- advisory witness validation now rejects prompt/protocol reflection leakage instead of accepting it as a valid report
 
 Validation after implementation:
 
 - `npm run test -- test/consult/context-request.test.ts test/cli/consult.test.ts`
 - `npm run test -- test/cli/build.test.ts test/debug-ui/manager.test.ts test/config/witness-models.test.ts`
+- `npm run test -- test/consult/context-request.test.ts test/cli/consult.test.ts test/consult/symbol-lookup.test.ts test/cli/build.test.ts test/debug-ui/manager.test.ts test/config/witness-models.test.ts test/prompts/model-hints.test.ts`
 - `npm run build`
+- live canaries after rebuild:
+  - `deepseek` compatibility alias resolves to real `minimax`
+  - direct exact-answer consults now save clean final artifacts (`4`) instead of review-style witness dumps
+  - default advisory consults now reject Qwen prompt-deliberation leakage on the first pass and recover to a clean witness report on retry
 
 ## Major Change Surfaces
 
@@ -145,6 +154,7 @@ Audit conclusion:
 
 - advisory hardening is currently attached to the wrong identity boundary
 - if the real policy is “apply strict advisory structure to the primary seat” or “apply it to models with this failure shape,” the code does not express that
+- task-mode routing itself was also part of the blast radius: advisory prompts that did not match the narrow keyword list were falling into review mode and bypassing the advisory guardrails entirely
 
 ### 3. Advisory retry prompt drift
 

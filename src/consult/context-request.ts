@@ -419,10 +419,10 @@ export function buildAdvisoryContextRequestRetryPrompt(
     prompt: string,
     invalidResponse: string,
     invalidReason: string,
-    limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS,
+    _limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS,
     strictRubric = false,
 ): string {
-    return `${buildContextRequestPrompt(prompt, limits)}
+    return `${buildAdvisoryWitnessPromptWithRubric(prompt, strictRubric)}
 
 ## Invalid Previous Context Request
 
@@ -435,30 +435,9 @@ Reason:
 ${truncateUtf8(invalidResponse, 4_000)}
 \`\`\`
 
-This task is advisory/conceptual, not a repo-inspection task.
-Do not request repository trees, files, symbols, or line snippets unless the prompt explicitly asks for a concrete repo fact.
 Answer the question directly in Markdown using general reasoning from the prompt.
-A bare response like "No bug found." or "No issues found." is invalid for this task.
-${strictRubric ? `Use exactly this structure:
-
-\`\`\`markdown
-## Recommendation
-<2-4 sentences with a concrete recommendation or framework>
-
-## Why
-<2-4 sentences explaining why this approach fits the prompt>
-
-## Tradeoffs
-- <at least one concrete tradeoff, risk, or failure mode>
-
-## Caveats
-- <brief limitation or "None.">
-\`\`\`
-
-Do not omit or rename these sections.
-` : ''}
-Do not emit needs_context JSON unless the prompt explicitly asks for a concrete repo fact that cannot be answered from the prompt alone.
-Do not emit XML, function-call, tool-call, invoke, parameter, arg_key, arg_value, read_file, [TOOL_CALL], or "tool_calls" markup.
+Do not restate the task, constraints, plan, checks, or protocol instructions.
+Start with the final answer immediately; do not include internal analysis or self-critique before it.
 `;
 }
 

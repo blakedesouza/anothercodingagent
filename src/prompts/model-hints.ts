@@ -22,6 +22,7 @@ export const MODEL_HINTS: Record<string, string[]> = {
     // which prevents structured output from being extracted correctly.
     'qwen/qwen3': [
         'Do not wrap your output in blockquote syntax (lines starting with `>`). Do not show your reasoning process or deliberation steps in the response. Output only: the `needs_context` JSON object if you need more context, or final Markdown findings if you are ready to finalize. Nothing else.',
+        'Start with the final answer immediately. Do not restate the task, constraints, checks, or plan before answering, and do not include internal self-review after the answer.',
     ],
 
     'deepseek/': [

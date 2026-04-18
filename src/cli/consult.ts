@@ -276,7 +276,16 @@ function isEmptyInvokeErrorMessage(message: string): boolean {
         || normalized.includes('returned no text');
 }
 
-function usesStrictAdvisoryRubric(witness: Pick<WitnessModelConfig, 'name' | 'model'>): boolean {
+function hasExplicitAnswerFormat(taskText: string): boolean {
+    return /\b(?:answer|respond|reply)\s+with\s+exactly\b/i.test(taskText)
+        || /\bexactly\s*:\s*/i.test(taskText)
+        || /\b(?:answer|respond|reply)\s+with\s+only\b/i.test(taskText)
+        || /\bone sentence\b/i.test(taskText)
+        || /\bone word\b/i.test(taskText);
+}
+
+function usesStrictAdvisoryRubric(witness: Pick<WitnessModelConfig, 'name' | 'model'>, taskText: string): boolean {
+    if (hasExplicitAnswerFormat(taskText)) return false;
     return STRICT_ADVISORY_WITNESS_NAMES.has(witness.name)
         || witness.model.toLowerCase().includes('minimax/');
 }
@@ -444,14 +453,45 @@ function extractPlainMarkdownReport(text: string): string | null {
     return text;
 }
 
+function containsPromptReflectionLeak(text: string): boolean {
+    const strongSignals = [
+        /\banalyze the request\b/i,
+        /\bdetermine the content\b/i,
+        /\bdraft the response\b/i,
+        /\brefine for constraints\b/i,
+        /\bfinal review against constraints\b/i,
+        /\bdo not show reasoning process\b/i,
+        /\bdo not wrap output in blockquote syntax\b/i,
+        /\boutput only:\s*(?:the )?`needs_context` json object\b/i,
+    ];
+    if (strongSignals.some(pattern => pattern.test(text))) return true;
+
+    const weakSignals = [
+        /\btask type:\b/i,
+        /\breview rules:\b/i,
+        /\bconstraints:\b/i,
+        /\bthe prompt says\b/i,
+        /\bi will output\b/i,
+        /\bone more check\b/i,
+        /\blet'?s write it\b/i,
+    ];
+    const weakMatches = weakSignals.filter(pattern => pattern.test(text)).length;
+    return weakMatches >= 2;
+}
+
 function inferConsultTaskMode(taskText: string): ConsultTaskMode {
     const text = taskText.toLowerCase();
-    const reviewSignal = /\b(review|audit|bug|issue|regression|fix|broken|failure|vulnerability|repo|repository|code|implementation|function|class|method|file|path|line|lines|snippet|witness|consult)\b/.test(text)
+    const trimmed = taskText.trim();
+    const reviewSignal = /\b(review|audit|bug|issue|problem|regression|fix|broken|failure|error|failing|crash|vulnerability|repo|repository|code|implementation|function|class|method|file|path|line|lines|snippet|test|tests|config|schema|protocol|pipeline|api|cli|context-request|shared-context)\b/.test(text)
         || /(?:^|[\s`(])(?:src|test|docs|scripts|package\.json|tsconfig\.json|vitest\.config\.ts|plan\.md)\b/.test(text)
         || /[A-Za-z0-9_/.-]+\.(?:ts|tsx|js|jsx|json|md|yml|yaml|py|sh)\b/.test(text);
     if (reviewSignal) return 'review';
+    if (hasExplicitAnswerFormat(taskText)) return 'advisory';
     const advisorySignal = /\b(manager|management|leadership|executive|operations|operational|capacity|planning|workload|template|framework|strategy|process|policy|governance|staffing|roadmap|prioritization|trade-?off|false precision)\b/.test(text);
-    return advisorySignal ? 'advisory' : 'review';
+    if (advisorySignal) return 'advisory';
+    const questionLike = trimmed.endsWith('?')
+        || /^(how|what|why|when|where|who|should|could|would|can|do|does|is|are)\b/i.test(trimmed);
+    return questionLike ? 'advisory' : 'review';
 }
 
 function isLowValueAdvisoryReport(report: string, taskMode: ConsultTaskMode): boolean {
@@ -526,6 +566,13 @@ function classifyAdvisoryWitnessAnswer(text: string, strictRubric = false): Advi
         return {
             status: 'invalid',
             error: 'pseudo-tool call emitted in advisory direct-answer pass',
+            retryable: true,
+        };
+    }
+    if (containsPromptReflectionLeak(text)) {
+        return {
+            status: 'invalid',
+            error: 'protocol deliberation leaked into advisory direct-answer pass',
             retryable: true,
         };
     }
@@ -1158,7 +1205,7 @@ async function runWitness(witness: WitnessModelConfig, prompt: string, projectDi
     const groundedDirectFileSources = extractPromptGroundedFileSources(prompt);
 
     if (taskMode === 'advisory') {
-        const strictAdvisoryRubric = usesStrictAdvisoryRubric(witness);
+        const strictAdvisoryRubric = usesStrictAdvisoryRubric(witness, prompt);
         const firstPrompt = buildAdvisoryWitnessPrompt(prompt, strictAdvisoryRubric);
         const firstAttempt = await invoke(witness.model, firstPrompt, projectDir, {
             maxSteps: 1,
