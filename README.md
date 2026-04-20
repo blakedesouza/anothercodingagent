@@ -143,6 +143,14 @@ Or after building:
 node dist/index.js init
 ```
 
+For day-to-day local development, you do not need to rebuild after every source edit. Run ACA directly from `src/` instead:
+
+```bash
+npm run aca:src -- consult --question "Review this patch for regressions."
+```
+
+Use the built `dist/index.js` or linked `aca` binary when you specifically want to validate the shipped artifact.
+
 If linked as a package, `aca` is on your PATH directly.
 
 ---

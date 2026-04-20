@@ -11,6 +11,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "node --import tsx src/index.ts",
+    "aca:src": "node --import tsx src/index.ts",
     "test": "vitest run",
     "test:full": "npm run test && npm run test:live",
     "test:live": "vitest run -c vitest.live.config.ts",
