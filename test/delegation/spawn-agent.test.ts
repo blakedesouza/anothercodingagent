@@ -735,6 +735,16 @@ describe('validatePreauthNarrowing', () => {
         const rejected = validatePreauthNarrowing(parent, child);
         expect(rejected).toHaveLength(1);
     });
+
+    it('allows a permanent parent rule to cover a session-scoped child rule', () => {
+        const parent: PreauthRule[] = [
+            { id: 'p1', tool: 'exec_command', match: {}, decision: 'allow', scope: 'permanent' },
+        ];
+        const child: PreauthRule[] = [
+            { id: 'c1', tool: 'exec_command', match: {}, decision: 'allow', scope: 'session' },
+        ];
+        expect(validatePreauthNarrowing(parent, child)).toEqual([]);
+    });
 });
 
 describe('validateAuthorityNarrowing', () => {
@@ -763,6 +773,17 @@ describe('validateAuthorityNarrowing', () => {
         ];
         const override: AuthorityRule[] = [
             { id: 'o1', tool: 'exec_command', match: {}, decision: 'allow', scope: 'session' },
+        ];
+        const rejected = validateAuthorityNarrowing(parent, override);
+        expect(rejected).toHaveLength(1);
+    });
+
+    it('rejects a permanent override when the parent only granted session scope', () => {
+        const parent: AuthorityRule[] = [
+            { id: 'p1', tool: 'exec_command', match: {}, decision: 'allow', scope: 'session' },
+        ];
+        const override: AuthorityRule[] = [
+            { id: 'o1', tool: 'exec_command', match: {}, decision: 'allow', scope: 'permanent' },
         ];
         const rejected = validateAuthorityNarrowing(parent, override);
         expect(rejected).toHaveLength(1);

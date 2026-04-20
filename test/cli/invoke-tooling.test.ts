@@ -8,6 +8,7 @@ import {
     mapInvokeAuthorityToPreauths,
     registerInvokeRuntimeTools,
 } from '../../src/cli/invoke-tooling.js';
+import { CONFIG_DEFAULTS } from '../../src/config/schema.js';
 import { SessionManager } from '../../src/core/session-manager.js';
 import { CapabilityHealthMap } from '../../src/core/capability-health.js';
 import { deriveWorkspaceId } from '../../src/core/session-manager.js';
@@ -337,5 +338,71 @@ describe('registerInvokeRuntimeTools', () => {
         } finally {
             store.close();
         }
+    });
+
+    it('writes drift-capable snapshots for invoke-spawned child sessions', async () => {
+        const workspaceRoot = mkdtempSync(join(tmpdir(), 'aca-invoke-child-snapshot-'));
+        const sessionsDir = mkdtempSync(join(tmpdir(), 'aca-invoke-child-snapshot-sessions-'));
+        cleanupPaths.push(workspaceRoot, sessionsDir);
+
+        const sessionManager = new SessionManager(sessionsDir);
+        const projection = sessionManager.create(workspaceRoot, {
+            model: 'qwen/qwen3-coder-next',
+            mode: 'executor',
+        });
+        const toolRegistry = buildInvokeBaseRegistry();
+        const healthMap = new CapabilityHealthMap();
+        const networkPolicy: NetworkPolicy = {
+            mode: 'approved-only',
+            allowDomains: [],
+            denyDomains: [],
+            allowHttp: false,
+        };
+
+        await registerInvokeRuntimeTools({
+            cwd: workspaceRoot,
+            model: 'qwen/qwen3-coder-next',
+            toolRegistry,
+            networkPolicy,
+            healthMap,
+            sessionManager,
+            sessionId: projection.manifest.sessionId,
+            resolvedConfig: CONFIG_DEFAULTS,
+            providerName: 'nanogpt',
+        });
+
+        const spawn = toolRegistry.lookup('spawn_agent');
+        expect(spawn).toBeDefined();
+
+        const result = await spawn!.impl(
+            {
+                agent_type: 'coder',
+                task: 'Create a delegated child session',
+            },
+            {
+                workspaceRoot,
+                sessionId: projection.manifest.sessionId as SessionId,
+                isSubAgent: true,
+                signal: AbortSignal.timeout(5000),
+            },
+        );
+
+        expect(result.status).toBe('success');
+        const data = JSON.parse(result.data) as { childSessionId: string };
+        const manifest = JSON.parse(
+            readFileSync(join(sessionsDir, data.childSessionId, 'manifest.json'), 'utf-8'),
+        ) as {
+            configSnapshot: {
+                defaultProvider?: string;
+                permissions?: unknown;
+                network?: unknown;
+                scrubbing?: unknown;
+            };
+        };
+
+        expect(manifest.configSnapshot.defaultProvider).toBe('nanogpt');
+        expect(manifest.configSnapshot.permissions).toEqual(CONFIG_DEFAULTS.permissions);
+        expect(manifest.configSnapshot.network).toEqual(CONFIG_DEFAULTS.network);
+        expect(manifest.configSnapshot.scrubbing).toEqual(CONFIG_DEFAULTS.scrubbing);
     });
 });

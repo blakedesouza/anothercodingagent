@@ -18,19 +18,6 @@ import { createMessageAgentImpl, messageAgentSpec } from '../delegation/message-
 import { createAwaitAgentImpl, awaitAgentSpec } from '../delegation/await-agent.js';
 import { generateId } from '../types/ids.js';
 import { ToolRegistry, type ToolImplementation } from '../tools/tool-registry.js';
-import { LspManager } from '../lsp/lsp-manager.js';
-import { lspQuerySpec, createLspQueryImpl } from '../tools/lsp-query.js';
-import { BrowserManager } from '../browser/browser-manager.js';
-import { BROWSER_TOOL_SPECS, createBrowserToolImpls } from '../browser/browser-tools.js';
-import { TavilySearchProvider, webSearchSpec, createWebSearchImpl } from '../tools/web-search.js';
-import { fetchUrlSpec, createFetchUrlImpl } from '../tools/fetch-url.js';
-import {
-    fetchMediaWikiPageSpec,
-    fetchMediaWikiCategorySpec,
-    createFetchMediaWikiPageImpl,
-    createFetchMediaWikiCategoryImpl,
-} from '../tools/fetch-mediawiki-page.js';
-import { lookupDocsSpec, createLookupDocsImpl } from '../tools/lookup-docs.js';
 import type { AuthorityGrant } from './executor.js';
 import type { PreauthRule } from '../config/schema.js';
 import type { ConversationItem } from '../types/conversation.js';
@@ -42,6 +29,7 @@ import type { ProviderDriver } from '../types/provider.js';
 import type { SecretScrubber } from '../permissions/secret-scrubber.js';
 import type { SessionGrantStore } from '../permissions/session-grants.js';
 import type { ResolvedConfig } from '../config/schema.js';
+import { buildSessionConfigSnapshot } from '../config/session-snapshot.js';
 
 export interface RegisterInvokeRuntimeToolsOptions {
     cwd: string;
@@ -52,6 +40,9 @@ export interface RegisterInvokeRuntimeToolsOptions {
     tavilyApiKey?: string;
     sessionManager: SessionManager;
     sessionId: SessionId;
+    warn?: (message: string) => void;
+    resolvedConfig?: ResolvedConfig;
+    providerName?: string;
     delegationRuntime?: {
         provider: ProviderDriver;
         providerName: string;
@@ -107,6 +98,83 @@ export function mapInvokeAuthorityToPreauths(
         }));
 }
 
+async function loadLspCapabilities() {
+    const [
+        { LspManager },
+        { lspQuerySpec, createLspQueryImpl },
+    ] = await Promise.all([
+        import('../lsp/lsp-manager.js'),
+        import('../tools/lsp-query.js'),
+    ]);
+
+    return {
+        LspManager,
+        lspQuerySpec,
+        createLspQueryImpl,
+    };
+}
+
+async function loadBrowserCapabilities() {
+    const [
+        { BrowserManager },
+        { BROWSER_TOOL_SPECS, createBrowserToolImpls },
+    ] = await Promise.all([
+        import('../browser/browser-manager.js'),
+        import('../browser/browser-tools.js'),
+    ]);
+
+    return {
+        BrowserManager,
+        BROWSER_TOOL_SPECS,
+        createBrowserToolImpls,
+    };
+}
+
+async function loadSearchCapabilities() {
+    const { TavilySearchProvider, webSearchSpec, createWebSearchImpl } = await import('../tools/web-search.js');
+    return {
+        TavilySearchProvider,
+        webSearchSpec,
+        createWebSearchImpl,
+    };
+}
+
+async function loadFetchUrlCapabilities() {
+    const { fetchUrlSpec, createFetchUrlImpl } = await import('../tools/fetch-url.js');
+    return { fetchUrlSpec, createFetchUrlImpl };
+}
+
+async function loadMediaWikiCapabilities() {
+    const {
+        fetchMediaWikiPageSpec,
+        fetchMediaWikiCategorySpec,
+        createFetchMediaWikiPageImpl,
+        createFetchMediaWikiCategoryImpl,
+    } = await import('../tools/fetch-mediawiki-page.js');
+
+    return {
+        fetchMediaWikiPageSpec,
+        fetchMediaWikiCategorySpec,
+        createFetchMediaWikiPageImpl,
+        createFetchMediaWikiCategoryImpl,
+    };
+}
+
+async function loadLookupDocsCapabilities() {
+    const { lookupDocsSpec, createLookupDocsImpl } = await import('../tools/lookup-docs.js');
+    return { lookupDocsSpec, createLookupDocsImpl };
+}
+
+function warnOptionalInvokeCapability(
+    capability: string,
+    error: unknown,
+    warn?: (message: string) => void,
+): void {
+    if (!warn) return;
+    const detail = error instanceof Error ? error.message : String(error);
+    warn(`Optional capability "${capability}" is unavailable: ${detail}`);
+}
+
 export async function registerInvokeRuntimeTools(
     options: RegisterInvokeRuntimeToolsOptions,
 ): Promise<RegisterInvokeRuntimeToolsResult> {
@@ -119,12 +187,42 @@ export async function registerInvokeRuntimeTools(
         tavilyApiKey,
         sessionManager,
         sessionId,
+        warn,
+        resolvedConfig,
+        providerName,
         delegationRuntime,
     } = options;
 
-    const lspManager = new LspManager({ workspaceRoot: cwd, healthMap });
-    const browserManager = new BrowserManager({ healthMap, networkPolicy });
-    const searchProvider = tavilyApiKey ? new TavilySearchProvider(tavilyApiKey) : undefined;
+    const lspCaps = await loadLspCapabilities().catch((error: unknown) => {
+        warnOptionalInvokeCapability('lsp_query', error, warn);
+        return undefined;
+    });
+    const browserCaps = await loadBrowserCapabilities().catch((error: unknown) => {
+        warnOptionalInvokeCapability('browser tools', error, warn);
+        return undefined;
+    });
+    const searchCaps = await loadSearchCapabilities().catch((error: unknown) => {
+        warnOptionalInvokeCapability('web_search', error, warn);
+        return undefined;
+    });
+    const fetchUrlCaps = await loadFetchUrlCapabilities().catch((error: unknown) => {
+        warnOptionalInvokeCapability('fetch_url', error, warn);
+        return undefined;
+    });
+    const mediaWikiCaps = await loadMediaWikiCapabilities().catch((error: unknown) => {
+        warnOptionalInvokeCapability('fetch_mediawiki tools', error, warn);
+        return undefined;
+    });
+    const lookupDocsCaps = await loadLookupDocsCapabilities().catch((error: unknown) => {
+        warnOptionalInvokeCapability('lookup_docs', error, warn);
+        return undefined;
+    });
+
+    const lspManager = lspCaps ? new lspCaps.LspManager({ workspaceRoot: cwd, healthMap }) : undefined;
+    const browserManager = browserCaps ? new browserCaps.BrowserManager({ healthMap, networkPolicy }) : undefined;
+    const searchProvider = (tavilyApiKey && searchCaps)
+        ? new searchCaps.TavilySearchProvider(tavilyApiKey)
+        : undefined;
 
     const workspaceId = deriveWorkspaceId(cwd);
     const indexDbPath = join(homedir(), '.aca', 'indexes', workspaceId, 'index.db');
@@ -178,21 +276,33 @@ export async function registerInvokeRuntimeTools(
         const impl = await getSearchSemanticImpl();
         return impl(args, context);
     });
-    toolRegistry.register(lspQuerySpec, createLspQueryImpl({ lspManager }));
+    if (lspCaps && lspManager) {
+        toolRegistry.register(lspCaps.lspQuerySpec, lspCaps.createLspQueryImpl({ lspManager }));
+    }
 
-    const browserToolImpls = createBrowserToolImpls({ manager: browserManager, networkPolicy });
-    for (const spec of BROWSER_TOOL_SPECS) {
-        const impl = browserToolImpls.get(spec.name);
-        if (impl) {
-            toolRegistry.register(spec, impl);
+    if (browserCaps && browserManager) {
+        const browserToolImpls = browserCaps.createBrowserToolImpls({ manager: browserManager, networkPolicy });
+        for (const spec of browserCaps.BROWSER_TOOL_SPECS) {
+            const impl = browserToolImpls.get(spec.name);
+            if (impl) {
+                toolRegistry.register(spec, impl);
+            }
         }
     }
 
-    toolRegistry.register(webSearchSpec, createWebSearchImpl({ searchProvider, networkPolicy }));
-    toolRegistry.register(fetchUrlSpec, createFetchUrlImpl({ networkPolicy, browserManager }));
-    toolRegistry.register(fetchMediaWikiPageSpec, createFetchMediaWikiPageImpl({ networkPolicy }));
-    toolRegistry.register(fetchMediaWikiCategorySpec, createFetchMediaWikiCategoryImpl({ networkPolicy }));
-    toolRegistry.register(lookupDocsSpec, createLookupDocsImpl({ searchProvider, networkPolicy, browserManager }));
+    if (searchCaps) {
+        toolRegistry.register(searchCaps.webSearchSpec, searchCaps.createWebSearchImpl({ searchProvider, networkPolicy }));
+    }
+    if (fetchUrlCaps) {
+        toolRegistry.register(fetchUrlCaps.fetchUrlSpec, fetchUrlCaps.createFetchUrlImpl({ networkPolicy, browserManager }));
+    }
+    if (mediaWikiCaps) {
+        toolRegistry.register(mediaWikiCaps.fetchMediaWikiPageSpec, mediaWikiCaps.createFetchMediaWikiPageImpl({ networkPolicy }));
+        toolRegistry.register(mediaWikiCaps.fetchMediaWikiCategorySpec, mediaWikiCaps.createFetchMediaWikiCategoryImpl({ networkPolicy }));
+    }
+    if (lookupDocsCaps) {
+        toolRegistry.register(lookupDocsCaps.lookupDocsSpec, lookupDocsCaps.createLookupDocsImpl({ searchProvider, networkPolicy, browserManager }));
+    }
 
     const refreshSemanticIndexForTurn = async (
         items: readonly ConversationItem[],
@@ -236,10 +346,17 @@ export async function registerInvokeRuntimeTools(
         createChildSession: (parentSessionId: SessionId, rootSessionId: SessionId) => {
             const child = sessionManager.create(
                 cwd,
-                {
-                    model,
-                    mode: 'sub-agent',
-                },
+                resolvedConfig && providerName
+                    ? buildSessionConfigSnapshot(resolvedConfig, {
+                        workspaceRoot: cwd,
+                        model,
+                        provider: providerName,
+                        mode: 'sub-agent',
+                    })
+                    : {
+                        model,
+                        mode: 'sub-agent',
+                    },
                 {
                     parentSessionId,
                     rootSessionId,

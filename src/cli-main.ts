@@ -39,7 +39,12 @@ import {
 } from './cli/invoke-runtime-state.js';
 
 // --- Config ---
-import { loadConfig } from './config/loader.js';
+import { detectConfigDrift, loadConfig } from './config/loader.js';
+import {
+    buildEffectiveResolvedConfig,
+    buildSessionConfigSnapshot,
+    hasConfigDriftBaseline,
+} from './config/session-snapshot.js';
 import { loadSecrets } from './config/secrets.js';
 import { serializeWitnessConfigs } from './config/witness-models.js';
 import type { ResolvedConfig } from './config/schema.js';
@@ -68,6 +73,7 @@ import { closeSessionSpec, closeSessionImpl } from './tools/close-session.js';
 import { askUserSpec, askUserImpl } from './tools/ask-user.js';
 import { confirmActionSpec, confirmActionImpl } from './tools/confirm-action.js';
 import { estimateTokensSpec, estimateTokensImpl } from './tools/estimate-tokens.js';
+import { processRegistry } from './tools/process-registry.js';
 
 // --- Indexing ---
 import type { Indexer } from './indexing/indexer.js';
@@ -97,7 +103,7 @@ import { messageAgentSpec, createMessageAgentImpl } from './delegation/message-a
 import { awaitAgentSpec, createAwaitAgentImpl } from './delegation/await-agent.js';
 import { createDelegationLaunchHandler } from './delegation/agent-runtime.js';
 import type { AgentIdentity } from './types/agent.js';
-import type { AgentId } from './types/ids.js';
+import type { AgentId, SessionId } from './types/ids.js';
 import { generateId } from './types/ids.js';
 
 // --- LSP ---
@@ -451,38 +457,17 @@ async function createActiveProviderRuntime(
     }
 }
 
-async function loadRuntimeCapabilities() {
+async function loadIndexingCapabilities() {
     const [
         { EmbeddingModel },
         { IndexStore },
         { BACKGROUND_THRESHOLD, Indexer },
         { searchSemanticSpec, createSearchSemanticImpl },
-        { LspManager },
-        { lspQuerySpec, createLspQueryImpl },
-        { BrowserManager },
-        { BROWSER_TOOL_SPECS, createBrowserToolImpls },
-        { TavilySearchProvider, webSearchSpec, createWebSearchImpl },
-        { fetchUrlSpec, createFetchUrlImpl },
-        {
-            fetchMediaWikiPageSpec,
-            fetchMediaWikiCategorySpec,
-            createFetchMediaWikiPageImpl,
-            createFetchMediaWikiCategoryImpl,
-        },
-        { lookupDocsSpec, createLookupDocsImpl },
     ] = await Promise.all([
         import('./indexing/embedding.js'),
         import('./indexing/index-store.js'),
         import('./indexing/indexer.js'),
         import('./tools/search-semantic.js'),
-        import('./lsp/lsp-manager.js'),
-        import('./tools/lsp-query.js'),
-        import('./browser/browser-manager.js'),
-        import('./browser/browser-tools.js'),
-        import('./tools/web-search.js'),
-        import('./tools/fetch-url.js'),
-        import('./tools/fetch-mediawiki-page.js'),
-        import('./tools/lookup-docs.js'),
     ]);
 
     return {
@@ -492,24 +477,74 @@ async function loadRuntimeCapabilities() {
         Indexer,
         searchSemanticSpec,
         createSearchSemanticImpl,
+    };
+}
+
+async function loadLspCapabilities() {
+    const [
+        { LspManager },
+        { lspQuerySpec, createLspQueryImpl },
+    ] = await Promise.all([
+        import('./lsp/lsp-manager.js'),
+        import('./tools/lsp-query.js'),
+    ]);
+
+    return {
         LspManager,
         lspQuerySpec,
         createLspQueryImpl,
+    };
+}
+
+async function loadBrowserCapabilities() {
+    const [
+        { BrowserManager },
+        { BROWSER_TOOL_SPECS, createBrowserToolImpls },
+    ] = await Promise.all([
+        import('./browser/browser-manager.js'),
+        import('./browser/browser-tools.js'),
+    ]);
+
+    return {
         BrowserManager,
         BROWSER_TOOL_SPECS,
         createBrowserToolImpls,
+    };
+}
+
+async function loadSearchCapabilities() {
+    const { TavilySearchProvider, webSearchSpec, createWebSearchImpl } = await import('./tools/web-search.js');
+    return {
         TavilySearchProvider,
         webSearchSpec,
         createWebSearchImpl,
-        fetchUrlSpec,
-        createFetchUrlImpl,
+    };
+}
+
+async function loadFetchUrlCapabilities() {
+    const { fetchUrlSpec, createFetchUrlImpl } = await import('./tools/fetch-url.js');
+    return { fetchUrlSpec, createFetchUrlImpl };
+}
+
+async function loadMediaWikiCapabilities() {
+    const {
         fetchMediaWikiPageSpec,
         fetchMediaWikiCategorySpec,
         createFetchMediaWikiPageImpl,
         createFetchMediaWikiCategoryImpl,
-        lookupDocsSpec,
-        createLookupDocsImpl,
+    } = await import('./tools/fetch-mediawiki-page.js');
+
+    return {
+        fetchMediaWikiPageSpec,
+        fetchMediaWikiCategorySpec,
+        createFetchMediaWikiPageImpl,
+        createFetchMediaWikiCategoryImpl,
     };
+}
+
+async function loadLookupDocsCapabilities() {
+    const { lookupDocsSpec, createLookupDocsImpl } = await import('./tools/lookup-docs.js');
+    return { lookupDocsSpec, createLookupDocsImpl };
 }
 
 async function probeCatalogAccess(catalog: NanoGptCatalog): Promise<'ok' | 'fallback'> {
@@ -521,6 +556,50 @@ async function probeCatalogAccess(catalog: NanoGptCatalog): Promise<'ok' | 'fall
             throw error;
         }
         return 'fallback';
+    }
+}
+
+function formatSnapshotValue(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (value === undefined) return 'undefined';
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return String(value);
+    }
+}
+
+function warnOptionalRuntimeCapability(
+    label: string,
+    error: unknown,
+    writeHumanStderr: (text: string) => void,
+): void {
+    const message = error instanceof Error ? error.message : String(error);
+    writeHumanStderr(`[startup] Warning: ${label} unavailable — ${message}\n`);
+}
+
+function markHistoricalShellSessionsTerminated(
+    sessionId: string,
+    items: ConversationItem[],
+): void {
+    for (const item of items) {
+        if (item.kind !== 'tool_result' || item.toolName !== 'open_session' || item.output.status !== 'success') {
+            continue;
+        }
+
+        try {
+            const data = JSON.parse(item.output.data) as Record<string, unknown>;
+            const handle = typeof data.session_id === 'string' ? data.session_id : undefined;
+            if (!handle) continue;
+
+            processRegistry.markTerminated(
+                sessionId,
+                handle,
+                'Session terminated on ACA resume; long-lived shell sessions do not survive process restart. Reopen the session before using session_io.',
+            );
+        } catch {
+            // Ignore malformed historical tool output.
+        }
     }
 }
 
@@ -620,6 +699,34 @@ export function buildRpRepairTurnConfig(constraints: {
     };
 }
 
+export function resolveResumeWorkspaceContext(
+    sessionManager: SessionManager,
+    launchWorkspaceRoot: string,
+    wantsResume: boolean,
+    resumeSessionId?: SessionId,
+): { effectiveWorkspaceRoot: string; targetSessionId: SessionId | null } {
+    if (!wantsResume) {
+        return { effectiveWorkspaceRoot: launchWorkspaceRoot, targetSessionId: null };
+    }
+
+    const targetSessionId = resumeSessionId
+        ?? sessionManager.findLatestForWorkspace(deriveWorkspaceId(launchWorkspaceRoot));
+    if (!targetSessionId) {
+        throw new Error('no previous session found for this workspace');
+    }
+
+    const manifest = sessionManager.readManifest(targetSessionId);
+    const storedWorkspaceRoot = typeof manifest.configSnapshot.workspaceRoot === 'string'
+        && manifest.configSnapshot.workspaceRoot.length > 0
+        ? manifest.configSnapshot.workspaceRoot
+        : launchWorkspaceRoot;
+
+    return {
+        effectiveWorkspaceRoot: storedWorkspaceRoot,
+        targetSessionId,
+    };
+}
+
 interface MainOptions {
     model: string | undefined;
     verbose: boolean;
@@ -698,10 +805,27 @@ program
 
         const isOneShot = task !== undefined;
 
-        const cwd = process.cwd();
+        const launchWorkspaceRoot = process.cwd();
+        const sessionsDir = join(homedir(), '.aca', 'sessions');
+        mkdirSync(sessionsDir, { recursive: true });
+        const sessionManager = new SessionManager(sessionsDir);
+        let resumeContext: ReturnType<typeof resolveResumeWorkspaceContext>;
+        try {
+            resumeContext = resolveResumeWorkspaceContext(
+                sessionManager,
+                launchWorkspaceRoot,
+                wantsResume,
+                resumeSessionId as SessionId | undefined,
+            );
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            writeHumanStderr(`Error: failed to resume session: ${msg}\n`);
+            process.exit(EXIT_ONESHOT_STARTUP);
+        }
+        const workspaceRoot = resumeContext.effectiveWorkspaceRoot;
 
         // --- Load config ---
-        const configResult = await loadConfig({ workspaceRoot: cwd });
+        const configResult = await loadConfig({ workspaceRoot });
         const config = configResult.config;
 
         // --- Resolve model: CLI flag > config model.default ---
@@ -786,32 +910,66 @@ program
             denyDomains: config.network.denyDomains,
             allowHttp: config.network.allowHttp,
         };
-        const runtimeCaps = await loadRuntimeCapabilities();
 
         // --- Capability health tracker (M7.13) ---
         const healthMap = new CapabilityHealthMap();
 
+        // --- Optional runtime capability families ---
+        const indexingCaps = await loadIndexingCapabilities().catch((error: unknown) => {
+            warnOptionalRuntimeCapability('indexing/search_semantic', error, writeHumanStderr);
+            return undefined;
+        });
+        const lspCaps = await loadLspCapabilities().catch((error: unknown) => {
+            warnOptionalRuntimeCapability('lsp_query', error, writeHumanStderr);
+            return undefined;
+        });
+        const browserCaps = await loadBrowserCapabilities().catch((error: unknown) => {
+            warnOptionalRuntimeCapability('browser tools', error, writeHumanStderr);
+            return undefined;
+        });
+        const searchCaps = await loadSearchCapabilities().catch((error: unknown) => {
+            warnOptionalRuntimeCapability('web_search', error, writeHumanStderr);
+            return undefined;
+        });
+        const fetchUrlCaps = await loadFetchUrlCapabilities().catch((error: unknown) => {
+            warnOptionalRuntimeCapability('fetch_url', error, writeHumanStderr);
+            return undefined;
+        });
+        const mediaWikiCaps = await loadMediaWikiCapabilities().catch((error: unknown) => {
+            warnOptionalRuntimeCapability('fetch_mediawiki tools', error, writeHumanStderr);
+            return undefined;
+        });
+        const lookupDocsCaps = await loadLookupDocsCapabilities().catch((error: unknown) => {
+            warnOptionalRuntimeCapability('lookup_docs', error, writeHumanStderr);
+            return undefined;
+        });
+
         // --- LSP Manager (M7.3) ---
-        const lspManager = new runtimeCaps.LspManager({ workspaceRoot: cwd, healthMap });
+        const lspManager = lspCaps ? new lspCaps.LspManager({ workspaceRoot, healthMap }) : undefined;
 
         // --- Browser Manager (M7.4) ---
-        const browserManager = new runtimeCaps.BrowserManager({ healthMap, networkPolicy });
+        const browserManager = browserCaps ? new browserCaps.BrowserManager({ healthMap, networkPolicy }) : undefined;
 
         // --- Search provider (M7.5 — Tavily, optional) ---
         const tavilyKey = secretsResult.secrets.tavily;
-        const searchProvider = tavilyKey ? new runtimeCaps.TavilySearchProvider(tavilyKey) : undefined;
+        const searchProvider = (tavilyKey && searchCaps)
+            ? new searchCaps.TavilySearchProvider(tavilyKey)
+            : undefined;
 
         // --- Lazy indexing/search_semantic initialization ---
-        const workspaceId = deriveWorkspaceId(cwd);
+        const workspaceId = deriveWorkspaceId(workspaceRoot);
         const indexDbPath = join(homedir(), '.aca', 'indexes', workspaceId, 'index.db');
         let indexStore: { close(): void } | undefined;
         let embeddingModel: { dispose(): Promise<void> } | undefined;
         let indexer: Indexer | undefined;
         let searchSemanticImpl: ToolImplementation | undefined;
         const getSearchSemanticImpl = async (): Promise<ToolImplementation> => {
+            if (!indexingCaps) {
+                throw new Error('search_semantic is unavailable in this runtime');
+            }
             if (searchSemanticImpl) return searchSemanticImpl;
 
-            const createdStore = new runtimeCaps.IndexStore(
+            const createdStore = new indexingCaps.IndexStore(
                 indexDbPath,
                 (msg) => writeHumanStderr(`[index] ${msg}\n`),
             );
@@ -822,7 +980,7 @@ program
                 );
             }
 
-            const createdEmbedding = new runtimeCaps.EmbeddingModel();
+            const createdEmbedding = new indexingCaps.EmbeddingModel();
             const embeddingReady = await createdEmbedding.initialize();
             if (!embeddingReady) {
                 writeHumanStderr(
@@ -830,8 +988,8 @@ program
                 );
             }
 
-            const createdIndexer = new runtimeCaps.Indexer(
-                cwd,
+            const createdIndexer = new indexingCaps.Indexer(
+                workspaceRoot,
                 createdStore,
                 createdEmbedding,
                 undefined,
@@ -843,7 +1001,7 @@ program
             indexStore = createdStore;
             embeddingModel = createdEmbedding;
             indexer = createdIndexer;
-            searchSemanticImpl = runtimeCaps.createSearchSemanticImpl({
+            searchSemanticImpl = indexingCaps.createSearchSemanticImpl({
                 indexer: createdIndexer,
                 store: createdStore,
                 embedding: createdEmbedding,
@@ -869,30 +1027,44 @@ program
         toolRegistry.register(askUserSpec, askUserImpl);
         toolRegistry.register(confirmActionSpec, confirmActionImpl);
         toolRegistry.register(estimateTokensSpec, estimateTokensImpl);
-        toolRegistry.register(runtimeCaps.searchSemanticSpec, async (args, context) => {
-            const impl = await getSearchSemanticImpl();
-            await ensureSemanticIndexReadyForTool(indexer, runtimeCaps.BACKGROUND_THRESHOLD);
-            return impl(args, context);
-        });
+        if (indexingCaps) {
+            toolRegistry.register(indexingCaps.searchSemanticSpec, async (args, context) => {
+                const impl = await getSearchSemanticImpl();
+                await ensureSemanticIndexReadyForTool(indexer, indexingCaps.BACKGROUND_THRESHOLD);
+                return impl(args, context);
+            });
+        }
 
         // --- Register LSP tool (M7.3) ---
-        toolRegistry.register(runtimeCaps.lspQuerySpec, runtimeCaps.createLspQueryImpl({ lspManager }));
+        if (lspCaps && lspManager) {
+            toolRegistry.register(lspCaps.lspQuerySpec, lspCaps.createLspQueryImpl({ lspManager }));
+        }
 
         // --- Register browser tools (M7.4) ---
-        const browserToolImpls = runtimeCaps.createBrowserToolImpls({ manager: browserManager, networkPolicy });
-        for (const spec of runtimeCaps.BROWSER_TOOL_SPECS) {
-            const impl = browserToolImpls.get(spec.name) as ToolImplementation | undefined;
-            if (impl) {
-                toolRegistry.register(spec, impl);
+        if (browserCaps && browserManager) {
+            const browserToolImpls = browserCaps.createBrowserToolImpls({ manager: browserManager, networkPolicy });
+            for (const spec of browserCaps.BROWSER_TOOL_SPECS) {
+                const impl = browserToolImpls.get(spec.name) as ToolImplementation | undefined;
+                if (impl) {
+                    toolRegistry.register(spec, impl);
+                }
             }
         }
 
         // --- Register web tools (M7.5) ---
-        toolRegistry.register(runtimeCaps.webSearchSpec, runtimeCaps.createWebSearchImpl({ searchProvider, networkPolicy }));
-        toolRegistry.register(runtimeCaps.fetchUrlSpec, runtimeCaps.createFetchUrlImpl({ networkPolicy, browserManager }));
-        toolRegistry.register(runtimeCaps.fetchMediaWikiPageSpec, runtimeCaps.createFetchMediaWikiPageImpl({ networkPolicy }));
-        toolRegistry.register(runtimeCaps.fetchMediaWikiCategorySpec, runtimeCaps.createFetchMediaWikiCategoryImpl({ networkPolicy }));
-        toolRegistry.register(runtimeCaps.lookupDocsSpec, runtimeCaps.createLookupDocsImpl({ searchProvider, networkPolicy, browserManager }));
+        if (searchCaps) {
+            toolRegistry.register(searchCaps.webSearchSpec, searchCaps.createWebSearchImpl({ searchProvider, networkPolicy }));
+        }
+        if (fetchUrlCaps) {
+            toolRegistry.register(fetchUrlCaps.fetchUrlSpec, fetchUrlCaps.createFetchUrlImpl({ networkPolicy, browserManager }));
+        }
+        if (mediaWikiCaps) {
+            toolRegistry.register(mediaWikiCaps.fetchMediaWikiPageSpec, mediaWikiCaps.createFetchMediaWikiPageImpl({ networkPolicy }));
+            toolRegistry.register(mediaWikiCaps.fetchMediaWikiCategorySpec, mediaWikiCaps.createFetchMediaWikiCategoryImpl({ networkPolicy }));
+        }
+        if (lookupDocsCaps) {
+            toolRegistry.register(lookupDocsCaps.lookupDocsSpec, lookupDocsCaps.createLookupDocsImpl({ searchProvider, networkPolicy, browserManager }));
+        }
 
         // --- Agent Registry + Delegation (M7.1a-c, M7.2) ---
         const registryResult = AgentRegistry.resolve(toolRegistry);
@@ -905,28 +1077,32 @@ program
         const delegationTracker = new DelegationTracker(DEFAULT_DELEGATION_LIMITS);
 
         // --- Create or resume session ---
-        const sessionsDir = join(homedir(), '.aca', 'sessions');
-        mkdirSync(sessionsDir, { recursive: true });
-        const sessionManager = new SessionManager(sessionsDir);
+        const currentSessionConfig = buildEffectiveResolvedConfig(config, {
+            model: effectiveModel,
+            provider: activeProvider.providerConfig.name,
+        });
 
         let projection: import('./core/session-manager.js').SessionProjection;
         let existingItems: import('./types/conversation.js').ConversationItem[] = [];
 
         if (wantsResume) {
-            let targetId = resumeSessionId;
-            if (!targetId) {
-                const latestId = sessionManager.findLatestForWorkspace(workspaceId);
-                if (!latestId) {
-                    writeHumanStderr('Error: no previous session found for this workspace\n');
-                    process.exit(EXIT_ONESHOT_STARTUP);
-                }
-                targetId = latestId;
-            }
+            const targetId = resumeContext.targetSessionId as SessionId;
             try {
-                const resumed = sessionManager.resume(targetId as import('./types/ids.js').SessionId);
+                const resumed = sessionManager.resume(targetId);
                 projection = resumed.projection;
                 projection.manifest.fileActivityIndex ??= resumed.fileActivityIndex.serialize();
                 existingItems = [...projection.items];
+                markHistoricalShellSessionsTerminated(projection.manifest.sessionId, projection.items);
+                if (hasConfigDriftBaseline(projection.manifest.configSnapshot)) {
+                    const drifts = detectConfigDrift(currentSessionConfig, projection.manifest.configSnapshot);
+                    for (const drift of drifts) {
+                        const prefix = drift.securityRelevant ? '[resume] Warning' : '[resume] Note';
+                        writeHumanStderr(
+                            `${prefix}: config drift for ${drift.field} ` +
+                            `(was ${formatSnapshotValue(drift.previous)}, now ${formatSnapshotValue(drift.current)})\n`,
+                        );
+                    }
+                }
                 if (options.verbose) {
                     writeHumanStderr(`[debug] Resumed session ${targetId}\n`);
                 }
@@ -936,10 +1112,15 @@ program
                 process.exit(EXIT_ONESHOT_STARTUP);
             }
         } else {
-            projection = sessionManager.create(cwd, {
-                model: effectiveModel,
-                verbose: options.verbose,
-            });
+            projection = sessionManager.create(
+                workspaceRoot,
+                buildSessionConfigSnapshot(config, {
+                    workspaceRoot,
+                    model: effectiveModel,
+                    provider: activeProvider.providerConfig.name,
+                    verbose: options.verbose,
+                }),
+            );
         }
 
         const startupMaintenance = await runStartupObservabilityMaintenance({
@@ -994,11 +1175,13 @@ program
             limits: DEFAULT_DELEGATION_LIMITS,
             createChildSession: (parentSessionId: import('./types/ids.js').SessionId, rootSessionId: import('./types/ids.js').SessionId) => {
                 const child = sessionManager.create(
-                    cwd,
-                    {
+                    workspaceRoot,
+                    buildSessionConfigSnapshot(config, {
+                        workspaceRoot,
                         model: effectiveModel,
+                        provider: activeProvider.providerConfig.name,
                         mode: 'sub-agent',
-                    },
+                    }),
                     {
                         parentSessionId,
                         rootSessionId,
@@ -1011,7 +1194,7 @@ program
                 providerName: activeProvider.providerConfig.name,
                 model: effectiveModel,
                 autoConfirm: !options.confirm,
-                workspaceRoot: cwd,
+                workspaceRoot,
                 shell: process.env.SHELL,
                 rootToolRegistry: toolRegistry,
                 sessionManager,
@@ -1074,8 +1257,8 @@ program
         const cleanupResources = async () => {
             try { telemetryExporter.stop(); } catch { /* best-effort */ }
             try { bgWriter.shutdown(); } catch { /* best-effort */ }
-            await lspManager.dispose().catch(() => {});
-            await browserManager.dispose().catch(() => {});
+            await lspManager?.dispose().catch(() => {});
+            await browserManager?.dispose().catch(() => {});
             await embeddingModel?.dispose().catch(() => {});
             try { indexStore?.close(); } catch { /* best-effort */ }
             try { sqliteStore.close(); } catch { /* best-effort */ }
@@ -1087,7 +1270,7 @@ program
         process.on('SIGINT', handleSignal);
 
         // --- Initialize checkpointing ---
-        const checkpointManager = new CheckpointManager(cwd, projection.manifest.sessionId);
+        const checkpointManager = new CheckpointManager(workspaceRoot, projection.manifest.sessionId);
         try {
             await checkpointManager.init();
         } catch (err: unknown) {
@@ -1171,7 +1354,7 @@ program
             await summarizeHistoryBeforeTurn({
                 historyItems: existingItems,
                 pendingUserInput: task!,
-                workspaceRoot: cwd,
+                workspaceRoot,
                 shell: process.env.SHELL,
                 manifest: projection.manifest,
                 writer: projection.writer,
@@ -1182,7 +1365,7 @@ program
                 healthMap,
             });
 
-            const promptContext = buildRuntimePromptContext(cwd, projection.manifest, healthMap);
+            const promptContext = buildRuntimePromptContext(workspaceRoot, projection.manifest, healthMap);
             const turnConfig: TurnEngineConfig = {
                 sessionId: projection.manifest.sessionId,
                 model: effectiveModel,
@@ -1190,7 +1373,7 @@ program
                 interactive: false, // 30-step limit, no consecutive tool cap
                 autoConfirm: !options.confirm, // --no-confirm → confirm=false → autoConfirm=true
                 isSubAgent: false,
-                workspaceRoot: cwd,
+                workspaceRoot,
                 shell: process.env.SHELL,
                 projectSnapshot: promptContext.projectSnapshot,
                 workingSet: promptContext.workingSet,
@@ -1212,13 +1395,15 @@ program
 
             try {
                 const result = await engine.executeTurn(turnConfig, task!, existingItems);
-                await applyRuntimeTurnState(projection.manifest, result.items, cwd);
-                await ensureSemanticIndexReadyForTurnRefresh({
-                    items: result.items,
-                    getIndexer: () => indexer,
-                    initializeRuntime: getSearchSemanticImpl,
-                    backgroundThreshold: runtimeCaps.BACKGROUND_THRESHOLD,
-                });
+                await applyRuntimeTurnState(projection.manifest, result.items, workspaceRoot);
+                if (indexingCaps) {
+                    await ensureSemanticIndexReadyForTurnRefresh({
+                        items: result.items,
+                        getIndexer: () => indexer,
+                        initializeRuntime: getSearchSemanticImpl,
+                        backgroundThreshold: indexingCaps.BACKGROUND_THRESHOLD,
+                    });
+                }
                 await refreshIndexAfterTurn(indexer, result.items);
                 await turnRenderer.renderAssistantMirror(result.items);
 
@@ -1312,18 +1497,20 @@ program
                 version,
                 model: effectiveModel,
                 provider: activeProvider.providerConfig.name,
-                workspace: cwd,
+                workspace: workspaceRoot,
             });
-            await getSearchSemanticImpl();
+            if (indexingCaps) {
+                await getSearchSemanticImpl();
+            }
             await initializeStartupIndexing(
-                indexer!,
+                indexer,
                 outputChannel,
                 options.verbose,
-                runtimeCaps.BACKGROUND_THRESHOLD,
+                indexingCaps?.BACKGROUND_THRESHOLD ?? 0,
             );
 
             if (options.verbose) {
-                outputChannel.stderr(`[debug] Workspace: ${cwd}\n`);
+                outputChannel.stderr(`[debug] Workspace: ${workspaceRoot}\n`);
                 outputChannel.stderr(`[debug] Sessions dir: ${sessionsDir}\n`);
                 outputChannel.stderr(`[debug] Config sources: user=${configResult.sources.user} project=${configResult.sources.project}\n`);
                 outputChannel.stderr(`[debug] Tools: ${toolRegistry.list().map(t => t.spec.name).join(', ')}\n`);
@@ -1338,7 +1525,7 @@ program
                 toolRegistry,
                 model: effectiveModel,
                 verbose: options.verbose,
-                workspaceRoot: cwd,
+                workspaceRoot,
                 scrubber,
                 costTracker,
                 renderer,
@@ -1773,11 +1960,16 @@ program
         const sessionsDir = join(homedir(), '.aca', 'sessions');
         mkdirSync(sessionsDir, { recursive: true });
         const sessionManager = new SessionManager(sessionsDir);
-        const projection = sessionManager.create(cwd, {
-            model: effectiveModel,
-            mode: 'executor',
-            ...(process.env.ACA_SESSION_TAG ? { sessionTag: process.env.ACA_SESSION_TAG } : {}),
-        });
+        const projection = sessionManager.create(
+            cwd,
+            buildSessionConfigSnapshot(config, {
+                workspaceRoot: cwd,
+                model: effectiveModel,
+                provider: activeProvider.providerConfig.name,
+                mode: 'executor',
+                ...(process.env.ACA_SESSION_TAG ? { sessionTag: process.env.ACA_SESSION_TAG } : {}),
+            }),
+        );
         // Mark as ephemeral (not surfaced for resume)
         projection.manifest.ephemeral = true;
         sessionManager.saveManifest(projection);
@@ -1806,6 +1998,9 @@ program
             tavilyApiKey: secretsResult.secrets.tavily,
             sessionManager,
             sessionId: projection.manifest.sessionId,
+            warn: (message) => process.stderr.write(`[invoke] ${message}\n`),
+            resolvedConfig: config,
+            providerName: activeProvider.providerConfig.name,
             delegationRuntime: {
                 provider: activeProvider.provider,
                 providerName: activeProvider.providerConfig.name,

@@ -2,6 +2,11 @@
 
 Split from `fundamentals.md` for agent readability. Each file is one spec block.
 
+These files are architecture references derived from the original design docs.
+They are useful for protocol intent and system structure, but the exact current
+CLI surface is defined by the live implementation, the root `README.md`, and
+`aca --help` / subcommand help.
+
 | File | Block | Lines | Est. Tokens |
 |------|-------|-------|-------------|
 | [00-overview.md](00-overview.md) | Overview, Core Identity | 15 | ~367 |

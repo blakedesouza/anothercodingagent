@@ -118,6 +118,13 @@ export const sessionIoImpl: ToolImplementation = async (
 
     const record = processRegistry.lookup(context.sessionId, sessionHandle);
     if (!record) {
+        const terminated = processRegistry.lookupTerminated(context.sessionId, sessionHandle);
+        if (terminated) {
+            return errorOutput(
+                'tool.session_exited',
+                terminated.reason,
+            );
+        }
         return errorOutput(
             'tool.not_found',
             `Session not found: ${sessionHandle}`,

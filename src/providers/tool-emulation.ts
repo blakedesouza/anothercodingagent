@@ -83,8 +83,16 @@ export function injectToolsIntoRequest(request: ModelRequest): ModelRequest {
     const messages: RequestMessage[] = request.messages.map(msg => {
         if (msg.role === 'system' && !injected) {
             injected = true;
-            const existing = typeof msg.content === 'string' ? msg.content : '';
-            return { ...msg, content: existing + schemaBlock };
+            if (typeof msg.content === 'string') {
+                return { ...msg, content: msg.content + schemaBlock };
+            }
+            return {
+                ...msg,
+                content: [
+                    ...msg.content,
+                    { type: 'text', text: schemaBlock },
+                ],
+            };
         }
         return msg;
     });
@@ -133,12 +141,37 @@ export interface EmulatedToolCallResult {
  * The `arguments` field is a JSON string (to match ToolCallDeltaEvent.arguments).
  */
 export function parseEmulatedToolCalls(text: string): EmulatedToolCallResult | null {
-    const trimmed = stripJsonMarkdownFence(text.trim());
-    return parseStructuredJsonToolCalls(trimmed)
-        ?? parseWrappedJsonToolCalls(trimmed)
-        ?? parseArgTagToolCall(trimmed)
-        ?? parseInvokeTagToolCall(trimmed)
-        ?? parseFunctionTagToolCall(trimmed);
+    const trimmed = text.trim();
+    return parseFencedToolCalls(trimmed)
+        ?? parseToolCallPayload(stripJsonMarkdownFence(trimmed));
+}
+
+function parseToolCallPayload(text: string): EmulatedToolCallResult | null {
+    return parseStructuredJsonToolCalls(text)
+        ?? parseWrappedJsonToolCalls(text)
+        ?? parseArgTagToolCall(text)
+        ?? parseInvokeTagToolCall(text)
+        ?? parseFunctionTagToolCall(text);
+}
+
+function parseFencedToolCalls(text: string): EmulatedToolCallResult | null {
+    const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi)];
+    for (const fence of fences) {
+        const inner = fence[1]?.trim();
+        if (!inner) continue;
+        const parsed = parseToolCallPayload(inner);
+        if (!parsed) continue;
+
+        const fencePreamble = text.slice(0, fence.index ?? 0).trim();
+        const preamble = [fencePreamble, parsed.preamble]
+            .filter(part => part.length > 0)
+            .join('\n')
+            .trim();
+
+        return { calls: parsed.calls, preamble };
+    }
+
+    return null;
 }
 
 function parseToolCallObject(candidate: string): EmulatedToolCall[] | null {
@@ -472,8 +505,11 @@ function stripJsonMarkdownFence(text: string): string {
  * every surface where buffered model text is handed back to the agent loop —
  * both the tool-call preamble path and the no-tool-calls result path.
  */
+const PREAMBLE_RE = /^Thinking\.\.\.\r?\n(?:>.*\r?\n)+\r?\n*/;
+const MAX_PREAMBLE_BUFFER = 8_192;
+
 function stripModelPreamble(text: string): string {
-    const stripped = text.replace(/^Thinking\.\.\.\n(>.*\n)*\n*/, '');
+    const stripped = text.replace(PREAMBLE_RE, '');
     return stripped.length > 0 ? stripped : text;
 }
 
@@ -498,11 +534,8 @@ function stripModelPreamble(text: string): string {
  * - Non-text events (tool_call_delta, done, error, etc.) always pass through
  *   immediately regardless of buffer state.
  */
-// Require at least one blockquote line (>.*\n)+ so bare "Thinking...\n" followed
+// Require at least one blockquote line (>.*\r?\n)+ so bare "Thinking...\n" followed
 // by normal content is not mistakenly treated as a preamble.
-const PREAMBLE_RE = /^Thinking\.\.\.\n(>.*\n)+\n*/;
-const MAX_PREAMBLE_BUFFER = 8_192;
-
 export async function* wrapStreamWithPreambleStrip(
     inner: AsyncIterable<StreamEvent>,
 ): AsyncGenerator<StreamEvent> {

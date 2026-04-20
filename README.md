@@ -14,7 +14,7 @@ Most coding agents are monolithic: one model, one context, one loop. ACA makes t
 
 - **Invoke** — call ACA from another agent or script through a structured JSON contract.
 - **Serve** — expose ACA as an MCP server for hosts that can delegate work (e.g. Claude Code).
-- **Consult** — ask four bounded witness models for review without handing them an unbounded tool loop.
+- **Consult** — ask the default bounded witness pair (`minimax`, `gemma`) for review without handing them an unbounded tool loop.
 - **Profile** — tune model behavior per job: coding, review, triage, RP lore research.
 
 The design bet: safety should come from a real sandbox and a wall-clock deadline, not from tool blocklists. Peer agents get the full toolkit; the environment enforces the limits.
@@ -23,7 +23,7 @@ The design bet: safety should come from a real sandbox and a wall-clock deadline
 
 ## What Works Today
 
-All milestones M1–M11 are complete. 2325+ tests passing against the built binary.
+All milestones M1–M11 are complete. The current default validation surface passes `npm test` and `npm run build` on the supported Node 20 runtime.
 
 ### Core agent loop
 - JSONL conversation log, session manager with resume
@@ -55,20 +55,20 @@ All milestones M1–M11 are complete. 2325+ tests passing against the built bina
 - Tool-call emulation for models without native tool support
 - Model registry with fallback chains
 
-**Dynamic model catalog (M11).** ACA queries real model ceilings at runtime — NanoGPT and OpenRouter live, Anthropic / OpenAI via static fallback — instead of hardcoding stale numbers. An idle-timeout policy resets on every SSE event across all three drivers so slow-but-progressing models don't get killed by a hard deadline. Delegated agents receive a real project system prompt (working dir, stack detection, available tools), not a generic "helpful assistant" string.
+**Dynamic model catalog (M11).** ACA queries real model ceilings at runtime for NanoGPT-backed models instead of hardcoding stale numbers. Direct Anthropic and OpenAI provider paths currently rely on static capability data. An idle-timeout policy resets on every SSE event across all three drivers so slow-but-progressing models don't get killed by a hard deadline. Delegated agents receive a real project system prompt (working dir, stack detection, available tools), not a generic "helpful assistant" string.
 
 **Peer agent profiles.** A delegated `coder` gets the full tool suite minus delegation; `witness` / `reviewer` get all non-mutating tools plus research tools. Safety comes from the sandbox and deadline, not from clipping the toolkit. Inspect the active lineup with `aca witnesses --json`.
 
 ### Consult pipeline (multi-model review)
 
-`aca consult` runs bounded witness review against four model families in parallel:
+`aca consult` runs bounded witness review against the default witness pair in parallel:
 
 | Witness  | Model                         | Context | Max output |
 |----------|-------------------------------|---------|------------|
-| DeepSeek | `deepseek/deepseek-v3.2`      | 163K    | 64K        |
-| Kimi     | `moonshotai/kimi-k2.5`        | 256K    | 64K        |
-| Qwen     | `qwen/qwen3.5-397b-a17b`      | 258K    | 64K        |
+| MiniMax  | `minimax/minimax-m2.7`        | 205K    | 128K       |
 | Gemma    | `google/gemma-4-31b-it`       | 262K    | 128K       |
+
+You can override the default pair with `--witnesses ...` if you want a different lineup.
 
 Features that took real work to get right:
 
@@ -153,6 +153,8 @@ If linked as a package, `aca` is on your PATH directly.
 aca [prompt]                  Direct CLI (interactive or one-shot)
 aca serve                     Start ACA as an MCP server on stdio
 aca describe                  Output capability descriptor as JSON
+aca methods                   Output ACA workflow/method catalog
+aca debug-ui                  Start the local ACA debug UI
 aca witnesses                 Output witness model configurations as JSON
 aca consult                   Run bounded witness consultation
 aca rp-research               Research a series and generate an RP knowledge pack
@@ -184,7 +186,6 @@ Bounded witness consultation:
 
 ```bash
 aca consult --question "Review this patch for regressions." \
-            --witnesses all \
             --project-dir "$PWD"
 ```
 

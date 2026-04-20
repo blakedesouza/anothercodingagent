@@ -4,6 +4,7 @@ import {
     injectToolsIntoRequest,
     parseEmulatedToolCalls,
     sanitizeModelJson,
+    wrapStreamWithPreambleStrip,
     wrapStreamWithToolEmulation,
 } from '../../src/providers/tool-emulation.js';
 import type { ModelRequest, StreamEvent, ToolDefinition } from '../../src/types/provider.js';
@@ -98,6 +99,29 @@ describe('injectToolsIntoRequest', () => {
         expect(result.messages[0].role).toBe('system');
         expect(typeof result.messages[0].content).toBe('string');
         expect(result.messages[0].content as string).toContain('tool_calls');
+    });
+
+    it('preserves structured system content when appending the tool schema block', () => {
+        const req = makeRequest({
+            tools: sampleTools,
+            messages: [
+                {
+                    role: 'system',
+                    content: [{ type: 'text', text: 'Existing structured system message.' }],
+                },
+                { role: 'user', content: 'hello' },
+            ],
+        });
+        const result = injectToolsIntoRequest(req);
+        const sysMsg = result.messages[0];
+        expect(sysMsg.role).toBe('system');
+        expect(Array.isArray(sysMsg.content)).toBe(true);
+        const textParts = (sysMsg.content as Array<{ type: string; text?: string }>)
+            .filter(part => part.type === 'text')
+            .map(part => part.text ?? '');
+        expect(textParts[0]).toBe('Existing structured system message.');
+        expect(textParts.some(text => text.includes('tool_calls'))).toBe(true);
+        expect(textParts.some(text => text.includes('read_file'))).toBe(true);
     });
 
     it('returns request unchanged when no tools provided', () => {
@@ -195,6 +219,19 @@ describe('parseEmulatedToolCalls', () => {
         expect(result).not.toBeNull();
         expect(result!.calls[0].name).toBe('read_file');
         expect(result!.preamble).toBe('');
+    });
+
+    it('parses prose plus fenced tool-call JSON without leaking fence markers into the preamble', () => {
+        const text = [
+            'I will read the file now.',
+            '```json',
+            '{"tool_calls":[{"name":"read_file","arguments":{"path":"/x"}}]}',
+            '```',
+        ].join('\n');
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls[0].name).toBe('read_file');
+        expect(result!.preamble).toBe('I will read the file now.');
     });
 
     it('salvages truncated tool-call JSON followed by think tags and prose', () => {
@@ -438,6 +475,26 @@ describe('wrapStreamWithToolEmulation', () => {
         expect(events.filter(e => e.type === 'tool_call_delta')).toHaveLength(1);
     });
 
+    it('drops fence markers when prose precedes fenced tool-call JSON', async () => {
+        const toolCallJson = [
+            'I will read the file now.',
+            '```json',
+            '{"tool_calls":[{"name":"read_file","arguments":{"path":"/tmp/test"}}]}',
+            '```',
+        ].join('\n');
+
+        async function* inner(): AsyncIterable<StreamEvent> {
+            yield { type: 'text_delta', text: toolCallJson };
+            yield { type: 'done', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 5 } };
+        }
+
+        const events = await collectStream(wrapStreamWithToolEmulation(inner()));
+        const textDeltas = events.filter(e => e.type === 'text_delta');
+        expect(textDeltas).toHaveLength(1);
+        expect((textDeltas[0] as { text: string }).text).toBe('I will read the file now.');
+        expect(events.filter(e => e.type === 'tool_call_delta')).toHaveLength(1);
+    });
+
     it('buffers chunked text and parses tool calls from combined text', async () => {
         const fullJson = JSON.stringify({
             tool_calls: [{ name: 'read_file', arguments: { path: '/chunk' } }],
@@ -519,5 +576,24 @@ describe('wrapStreamWithToolEmulation', () => {
             remaining.push(event);
         }
         expect(remaining.find(event => event.type === 'done')).toBeDefined();
+    });
+});
+
+describe('wrapStreamWithPreambleStrip', () => {
+    it('strips CRLF thinking preambles before yielding text', async () => {
+        async function* inner(): AsyncIterable<StreamEvent> {
+            yield {
+                type: 'text_delta',
+                text: 'Thinking...\r\n> first thought\r\n> second thought\r\n\r\nVisible answer',
+            };
+            yield { type: 'done', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 5 } };
+        }
+
+        const events = await collectStream(wrapStreamWithPreambleStrip(inner()));
+        expect(events.filter(e => e.type === 'tool_call_delta')).toHaveLength(0);
+        const textDeltas = events.filter(e => e.type === 'text_delta');
+        expect(textDeltas).toHaveLength(1);
+        expect((textDeltas[0] as { text: string }).text).toBe('Visible answer');
+        expect(events.find(e => e.type === 'done')).toBeDefined();
     });
 });

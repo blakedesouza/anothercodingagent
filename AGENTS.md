@@ -62,3 +62,4 @@
 
 - The maintainer may work from WSL while running deliverables on Windows.
 - For Windows deliverables in WSL workflows, prefer Windows-compatible build targets and instructions.
+- When driving Linux-side work from PowerShell 7 on this machine, prefer the local `iwsl` helper for ad hoc scripts and `wtask` for repeatable workflows to avoid quoting and CRLF mangling across the Windows/WSL boundary.

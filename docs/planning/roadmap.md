@@ -7,7 +7,7 @@ Public positioning: ACA should look intentional and useful for builders who unde
 ## Current State
 
 - Node 20 / TypeScript ESM CLI.
-- NanoGPT-backed model driver with streaming and tool calls.
+- NanoGPT, OpenAI, and Anthropic model drivers with streaming/tool support, with live model-capability fetches currently wired for NanoGPT.
 - Session persistence, JSONL logs, observability, and cost/token accounting hooks.
 - Tool runtime for file, shell, search, web, browser, LSP, MediaWiki/Fandom, and delegation tools.
 - Permission and safety layers: sandbox checks, network policy, secret scrubbing, allowed/denied tools, per-tool caps, tool-result byte caps, repeated-read caps, input/token guardrails, and required-output validation.

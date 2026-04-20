@@ -146,40 +146,7 @@ export class SessionManager {
         }
 
         const sessionDir = join(this.sessionsDir, sessionId);
-
-        if (!existsSync(sessionDir)) {
-            throw new TypedError({
-                code: 'session.not_found',
-                message: `Session not found: ${sessionId}`,
-                retryable: false,
-                details: { sessionId },
-            });
-        }
-
-        const manifestPath = join(sessionDir, 'manifest.json');
-        if (!existsSync(manifestPath)) {
-            throw new TypedError({
-                code: 'session.corrupt',
-                message: `Session manifest missing: ${sessionId}`,
-                retryable: false,
-                details: { sessionId, path: manifestPath },
-            });
-        }
-
-        let manifest: SessionManifest;
-        try {
-            manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-        } catch (err) {
-            if (err instanceof SyntaxError) {
-                throw new TypedError({
-                    code: 'session.corrupt',
-                    message: `Session manifest corrupted (invalid JSON): ${sessionId}`,
-                    retryable: false,
-                    details: { sessionId, path: manifestPath },
-                }, err);
-            }
-            throw err;
-        }
+        const manifest = this.readManifest(sessionId);
 
         const conversationPath = join(sessionDir, 'conversation.jsonl');
         const { records, warnings } = readConversationLog(conversationPath);
@@ -234,6 +201,51 @@ export class SessionManager {
             writer: new ConversationWriter(conversationPath),
             warnings,
         };
+    }
+
+    readManifest(sessionId: SessionId): SessionManifest {
+        if (!SESSION_ID_PATTERN.test(sessionId)) {
+            throw new TypedError({
+                code: 'session.invalid_id',
+                message: `Invalid session ID format: ${sessionId}`,
+                retryable: false,
+                details: { sessionId },
+            });
+        }
+
+        const sessionDir = join(this.sessionsDir, sessionId);
+        if (!existsSync(sessionDir)) {
+            throw new TypedError({
+                code: 'session.not_found',
+                message: `Session not found: ${sessionId}`,
+                retryable: false,
+                details: { sessionId },
+            });
+        }
+
+        const manifestPath = join(sessionDir, 'manifest.json');
+        if (!existsSync(manifestPath)) {
+            throw new TypedError({
+                code: 'session.corrupt',
+                message: `Session manifest missing: ${sessionId}`,
+                retryable: false,
+                details: { sessionId, path: manifestPath },
+            });
+        }
+
+        try {
+            return JSON.parse(readFileSync(manifestPath, 'utf-8')) as SessionManifest;
+        } catch (err) {
+            if (err instanceof SyntaxError) {
+                throw new TypedError({
+                    code: 'session.corrupt',
+                    message: `Session manifest corrupted (invalid JSON): ${sessionId}`,
+                    retryable: false,
+                    details: { sessionId, path: manifestPath },
+                }, err);
+            }
+            throw err;
+        }
     }
 
     /**

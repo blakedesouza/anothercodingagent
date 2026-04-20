@@ -351,17 +351,36 @@ function matchFieldsEqual(
     return true;
 }
 
+function scopeCovers(
+    parentScope: 'session' | 'permanent',
+    childScope: 'session' | 'permanent',
+): boolean {
+    return parentScope === 'permanent' || parentScope === childScope;
+}
+
 /**
  * Check if a child preauth rule is covered by any parent rule.
- * Requires: same tool, same decision, and identical match fields.
+ * Requires: same tool, same decision, scope that is at least as broad,
+ * and identical match fields.
  */
 function isRuleCoveredByParent(
-    child: { tool: string; decision: string; match: Record<string, unknown> },
-    parentRules: Array<{ tool: string; decision: string; match: Record<string, unknown> }>,
+    child: {
+        tool: string;
+        decision: string;
+        scope: 'session' | 'permanent';
+        match: Record<string, unknown>;
+    },
+    parentRules: Array<{
+        tool: string;
+        decision: string;
+        scope: 'session' | 'permanent';
+        match: Record<string, unknown>;
+    }>,
 ): boolean {
     return parentRules.some(parent =>
         parent.tool === child.tool &&
         parent.decision === child.decision &&
+        scopeCovers(parent.scope, child.scope) &&
         matchFieldsEqual(
             parent.match as Record<string, unknown>,
             child.match as Record<string, unknown>,

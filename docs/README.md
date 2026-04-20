@@ -9,6 +9,10 @@ Start here:
 - [Known issues](planning/known-issues.md): current test/product caveats.
 - [Security](../SECURITY.md): safe-use notes for a tool-running local agent.
 
+For the exact live command surface, prefer the root `README.md` plus `aca --help`
+and subcommand help such as `aca consult --help`. The spec files below are design
+references, not the canonical source for every current flag or subcommand detail.
+
 Design references:
 
 - [Spec](spec/): protocol and architecture notes.

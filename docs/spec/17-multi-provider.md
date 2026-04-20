@@ -1,6 +1,13 @@
 <!-- Source: fundamentals.md lines 1794-1950 -->
 ### Block 17: Multi-Provider Support
 
+> Current implementation note (2026-04): the live runtime currently wires
+> `nanogpt`, `openai`, and `anthropic` providers. `NanoGptCatalog` is the active
+> runtime catalog path; `OpenRouterCatalog` exists in the codebase as a helper/tested
+> catalog implementation but is not currently selected by the main CLI startup path.
+> This block still describes the broader provider architecture and planned extension
+> surface around that implementation.
+
 Full provider abstraction enabling seamless switching between LLM providers, model fallback chains, and provider-specific feature negotiation. This block extends the thin `provider` config field (Block 9) into a complete multi-provider architecture, consumed by Block 6's `CallLLM` phase, Block 7's token estimation, and Block 11's LLM error recovery.
 
 **Core principle: model-first, provider-agnostic invocation.** Users and the agent reason about models ("use claude-sonnet"), not providers. The system resolves model names to providers, negotiates capabilities, and normalizes responses behind a uniform streaming interface. Provider-specific complexity never escapes the adapter boundary.

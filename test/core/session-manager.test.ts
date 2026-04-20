@@ -17,6 +17,7 @@ import {
 } from '../helpers/session-factory.js';
 import { generateId } from '../../src/types/ids.js';
 import type { TurnId } from '../../src/types/ids.js';
+import type { MessageItem } from '../../src/types/conversation.js';
 
 describe('M1.3 — Session Manager', () => {
     let tmpDir: string;
@@ -140,9 +141,9 @@ describe('M1.3 — Session Manager', () => {
             // Items rebuilt
             expect(loaded.items).toHaveLength(2);
             expect(loaded.items[0].kind).toBe('message');
-            expect((loaded.items[0] as any).role).toBe('user');
+            expect((loaded.items[0] as MessageItem).role).toBe('user');
             expect(loaded.items[1].kind).toBe('message');
-            expect((loaded.items[1] as any).role).toBe('assistant');
+            expect((loaded.items[1] as MessageItem).role).toBe('assistant');
 
             // Turns and steps rebuilt
             expect(loaded.turns).toHaveLength(1);

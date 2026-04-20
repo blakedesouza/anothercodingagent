@@ -11,7 +11,7 @@ const mockProjection: SessionProjection = {
     lastActivityTimestamp: '2023-01-01T00:00:00.000Z',
   },
   sessionDir: '/tmp/test-session',
-} as any;
+} as unknown as SessionProjection;
 
 const mockContext: SlashCommandContext = {
   projection: mockProjection,
@@ -24,7 +24,7 @@ const mockContext: SlashCommandContext = {
   indexer: undefined,
   checkpointManager: undefined,
   promptUser: undefined,
-} as any;
+} as unknown as SlashCommandContext;
 
 describe('slash commands', () => {
   describe('/version', () => {

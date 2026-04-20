@@ -14,8 +14,8 @@ import {
     resetStepCounter,
 } from '../helpers/session-factory.js';
 import { generateId } from '../../src/types/ids.js';
-import type { SessionId, TurnId } from '../../src/types/ids.js';
-import type { ConversationItem, SummaryItem } from '../../src/types/conversation.js';
+import type { SessionId, TurnId, ItemId } from '../../src/types/ids.js';
+import type { ConversationItem, MessageItem, SummaryItem, ToolResultItem } from '../../src/types/conversation.js';
 import type { TurnRecord, StepRecord } from '../../src/types/session.js';
 
 describe('M1.2 — JSONL Conversation Log', () => {
@@ -52,7 +52,7 @@ describe('M1.2 — JSONL Conversation Log', () => {
 
             const summary: SummaryItem = {
                 kind: 'summary',
-                id: generateId('item') as any,
+                id: generateId('item') as ItemId,
                 seq: 100,
                 text: 'Conversation summary',
                 pinnedFacts: ['fact1', 'fact2'],
@@ -97,15 +97,15 @@ describe('M1.2 — JSONL Conversation Log', () => {
             expect(records[9].recordType).toBe('step');
 
             // Verify message round-trip: kind restored, recordType stripped
-            const readMsg1 = records[0].record as ConversationItem;
+            const readMsg1 = records[0].record as MessageItem;
             expect(readMsg1.kind).toBe('message');
-            expect((readMsg1 as any).recordType).toBeUndefined();
+            expect((readMsg1 as Record<string, unknown>).recordType).toBeUndefined();
             expect(readMsg1.id).toBe(msg1.id);
 
             // Verify tool_result round-trip
-            const readTr = records[3].record as ConversationItem;
+            const readTr = records[3].record as ToolResultItem;
             expect(readTr.kind).toBe('tool_result');
-            expect((readTr as any).toolName).toBe('read_file');
+            expect(readTr.toolName).toBe('read_file');
 
             // Verify summary round-trip
             const readSummary = records[5].record as SummaryItem;
@@ -115,13 +115,13 @@ describe('M1.2 — JSONL Conversation Log', () => {
 
             // Verify turn round-trip: no kind, recordType stripped
             const readTurn = records[6].record as TurnRecord;
-            expect((readTurn as any).recordType).toBeUndefined();
+            expect((readTurn as Record<string, unknown>).recordType).toBeUndefined();
             expect(readTurn.id).toBe(turn1.id);
             expect(readTurn.sessionId).toBe(sessionId);
 
             // Verify step round-trip
             const readStep = records[8].record as StepRecord;
-            expect((readStep as any).recordType).toBeUndefined();
+            expect((readStep as Record<string, unknown>).recordType).toBeUndefined();
             expect(readStep.id).toBe(step1.id);
         });
     });
@@ -180,10 +180,11 @@ describe('M1.2 — JSONL Conversation Log', () => {
             expect(warnings).toHaveLength(0);
             expect(records).toHaveLength(1);
 
-            const restored = records[0].record as ConversationItem;
+            const restored = records[0].record as MessageItem;
             expect(restored.kind).toBe('message');
-            expect((restored as any).parts[0].text).toBe(largeText);
-            expect((restored as any).parts[0].text.length).toBe(63 * 1024);
+            expect(restored.parts[0]?.type).toBe('text');
+            expect(restored.parts[0] && 'text' in restored.parts[0] ? restored.parts[0].text : undefined).toBe(largeText);
+            expect(restored.parts[0] && 'text' in restored.parts[0] ? restored.parts[0].text.length : undefined).toBe(63 * 1024);
         });
     });
 
@@ -228,7 +229,7 @@ describe('M1.2 — JSONL Conversation Log', () => {
             const toolResult = createToolResultItem(toolCallId, 'read_file', 'content');
             const summary: SummaryItem = {
                 kind: 'summary',
-                id: generateId('item') as any,
+                id: generateId('item') as ItemId,
                 seq: 50,
                 text: 'Summary text',
                 coversSeq: { start: 1, end: 10 },
@@ -258,26 +259,26 @@ describe('M1.2 — JSONL Conversation Log', () => {
 
             // message → kind: 'message'
             expect(records[0].recordType).toBe('message');
-            expect((records[0].record as any).kind).toBe('message');
-            expect((records[0].record as any).recordType).toBeUndefined();
+            expect((records[0].record as MessageItem).kind).toBe('message');
+            expect((records[0].record as Record<string, unknown>).recordType).toBeUndefined();
 
             // tool_result → kind: 'tool_result'
             expect(records[1].recordType).toBe('tool_result');
-            expect((records[1].record as any).kind).toBe('tool_result');
+            expect((records[1].record as ToolResultItem).kind).toBe('tool_result');
 
             // summary → kind: 'summary'
             expect(records[2].recordType).toBe('summary');
-            expect((records[2].record as any).kind).toBe('summary');
+            expect((records[2].record as SummaryItem).kind).toBe('summary');
 
             // turn → no kind, no recordType on record
             expect(records[3].recordType).toBe('turn');
-            expect((records[3].record as any).kind).toBeUndefined();
-            expect((records[3].record as any).recordType).toBeUndefined();
+            expect((records[3].record as Record<string, unknown>).kind).toBeUndefined();
+            expect((records[3].record as Record<string, unknown>).recordType).toBeUndefined();
 
             // step → no kind, no recordType on record
             expect(records[4].recordType).toBe('step');
-            expect((records[4].record as any).kind).toBeUndefined();
-            expect((records[4].record as any).recordType).toBeUndefined();
+            expect((records[4].record as Record<string, unknown>).kind).toBeUndefined();
+            expect((records[4].record as Record<string, unknown>).recordType).toBeUndefined();
         });
     });
 

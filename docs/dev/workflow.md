@@ -3,7 +3,7 @@
 This is an internal development workflow, not the public user guide. Start with
 the root `README.md` for normal usage.
 
-Standard operating procedure for every milestone substep. Validated by 4-model consultation (MiniMax, Kimi, Qwen, Llama) on 2026-03-30.
+Standard operating procedure for every milestone substep. Current default consultation uses the `minimax + gemma` witness pair unless a task explicitly needs a different lineup.
 
 ## The Cycle
 
@@ -12,7 +12,7 @@ Standard operating procedure for every milestone substep. Validated by 4-model c
 2. Implement   → Write the code
 3. Lint        → tsc --noEmit + ESLint (catch compiler issues before consultation)
 4. Test        → vitest run (all tests must pass)
-5. Consult     → Send implementation to all 4 AI witnesses for review
+5. Consult     → Send implementation to the default witness pair for review
 6. Apply       → Fix consensus findings
 7. Re-test     → Confirm fixes don't break anything
 8. Update      → Mark checkboxes in step file, update current project-state docs, append changelog
@@ -51,7 +51,7 @@ At the end of each milestone (7 total):
 
 ## Known AI Blind Spots
 
-Categories that 4-model consensus consistently misses:
+Categories that witness-pair consensus can still miss:
 
 | Category | Why | Mitigation |
 |----------|-----|-----------|

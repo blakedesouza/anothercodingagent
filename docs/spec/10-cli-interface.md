@@ -1,6 +1,14 @@
 <!-- Source: fundamentals.md lines 1240-1454 -->
 ### Block 10: CLI Interface & Modes
 
+> Current implementation note (2026-04): the exact live CLI surface is `aca --help`
+> plus subcommand help. The current public build exposes `serve`, `describe`,
+> `methods`, `debug-ui`, `witnesses`, `consult`, `rp-research`, `invoke`, `stats`,
+> `init`, `configure`, `trust`, and `untrust`, with root flags `--model`,
+> `--verbose`, `--no-confirm`, and `--resume`. Some option/mode details below
+> reflect broader design intent from the original `fundamentals.md` and are not
+> a byte-for-byte description of the current shipped flag surface.
+
 The entry point and invocation modes. This block wires the user-facing CLI to the internal engine — it is the part users actually touch. It consumes Block 6's turn engine interface (`executeTurn`, `interrupt`, `getPhase`), Block 9's config loading pipeline, Block 8's approval classes and `--no-confirm` semantics, and the delegation contract's `describe`/`invoke` operations. All human-facing output (prompts, status, progress, errors) goes to `stderr`. `stdout` is reserved for assistant content (interactive/one-shot) or structured JSON (executor), per the observability decision.
 
 **Core principle: modes are entry points, not runtime states.** The mode is determined once at startup and does not change during the session. Each mode defines how input arrives, how output is delivered, and when the process exits. The turn engine (Block 6) does not know which mode it is running in — the mode-specific wrapper calls `executeTurn` and interprets the yield.
@@ -166,7 +174,7 @@ The entry point and invocation modes. This block wires the user-facing CLI to th
 
   **Resume invariants:** A resumed session retains its stored workspace root and original config snapshot for reference. Invocation-scoped flags (`--verbose`, `--quiet`, `--no-confirm`, `--max-steps`) apply to the resumed session. Session-shaping flags that conflict with the frozen config (`--model` when different from the session's model) emit a warning but are allowed — the CLI flag takes precedence per Block 9's rules, and the config snapshot records the divergence. The `ResolvedConfig` for the resumed session is re-computed from current sources (not loaded from the snapshot), maintaining the principle that CLI flags always win.
 
-  **Phase 6 — Initialize runtime services.** Create the process registry for spawned process tracking (Block: Tool Runtime Contract). Initialize the event sink (append-only JSONL writer targeting the session's `events.jsonl`). Emit `session.started` event (or `session.resumed` for resumed sessions). Create the turn controller with all dependencies injected: session, resolved config, process registry, secret redactor, event sink.
+  **Phase 6 — Initialize runtime services.** Create the process registry for spawned process tracking (Block: Tool Runtime Contract). Initialize the event sink (append-only JSONL writer targeting the session's `events.jsonl`). Emit `session.started` for both fresh and resumed sessions; resumed state is distinguished by the restored session manifest and startup path, not by a separate event type. Create the turn controller with all dependencies injected: session, resolved config, process registry, secret redactor, event sink.
 
   **Phase 7 — Display startup status.** In interactive mode: write a compact status block to stderr — version, session ID (truncated for readability), workspace root, model, and resume indicator if applicable. In one-shot mode: no startup display unless `--verbose`. In executor mode: no output of any kind — stdout is reserved for the structured result.
 
@@ -199,7 +207,7 @@ The entry point and invocation modes. This block wires the user-facing CLI to th
 - **Block 8 (Permissions):** `--no-confirm` flag maps directly to `permissions.nonInteractive` in the resolved config. The interactive mode's approval prompt implements Block 8's `[y] approve [n] deny [a] always [e] edit` UX. One-shot mode without TTY and without `--no-confirm` fails on `approval_required` yields with `user_cancelled`
 - **Block 9 (Configuration):** CLI flags feed into Block 9's config pipeline at the highest precedence level. The `--config` flag overrides the config file path. The `--model`, `--no-confirm`, `--max-steps`, and `--workspace` flags map to specific config fields. The `ResolvedConfig` frozen at session start is the product of Block 9's pipeline, consumed by the turn engine and all runtime components
 - **Pluggable Delegation:** `aca describe` and `aca invoke` implement the callee side of the universal capability contract. The JSON envelope shapes, version fields, and error types are defined in the Pluggable Delegation block. Block 10 provides the CLI transport binding
-- **Observability:** The startup sequence emits `session.started`/`session.resumed` events. The mode-specific loops emit events through the shared event sink. Verbose mode (`--verbose`) enables the human-readable event renderer on stderr. Quiet mode (`--quiet`) suppresses non-essential stderr output
+- **Observability:** The startup sequence emits `session.started` events for both fresh and resumed sessions. The mode-specific loops emit events through the shared event sink. Verbose mode (`--verbose`) enables the human-readable event renderer on stderr. Quiet mode (`--quiet`) suppresses non-essential stderr output
 - **Checkpointing:** Slash commands `/undo`, `/restore`, `/checkpoints` are handled by the interactive mode's slash command dispatcher, which delegates to the checkpointing system
 
 **Deferred:**

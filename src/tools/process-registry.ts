@@ -39,10 +39,21 @@ export interface ProcessRecord {
 
 type SessionProcessMap = Map<string, ProcessRecord>;
 
+export interface TerminatedProcessRecord {
+    handle: string;
+    sessionId: string;
+    reason: string;
+    exitCode: number | null;
+    exitSignal: string | null;
+}
+
+type SessionTerminatedMap = Map<string, TerminatedProcessRecord>;
+
 // --- Registry class ---
 
 export class ProcessRegistry {
     private readonly sessions = new Map<string, SessionProcessMap>();
+    private readonly terminated = new Map<string, SessionTerminatedMap>();
 
     constructor(
         private readonly idleTtlMs: number = DEFAULT_IDLE_TTL_MS,
@@ -59,14 +70,29 @@ export class ProcessRegistry {
         return map;
     }
 
+    private getTerminatedMap(sessionId: string): SessionTerminatedMap {
+        let map = this.terminated.get(sessionId);
+        if (!map) {
+            map = new Map();
+            this.terminated.set(sessionId, map);
+        }
+        return map;
+    }
+
     /** Register a process record. The handle must be unique within the session. */
     register(sessionId: string, record: ProcessRecord): void {
         this.getSessionMap(sessionId).set(record.handle, record);
+        this.getTerminatedMap(sessionId).delete(record.handle);
     }
 
     /** Look up a process by session and handle. Returns undefined if not found. */
     lookup(sessionId: string, handle: string): ProcessRecord | undefined {
         return this.getSessionMap(sessionId).get(handle);
+    }
+
+    /** Look up a terminated/tombstoned process handle by session. */
+    lookupTerminated(sessionId: string, handle: string): TerminatedProcessRecord | undefined {
+        return this.getTerminatedMap(sessionId).get(handle);
     }
 
     /** List all process records for a session. */
@@ -77,6 +103,24 @@ export class ProcessRegistry {
     /** Remove a process record. Returns true if it was present. */
     remove(sessionId: string, handle: string): boolean {
         return this.getSessionMap(sessionId).delete(handle);
+    }
+
+    /** Mark a historical handle as terminated/unavailable in this ACA process. */
+    markTerminated(
+        sessionId: string,
+        handle: string,
+        reason: string,
+        exitCode: number | null = null,
+        exitSignal: string | null = null,
+    ): void {
+        this.getSessionMap(sessionId).delete(handle);
+        this.getTerminatedMap(sessionId).set(handle, {
+            handle,
+            sessionId,
+            reason,
+            exitCode,
+            exitSignal,
+        });
     }
 
     /**
@@ -108,6 +152,13 @@ export class ProcessRegistry {
             if (now - record.lastActivity > this.idleTtlMs) {
                 killProcessTree(record.pid);
                 record.exited = true;
+                this.markTerminated(
+                    sessionId,
+                    handle,
+                    'Session expired after idle timeout',
+                    record.exitCode,
+                    record.exitSignal,
+                );
                 map.delete(handle);
                 reaped.push(handle);
                 continue;
@@ -117,6 +168,13 @@ export class ProcessRegistry {
             if (now - record.startTime > this.hardMaxMs) {
                 killProcessTree(record.pid);
                 record.exited = true;
+                this.markTerminated(
+                    sessionId,
+                    handle,
+                    'Session expired after maximum lifetime',
+                    record.exitCode,
+                    record.exitSignal,
+                );
                 map.delete(handle);
                 reaped.push(handle);
                 continue;

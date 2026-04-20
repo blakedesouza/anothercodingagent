@@ -4,6 +4,7 @@ import { sessionIoSpec, sessionIoImpl } from '../../src/tools/session-io.js';
 import { closeSessionSpec, closeSessionImpl } from '../../src/tools/close-session.js';
 import { ToolRegistry } from '../../src/tools/tool-registry.js';
 import { ToolRunner } from '../../src/tools/tool-runner.js';
+import { processRegistry } from '../../src/tools/process-registry.js';
 
 const registry = new ToolRegistry();
 registry.register(openSessionSpec, openSessionImpl);
@@ -127,6 +128,23 @@ describe('session_io tool', () => {
             );
             expect(result.status).toBe('error');
             expect(result.error!.code).toBe('tool.not_found');
+        });
+
+        it('returns tool.session_exited for a tombstoned historical handle', async () => {
+            processRegistry.markTerminated(
+                SESSION,
+                'psh_resumed',
+                'Session terminated on ACA resume; reopen it before using session_io.',
+            );
+
+            const result = await runner.execute(
+                'session_io',
+                { session_id: 'psh_resumed', wait: false },
+                baseContext,
+            );
+            expect(result.status).toBe('error');
+            expect(result.error!.code).toBe('tool.session_exited');
+            expect(result.error!.message).toContain('terminated on ACA resume');
         });
     });
 
