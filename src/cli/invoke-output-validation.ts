@@ -1,5 +1,6 @@
 import { existsSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
+import { parseEmulatedToolCalls } from '../providers/tool-emulation.js';
 import type { ConversationItem } from '../types/conversation.js';
 
 function isWithinDirectory(parent: string, child: string): boolean {
@@ -71,6 +72,59 @@ export function buildProfileCompletionRepairTask(
             : 'Complete the assigned output in this retry.',
         'If the output is not ready yet, make the next tool calls in that same assistant message.',
         'When the required output exists and is non-empty, stop.',
+    ].join(' ');
+}
+
+const FINAL_RESULT_PSEUDO_TOOL_PREFIX = /^(?:```(?:json|javascript)?\s*)?(?:\{\s*"tool_calls"\s*:|\[\s*\{\s*"name"\s*:|<\s*(?:[\w-]+:)?(?:tool_call|function_calls?|call)\b|<\s*invoke\b|<\s*parameter\b|<\s*arg_(?:key|value)\b|\[\s*TOOL_CALL\s*\])/i;
+const FINAL_RESULT_TOOL_INTENT = /^(?:i(?:'ll| will| can| need(?: to)?| should| am going to)|let me|next|now|first|to continue|continuing|using(?: a)? tool|calling(?: a)? tool)\b/i;
+const FINAL_RESULT_EXPLANATORY = /\b(example|invalid|literal|quoted|string|markup|json|schema|protocol|field|property|parser|response|output|emitted|returned|contains?)\b/i;
+
+export function validateFinalResultText(resultText: string): ProfileCompletionIssue | null {
+    const trimmed = resultText.trim();
+    if (!trimmed) return null;
+
+    if (FINAL_RESULT_PSEUDO_TOOL_PREFIX.test(trimmed)) {
+        return {
+            code: 'turn.output_validation_failed',
+            message: 'final response leaked raw tool-call-shaped text instead of a plain-language completion',
+        };
+    }
+
+    const parsed = parseEmulatedToolCalls(trimmed);
+    if (!parsed) return null;
+
+    const compactPreamble = parsed.preamble.replace(/\s+/g, ' ').trim();
+    if (!compactPreamble) {
+        return {
+            code: 'turn.output_validation_failed',
+            message: 'final response ended as a bare emulated tool call instead of a plain-language completion',
+        };
+    }
+
+    if (FINAL_RESULT_EXPLANATORY.test(compactPreamble)) {
+        return null;
+    }
+
+    if (FINAL_RESULT_TOOL_INTENT.test(compactPreamble) || compactPreamble.length <= 24) {
+        return {
+            code: 'turn.output_validation_failed',
+            message: 'final response leaked tool-call-shaped text after a short tool-intent preamble instead of a plain-language completion',
+        };
+    }
+
+    return null;
+}
+
+export function buildFinalResultRepairTask(issue: ProfileCompletionIssue): string {
+    return [
+        `Your previous final response was invalid: ${issue.message}.`,
+        'Continue from the existing context.',
+        'Do not restate your plan, narrate more tool use, or ask to call a tool.',
+        'Do not emit raw tool-call JSON, XML/function markup, or quoted pseudo-tool-call text.',
+        'Unless a specific missing fact truly blocks the answer, do not call any more tools.',
+        'Write a brief plain-language final answer that states the concrete outcome of the work already completed.',
+        'If files were written, mention the path(s) plainly. If code changed, summarize the fix plainly.',
+        'Stop after the final answer.',
     ].join(' ');
 }
 

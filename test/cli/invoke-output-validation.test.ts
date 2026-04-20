@@ -3,9 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+    buildFinalResultRepairTask,
     buildProfileCompletionRepairTask,
     buildRequiredOutputRepairTask,
     countHardRejectedToolCalls,
+    validateFinalResultText,
     validateProfileCompletion,
     validateRequiredOutputPaths,
 } from '../../src/cli/invoke-output-validation.js';
@@ -133,6 +135,41 @@ describe('validateRequiredOutputPaths', () => {
         expect(prompt).toContain('"trinity-seven/research/discovery-plan.md"');
         expect(prompt).toContain('Do not restate your plan');
         expect(prompt).toContain('Do not quote literal pseudo-tool markup');
+    });
+
+    it('rejects bare tool-call JSON as a final result', () => {
+        expect(validateFinalResultText(
+            '{"tool_calls":[{"name":"read_file","arguments":{"path":"src/main.ts"}}]}',
+        )).toEqual({
+            code: 'turn.output_validation_failed',
+            message: 'final response leaked raw tool-call-shaped text instead of a plain-language completion',
+        });
+    });
+
+    it('rejects short tool-intent preambles followed by tool-call JSON', () => {
+        expect(validateFinalResultText(
+            'Done. {"tool_calls":[{"name":"read_file","arguments":{"path":"src/main.ts"}}]}',
+        )).toEqual({
+            code: 'turn.output_validation_failed',
+            message: 'final response leaked tool-call-shaped text after a short tool-intent preamble instead of a plain-language completion',
+        });
+    });
+
+    it('allows explanatory discussion of tool-call JSON', () => {
+        expect(validateFinalResultText(
+            'The parser rejects the literal example `{"tool_calls":[{"name":"read_file","arguments":{"path":"src/main.ts"}}]}` in final output.',
+        )).toBeNull();
+    });
+
+    it('builds a final-result repair prompt that forces plain-language completion', () => {
+        const prompt = buildFinalResultRepairTask({
+            code: 'turn.output_validation_failed',
+            message: 'final response leaked raw tool-call-shaped text instead of a plain-language completion',
+        });
+        expect(prompt).toContain('Do not restate your plan');
+        expect(prompt).toContain('Do not emit raw tool-call JSON');
+        expect(prompt).toContain('brief plain-language final answer');
+        expect(prompt).toContain('Stop after the final answer.');
     });
 
     it('counts only hard rejected tool calls', () => {

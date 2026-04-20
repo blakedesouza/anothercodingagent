@@ -18,9 +18,11 @@ import { mkdirSync } from 'node:fs';
 import { SessionManager } from './core/session-manager.js';
 import { Repl } from './cli/repl.js';
 import {
+    buildFinalResultRepairTask,
     buildProfileCompletionRepairTask,
     buildRequiredOutputRepairTask,
     countHardRejectedToolCalls,
+    validateFinalResultText,
     validateProfileCompletion,
     validateRequiredOutputPaths,
 } from './cli/invoke-output-validation.js';
@@ -2287,6 +2289,25 @@ program
                 conversationItems = outputRepairRun.allItems;
                 missingRequiredOutputs = validateRequiredOutputPaths(cwd, request.constraints?.required_output_paths);
             }
+
+            const initialFinalResultIssue = validateFinalResultText(extractAssistantText(turnResult.items));
+            const canRepairFinalResult = initialFinalResultIssue !== null
+                && turnResult.turn.outcome === 'assistant_final';
+
+            if (canRepairFinalResult) {
+                const repairTurnConfig: TurnEngineConfig = {
+                    ...baseTurnConfig,
+                    ...buildRpRepairTurnConfig(request.constraints),
+                };
+                const finalResultRepairRun = await runInvokeTurnWithRpRetry(
+                    buildFinalResultRepairTask(initialFinalResultIssue),
+                    conversationItems,
+                    repairTurnConfig,
+                );
+                turnResult = finalResultRepairRun.finalResult;
+                turnResults.push(...finalResultRepairRun.allResults);
+                conversationItems = finalResultRepairRun.allItems;
+            }
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             const isDeadline = msg.includes('Deadline exceeded');
@@ -2395,6 +2416,24 @@ program
         }
 
         resultText = extractAssistantText(turnResult.items);
+
+        const finalResultIssue = validateFinalResultText(resultText);
+        if (finalResultIssue) {
+            process.stdout.write(JSON.stringify(
+                buildErrorResponse(
+                    finalResultIssue.code,
+                    finalResultIssue.message,
+                    true,
+                    safety,
+                    {
+                        input_tokens: totalInputTokens,
+                        output_tokens: totalOutputTokens,
+                        cost_usd: 0,
+                    },
+                ),
+            ) + '\n');
+            process.exit(EXIT_RUNTIME);
+        }
 
         const profileCompletionIssue = validateProfileCompletion(contextProfile, acceptedToolCalls, resultText);
         if (profileCompletionIssue) {
