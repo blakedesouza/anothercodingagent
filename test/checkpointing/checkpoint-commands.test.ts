@@ -75,6 +75,16 @@ describe('/undo command', () => {
         expect(result.output).toContain('Reverted 3');
     });
 
+    it('supports force-only undo without requiring an explicit count', async () => {
+        const undoTurns = vi.fn().mockResolvedValue({
+            success: true, turnsReverted: 1, filesRestored: [], warnings: [],
+        } as UndoResult);
+        const ctx = makeCtx({ checkpointManager: makeMockCheckpointManager({ undoTurns }) });
+        const result = await handleSlashCommand('/undo --force', ctx)!;
+        expect(undoTurns).toHaveBeenCalledWith(1, true);
+        expect(result.output).toContain('Reverted 1');
+    });
+
     it('shows failure message when undo fails', async () => {
         const undoTurns = vi.fn().mockResolvedValue({
             success: false, turnsReverted: 0, filesRestored: [], warnings: ['Manual edits detected'],
@@ -130,6 +140,14 @@ describe('/restore command', () => {
         expect(result.output).toContain('Usage');
     });
 
+    it('returns usage when only --force is provided without a checkpoint id', async () => {
+        const previewRestore = vi.fn();
+        const ctx = makeCtx({ checkpointManager: makeMockCheckpointManager({ previewRestore }) });
+        const result = await handleSlashCommand('/restore --force', ctx)!;
+        expect(previewRestore).not.toHaveBeenCalled();
+        expect(result.output).toContain('Usage');
+    });
+
     it('shows preview and prompts for confirmation', async () => {
         const promptUser = vi.fn().mockResolvedValue('y');
         const executeRestore = vi.fn().mockResolvedValue({
@@ -145,6 +163,24 @@ describe('/restore command', () => {
         const result = await handleSlashCommand('/restore turn-1', ctx)!;
         expect(promptUser).toHaveBeenCalled();
         expect(executeRestore).toHaveBeenCalledWith('turn-1', false);
+        expect(result.output).toContain('Restored');
+    });
+
+    it('supports force restore without prompting', async () => {
+        const promptUser = vi.fn();
+        const executeRestore = vi.fn().mockResolvedValue({
+            success: true, filesRestored: ['file.txt'], warnings: [],
+        } as RestoreResult);
+        const previewRestore = vi.fn().mockResolvedValue({
+            checkpointId: 'turn-1', diff: '', filesAdded: [], filesModified: ['file.txt'], filesDeleted: [],
+        } as RestorePreview);
+        const ctx = makeCtx({
+            checkpointManager: makeMockCheckpointManager({ previewRestore, executeRestore }),
+            promptUser,
+        });
+        const result = await handleSlashCommand('/restore turn-1 --force', ctx)!;
+        expect(promptUser).not.toHaveBeenCalled();
+        expect(executeRestore).toHaveBeenCalledWith('turn-1', true);
         expect(result.output).toContain('Restored');
     });
 

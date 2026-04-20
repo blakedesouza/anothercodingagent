@@ -210,6 +210,34 @@ describe('runConsult', () => {
         expect(readFileSync(result.witnesses.minimax.response_path!, 'utf8').trim()).toBe('4');
     });
 
+    it('normalizes non-finite runtime limits back to consult defaults', async () => {
+        let witnessPrompt = '';
+
+        runAcaInvokeMock.mockImplementation(async (task: string) => {
+            if (task.includes('Witness Context Request Protocol')) {
+                witnessPrompt = task;
+                return makeInvokeSuccess('## Findings\n\nNo issues found.');
+            }
+            throw new Error(`unexpected consult prompt: ${task.slice(0, 120)}`);
+        });
+
+        const result = await runConsult({
+            question: 'Review the change.',
+            projectDir: tmpProjectDir(),
+            witnesses: 'minimax',
+            skipTriage: true,
+            maxContextRounds: Number.NaN,
+            maxContextSnippets: Number.NaN,
+            maxContextLines: Number.NaN,
+            maxContextBytes: Number.NaN,
+        });
+
+        expect(witnessPrompt).toContain('You have 3/3 context-request round(s) remaining.');
+        expect(witnessPrompt).toContain('Request at most 3 snippets per round.');
+        expect(witnessPrompt).toContain('Each fulfilled file snippet will be at most 120 lines.');
+        expect(result.success_count).toBe(1);
+    });
+
     it('defaults to minimax and gemma, and auto-skips triage when the witnesses align', async () => {
         const invokedModels: string[] = [];
 

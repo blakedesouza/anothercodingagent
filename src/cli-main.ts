@@ -7,7 +7,7 @@
  * approval → scrubber → renderer → event sink → cost tracker → REPL.
  */
 
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -237,6 +237,14 @@ function parseResponseFormat(value: unknown): ModelResponseFormat | undefined {
             schema: schemaRecord.schema as Record<string, unknown>,
         },
     };
+}
+
+function parsePositiveIntegerOption(value: string, flagName: string): number {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new InvalidArgumentError(`${flagName} must be a positive integer`);
+    }
+    return parsed;
 }
 
 function parseSystemMessages(value: unknown): InvokeSystemMessage[] | undefined {
@@ -1669,18 +1677,18 @@ program
     .option('--witnesses <list>', 'Comma-separated witness list; defaults to minimax,gemma')
     .option('--pack-repo', 'Build an evidence pack from the repo', false)
     .option('--pack-path <path>', 'File or directory to include in the evidence pack', (value, previous: string[]) => [...previous, value], [])
-    .option('--pack-max-files <n>', 'Maximum evidence-pack files', value => Number(value), 5)
-    .option('--pack-max-file-bytes <n>', 'Maximum bytes per packed file', value => Number(value), 8_000)
-    .option('--pack-max-total-bytes <n>', 'Maximum total evidence-pack bytes', value => Number(value), 240_000)
-    .option('--max-context-snippets <n>', 'Maximum witness-requested snippets per round', value => Number(value), 8)
-    .option('--max-context-lines <n>', 'Maximum lines per witness-requested snippet', value => Number(value), 300)
-    .option('--max-context-bytes <n>', 'Maximum bytes per witness-requested snippet', value => Number(value), 24_000)
-    .option('--max-context-rounds <n>', 'Maximum context-request rounds per witness before forced finalization', value => Number(value), 3)
+    .option('--pack-max-files <n>', 'Maximum evidence-pack files', value => parsePositiveIntegerOption(value, '--pack-max-files'), 5)
+    .option('--pack-max-file-bytes <n>', 'Maximum bytes per packed file', value => parsePositiveIntegerOption(value, '--pack-max-file-bytes'), 8_000)
+    .option('--pack-max-total-bytes <n>', 'Maximum total evidence-pack bytes', value => parsePositiveIntegerOption(value, '--pack-max-total-bytes'), 240_000)
+    .option('--max-context-snippets <n>', 'Maximum witness-requested snippets per round', value => parsePositiveIntegerOption(value, '--max-context-snippets'), 8)
+    .option('--max-context-lines <n>', 'Maximum lines per witness-requested snippet', value => parsePositiveIntegerOption(value, '--max-context-lines'), 300)
+    .option('--max-context-bytes <n>', 'Maximum bytes per witness-requested snippet', value => parsePositiveIntegerOption(value, '--max-context-bytes'), 24_000)
+    .option('--max-context-rounds <n>', 'Maximum context-request rounds per witness before forced finalization', value => parsePositiveIntegerOption(value, '--max-context-rounds'), 3)
     .option('--shared-context', 'Use a scout model to select shared raw snippets before witness invocation', false)
     .option('--shared-context-model <model>', 'Scout model for --shared-context', 'zai-org/glm-5')
-    .option('--shared-context-max-snippets <n>', 'Maximum shared raw snippets selected by the scout', value => Number(value), 8)
-    .option('--shared-context-max-lines <n>', 'Maximum lines per shared raw snippet', value => Number(value), 160)
-    .option('--shared-context-max-bytes <n>', 'Maximum bytes per shared raw snippet', value => Number(value), 16_000)
+    .option('--shared-context-max-snippets <n>', 'Maximum shared raw snippets selected by the scout', value => parsePositiveIntegerOption(value, '--shared-context-max-snippets'), 8)
+    .option('--shared-context-max-lines <n>', 'Maximum lines per shared raw snippet', value => parsePositiveIntegerOption(value, '--shared-context-max-lines'), 160)
+    .option('--shared-context-max-bytes <n>', 'Maximum bytes per shared raw snippet', value => parsePositiveIntegerOption(value, '--shared-context-max-bytes'), 16_000)
     .option('--triage <mode>', 'Triage mode: auto, always, or never', 'auto')
     .option('--skip-triage', 'Skip triage aggregation', false)
     .option('--out <path>', 'Write result JSON to this path')

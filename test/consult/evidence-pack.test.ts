@@ -37,4 +37,29 @@ describe('consult evidence pack', () => {
         expect(pack.summary.candidate_files).toBe(0);
         expect(pack.summary.included_files).toBe(0);
     });
+
+    it('falls back to safe defaults when numeric caps are non-finite', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'aca-pack-'));
+        mkdirSync(join(dir, 'src'));
+        writeFileSync(join(dir, 'src', 'a.ts'), 'a');
+        writeFileSync(join(dir, 'src', 'b.ts'), 'b');
+        writeFileSync(join(dir, 'src', 'c.ts'), 'c');
+        writeFileSync(join(dir, 'src', 'd.ts'), 'd');
+        writeFileSync(join(dir, 'src', 'e.ts'), 'e');
+        writeFileSync(join(dir, 'src', 'f.ts'), 'f');
+
+        const pack = buildEvidencePack({
+            projectDir: dir,
+            packRepo: true,
+            maxFiles: Number.NaN,
+            maxFileBytes: Number.NaN,
+            maxTotalBytes: Number.NaN,
+        });
+
+        expect(pack.summary.max_files).toBe(5);
+        expect(pack.summary.max_file_bytes).toBe(8_000);
+        expect(pack.summary.max_total_bytes).toBe(240_000);
+        expect(pack.summary.included_files).toBe(5);
+        expect(pack.summary.omitted).toContain('src/f.ts: max files reached');
+    });
 });

@@ -183,6 +183,10 @@ const REQUIRED_TRIAGE_SECTIONS = [
 type ConsultTaskMode = 'review' | 'advisory';
 type ConsultTriageMode = 'auto' | 'always' | 'never';
 
+function normalizePositiveInteger(value: number | undefined, fallback: number): number {
+    return value !== undefined && Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
 type AdvisoryWitnessClassification =
     | { status: 'report'; report: string }
     | { status: 'invalid'; error: string; retryable: boolean };
@@ -2407,25 +2411,31 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
     const promptBase = options.promptFile
         ? promptSource
         : renderPrompt(questionForPrompt, taskMode);
+    const normalizedPackMaxFiles = normalizePositiveInteger(options.packMaxFiles, 5);
+    const normalizedPackMaxFileBytes = normalizePositiveInteger(options.packMaxFileBytes, 8_000);
+    const normalizedPackMaxTotalBytes = normalizePositiveInteger(options.packMaxTotalBytes, 240_000);
     const pack = (options.packRepo || (options.packPath?.length ?? 0) > 0)
         ? buildEvidencePack({
             projectDir,
             paths: options.packPath,
             packRepo: options.packRepo,
-            maxFiles: options.packMaxFiles,
-            maxFileBytes: options.packMaxFileBytes,
-            maxTotalBytes: options.packMaxTotalBytes,
+            maxFiles: normalizedPackMaxFiles,
+            maxFileBytes: normalizedPackMaxFileBytes,
+            maxTotalBytes: normalizedPackMaxTotalBytes,
         })
         : undefined;
     const prompt = pack ? appendEvidencePack(promptBase, pack) : promptBase;
+    const normalizedSharedContextMaxSnippets = normalizePositiveInteger(options.sharedContextMaxSnippets, DEFAULT_SHARED_CONTEXT_SNIPPETS);
+    const normalizedSharedContextMaxLines = normalizePositiveInteger(options.sharedContextMaxLines, DEFAULT_SHARED_CONTEXT_LINES);
+    const normalizedSharedContextMaxBytes = normalizePositiveInteger(options.sharedContextMaxBytes, DEFAULT_SHARED_CONTEXT_BYTES);
     const sharedContext = options.sharedContext
         ? await buildSharedContext(prompt, projectDir, suffix, {
             models: options.sharedContextModel
                 ? [options.sharedContextModel]
                 : [...TRIAGE_MODEL_CANDIDATES],
-            maxSnippets: options.sharedContextMaxSnippets ?? DEFAULT_SHARED_CONTEXT_SNIPPETS,
-            maxLines: options.sharedContextMaxLines ?? DEFAULT_SHARED_CONTEXT_LINES,
-            maxBytes: options.sharedContextMaxBytes ?? DEFAULT_SHARED_CONTEXT_BYTES,
+            maxSnippets: normalizedSharedContextMaxSnippets,
+            maxLines: normalizedSharedContextMaxLines,
+            maxBytes: normalizedSharedContextMaxBytes,
         })
         : undefined;
     const promptForWitnesses = sharedContext?.status === 'ok' && sharedContext.snippetsWithText.length > 0
@@ -2434,10 +2444,10 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
     const witnesses = selectWitnesses(options.witnesses);
     const triageMode = resolveTriageMode(options);
     const limits = {
-        maxContextSnippets: options.maxContextSnippets ?? 3,
-        maxContextLines: options.maxContextLines ?? 120,
-        maxContextBytes: options.maxContextBytes ?? 8_000,
-        maxContextRounds: options.maxContextRounds ?? 3,
+        maxContextSnippets: normalizePositiveInteger(options.maxContextSnippets, 3),
+        maxContextLines: normalizePositiveInteger(options.maxContextLines, 120),
+        maxContextBytes: normalizePositiveInteger(options.maxContextBytes, 8_000),
+        maxContextRounds: normalizePositiveInteger(options.maxContextRounds, 3),
     };
     const witnessEntries = await Promise.all(
         witnesses.map(async witness => [witness.name, await runWitness(witness, promptForWitnesses, projectDir, suffix, limits, taskMode)] as const),

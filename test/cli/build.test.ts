@@ -157,4 +157,16 @@ describe('M8.1 — Build & Package', () => {
         expect(exitCode).not.toBe(0);
         expect(stderr).toContain("unknown option '--nonexistent-flag-xyz'");
     });
+
+    it('consult rejects non-numeric context limits instead of propagating NaN', () => {
+        const { stderr, exitCode } = runDist(
+            'consult',
+            '--question',
+            'Review the change.',
+            '--max-context-rounds',
+            'nope',
+        );
+        expect(exitCode).not.toBe(0);
+        expect(stderr).toContain('--max-context-rounds must be a positive integer');
+    });
 });

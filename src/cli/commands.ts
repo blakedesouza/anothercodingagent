@@ -27,6 +27,33 @@ export interface SlashCommandResult {
 
 type SlashCommandHandler = (ctx: SlashCommandContext, args: string) => SlashCommandResult | Promise<SlashCommandResult>;
 
+interface ParsedSlashArgs {
+    positional: string[];
+    force: boolean;
+    unknownFlags: string[];
+}
+
+function parseSlashArgs(args: string): ParsedSlashArgs {
+    const tokens = args.trim() ? args.trim().split(/\s+/) : [];
+    const positional: string[] = [];
+    const unknownFlags: string[] = [];
+    let force = false;
+
+    for (const token of tokens) {
+        if (token === '--force') {
+            force = true;
+            continue;
+        }
+        if (token.startsWith('-')) {
+            unknownFlags.push(token);
+            continue;
+        }
+        positional.push(token);
+    }
+
+    return { positional, force, unknownFlags };
+}
+
 const commands: Record<string, SlashCommandHandler> = {
     '/version': () => ({
         output: `aca v${pkg.version}`,
@@ -115,13 +142,17 @@ const commands: Record<string, SlashCommandHandler> = {
         if (!ctx.checkpointManager) {
             return { output: 'Checkpointing is not available.', shouldExit: false };
         }
-        const count = args.trim() ? parseInt(args.trim(), 10) : 1;
-        if (isNaN(count) || count < 1) {
-            return { output: 'Usage: /undo [N] — revert last N mutating turns (default 1)', shouldExit: false };
+        const parsed = parseSlashArgs(args);
+        if (parsed.unknownFlags.length > 0 || parsed.positional.length > 1) {
+            return { output: 'Usage: /undo [N] [--force] — revert last N mutating turns (default 1)', shouldExit: false };
         }
-        const force = args.includes('--force');
+        const rawCount = parsed.positional[0];
+        const count = rawCount ? Number.parseInt(rawCount, 10) : 1;
+        if (!Number.isInteger(count) || count < 1) {
+            return { output: 'Usage: /undo [N] [--force] — revert last N mutating turns (default 1)', shouldExit: false };
+        }
         try {
-            const result = await ctx.checkpointManager.undoTurns(count, force);
+            const result = await ctx.checkpointManager.undoTurns(count, parsed.force);
             if (!result.success) {
                 return { output: result.warnings.join('\n'), shouldExit: false };
             }
@@ -143,12 +174,11 @@ const commands: Record<string, SlashCommandHandler> = {
         if (!ctx.checkpointManager) {
             return { output: 'Checkpointing is not available.', shouldExit: false };
         }
-        const parts = args.trim().split(/\s+/);
-        const checkpointId = parts[0];
-        if (!checkpointId) {
+        const parsed = parseSlashArgs(args);
+        if (parsed.unknownFlags.length > 0 || parsed.positional.length !== 1) {
             return { output: 'Usage: /restore <turn-N> [--force] — restore to a specific checkpoint', shouldExit: false };
         }
-        const force = args.includes('--force');
+        const checkpointId = parsed.positional[0];
         try {
             // Preview first
             const preview = await ctx.checkpointManager.previewRestore(checkpointId);
@@ -162,7 +192,7 @@ const commands: Record<string, SlashCommandHandler> = {
             if (preview.filesDeleted.length > 0) previewLines.push(`  Deleted:  ${preview.filesDeleted.join(', ')}`);
 
             // Ask for confirmation
-            if (ctx.promptUser && !force) {
+            if (ctx.promptUser && !parsed.force) {
                 previewLines.push('', 'Apply these changes? (y/n)');
                 const answer = await ctx.promptUser(previewLines.join('\n'));
                 if (answer.trim().toLowerCase() !== 'y' && answer.trim().toLowerCase() !== 'yes') {
@@ -170,7 +200,7 @@ const commands: Record<string, SlashCommandHandler> = {
                 }
             }
 
-            const result = await ctx.checkpointManager.executeRestore(checkpointId, force);
+            const result = await ctx.checkpointManager.executeRestore(checkpointId, parsed.force);
             if (!result.success) {
                 return { output: result.warnings.join('\n'), shouldExit: false };
             }

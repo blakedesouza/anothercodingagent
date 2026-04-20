@@ -120,9 +120,18 @@ function rankFiles(root: string, files: string[], changed: Set<string>): string[
 
 export function buildEvidencePack(options: EvidencePackOptions): EvidencePack {
     const root = resolve(options.projectDir);
-    const maxFiles = Math.min(options.maxFiles ?? DEFAULT_MAX_FILES, ABSOLUTE_MAX_FILES);
-    const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
-    const maxTotalBytes = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES;
+    const maxFiles = Math.min(
+        Number.isInteger(options.maxFiles) && (options.maxFiles ?? 0) > 0
+            ? (options.maxFiles as number)
+            : DEFAULT_MAX_FILES,
+        ABSOLUTE_MAX_FILES,
+    );
+    const maxFileBytes = Number.isInteger(options.maxFileBytes) && (options.maxFileBytes ?? 0) > 0
+        ? (options.maxFileBytes as number)
+        : DEFAULT_MAX_FILE_BYTES;
+    const maxTotalBytes = Number.isInteger(options.maxTotalBytes) && (options.maxTotalBytes ?? 0) > 0
+        ? (options.maxTotalBytes as number)
+        : DEFAULT_MAX_TOTAL_BYTES;
     const candidates: string[] = [];
 
     if (options.paths && options.paths.length > 0) {
