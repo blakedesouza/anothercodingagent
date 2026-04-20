@@ -184,7 +184,7 @@ export function buildContextRequestPrompt(
     symbolLocations?: SymbolLocation[],
     model?: string,
 ): string {
-    const hints = model ? getModelHints(model) : [];
+    const hints = model ? getModelHints(model, 'consult_context_request') : [];
     const hintSection = hints.length > 0
         ? `\n<model_hints>\n${hints.join('\n')}\n</model_hints>\n`
         : '';
@@ -302,7 +302,7 @@ export function buildContinuationPrompt(
     limits: ContextRequestLimits,
     model?: string,
 ): string {
-    const hints = model ? getModelHints(model) : [];
+    const hints = model ? getModelHints(model, 'consult_context_request') : [];
     const hintSection = hints.length > 0
         ? `\n<model_hints>\n${hints.join('\n')}\n</model_hints>\n`
         : '';
@@ -1617,7 +1617,7 @@ export function renderContextSnippets(snippets: ContextSnippet[]): string {
 }
 
 export function buildFinalizationPrompt(originalPrompt: string, requestText: string, snippets: ContextSnippet[], model?: string): string {
-    const hints = model ? getModelHints(model) : [];
+    const hints = model ? getModelHints(model, 'consult_finalization') : [];
     const hintSection = hints.length > 0
         ? `\n<model_hints>\n${hints.join('\n')}\n</model_hints>\n`
         : '';

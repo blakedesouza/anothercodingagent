@@ -1008,7 +1008,22 @@ describe('buildAnalyticalSystemMessages', () => {
         const msgs = buildAnalyticalSystemMessages({ cwd: '/tmp', toolNames: ['read_file'] });
         const content = msgs[0].content as string;
         expect(content).toContain('<tool_policy>');
-        expect(content).toContain('Do NOT use tools to answer conceptual or general knowledge questions');
+        expect(content).toContain('If the task is purely conceptual and does not ask you to verify against code');
+    });
+
+    it('requires grounded verification instead of answering from memory when the task asks for evidence', () => {
+        const msgs = buildAnalyticalSystemMessages({ cwd: '/tmp', toolNames: ['read_file', 'fetch_url'] });
+        const content = msgs[0].content as string;
+        expect(content).toContain('do NOT answer from memory');
+        expect(content).toContain('If the active profile asks for grounded verification');
+        expect(content).not.toContain('If you can answer the question from your knowledge, do so immediately');
+    });
+
+    it('instructs blocked verification paths to fail plainly instead of leaking tool markup', () => {
+        const msgs = buildAnalyticalSystemMessages({ cwd: '/tmp', toolNames: ['fetch_url'] });
+        const content = msgs[0].content as string;
+        expect(content).toContain('If required verification is blocked because tools are unavailable, unconfigured, denied, or exhausted');
+        expect(content).toContain('Do not emit raw tool-call JSON');
     });
 
     it('includes <environment> with working directory', () => {

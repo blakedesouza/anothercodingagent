@@ -67,6 +67,13 @@ describe('buildToolSchemaPrompt', () => {
         expect(prompt).toContain('Do not deliberate over the protocol');
         expect(prompt).toContain('NOT available in this session');
     });
+
+    it('includes tool-emulation-only model hints without leaking non-tool surfaces', () => {
+        const prompt = buildToolSchemaPrompt(sampleTools, 'zai-org/glm-5');
+        expect(prompt).toContain('your ENTIRE response must be ONLY the JSON object');
+        expect(prompt).toContain('Make tool calls directly');
+        expect(prompt).not.toContain('needs_context JSON object');
+    });
 });
 
 describe('injectToolsIntoRequest', () => {

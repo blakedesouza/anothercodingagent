@@ -1079,7 +1079,7 @@ function buildNoToolsConsultSystemMessages(mode: 'witness' | 'shared_context' | 
         : mode === 'triage'
             ? 'You are the triage pass. Aggregate only the supplied witness evidence. Do not perform a fresh review.'
             : 'You are a witness consult pass. Answer the supplied task using only the supplied context.';
-    const hints = model ? getModelHints(model) : [];
+    const hints = model ? getModelHints(model, 'consult_system') : [];
     const hintSection = hints.length > 0
         ? `\n<model_hints>\n${hints.join('\n')}\n</model_hints>`
         : '';

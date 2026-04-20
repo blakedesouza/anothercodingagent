@@ -30,7 +30,7 @@ import {
 } from './token-estimator.js';
 import { buildCoverageMap, visibleHistory } from './summarizer.js';
 import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
-import { getModelHints } from '../prompts/model-hints.js';
+import { getModelHints, type ModelHintSurface } from '../prompts/model-hints.js';
 
 // --- Capability health ---
 
@@ -546,9 +546,9 @@ function joinToolNames(names: string[]): string {
  * If model-specific hints exist for the given model ID, append a <model_hints>
  * section to lines. No-op when model is absent or hints are empty.
  */
-function appendModelHints(lines: string[], model?: string): void {
+function appendModelHints(lines: string[], surface: ModelHintSurface, model?: string): void {
     if (!model) return;
-    const hints = getModelHints(model);
+    const hints = getModelHints(model, surface);
     if (hints.length === 0) return;
     lines.push('');
     lines.push('<model_hints>');
@@ -827,7 +827,7 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
     lines.push('');
 
     // === Model-specific hints (C11.2 infrastructure; C11.3 populates the registry) ===
-    appendModelHints(lines, options.model);
+    appendModelHints(lines, 'invoke_agentic', options.model);
 
     // === Closing anchor (triple-repeat: this is the 3rd statement of the load-bearing rule) ===
     // Source: Cline pattern of putting operational drive LAST + Aider pattern
@@ -871,9 +871,11 @@ export function buildAnalyticalSystemMessages(options: InvokePromptOptions): Req
 
     lines.push('<tool_policy>');
     lines.push('- Use tools when the task requires reading files, running commands, or interacting with the filesystem.');
-    lines.push('- Do NOT use tools to answer conceptual or general knowledge questions — answer those directly in plain text.');
-    lines.push('- If you can answer the question from your knowledge, do so immediately without calling any tools.');
+    lines.push('- If the task is purely conceptual and does not ask you to verify against code, files, commands, docs, or other evidence, answer directly in plain text.');
+    lines.push('- If the task asks you to verify against code, commands, external docs, files, or any other evidence, do NOT answer from memory. Use the relevant tools first and ground your answer in that evidence.');
+    lines.push('- If the active profile asks for grounded verification, that profile requirement overrides any generic shortcut.');
     lines.push('- Only use tools when they are necessary to complete the task.');
+    lines.push('- If required verification is blocked because tools are unavailable, unconfigured, denied, or exhausted, say that plainly in your final answer. Do not emit raw tool-call JSON, pseudo-tool markup, or another tool request as plain text.');
     lines.push('- When you have gathered enough evidence, produce your final answer as plain text.');
     lines.push('</tool_policy>');
     lines.push('');
@@ -907,7 +909,7 @@ export function buildAnalyticalSystemMessages(options: InvokePromptOptions): Req
     }
 
     // === Model-specific hints (C11.2 infrastructure; C11.3 populates the registry) ===
-    appendModelHints(lines, options.model);
+    appendModelHints(lines, 'invoke_analytical', options.model);
 
     return [{ role: 'system' as const, content: lines.join('\n') }];
 }
@@ -946,7 +948,7 @@ export function buildSynthesisSystemMessages(options: InvokePromptOptions): Requ
     lines.push('Follow the output format specified in the prompt exactly.');
 
     // === Model-specific hints (C11.2 infrastructure; C11.3 populates the registry) ===
-    appendModelHints(lines, options.model);
+    appendModelHints(lines, 'invoke_synthesis', options.model);
 
     return [{ role: 'system' as const, content: lines.join('\n') }];
 }

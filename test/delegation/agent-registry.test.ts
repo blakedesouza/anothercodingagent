@@ -399,6 +399,7 @@ describe('AgentRegistry', () => {
             const { registry } = AgentRegistry.resolve(toolReg);
 
             const profile = registry.getProfile('triage');
+            expect(profile!.promptTier).toBe('analytical');
             expect(profile!.systemPrompt).toContain('triage');
             expect(profile!.systemPrompt).toContain('dedupe');
             expect(profile!.systemPrompt).toContain('Do not modify files');

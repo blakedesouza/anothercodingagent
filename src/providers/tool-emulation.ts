@@ -27,7 +27,7 @@ export function buildToolSchemaPrompt(tools: ToolDefinition[], modelId?: string)
         .map(t => `- ${t.name}: ${t.description}\n  Parameters: ${JSON.stringify(t.parameters)}`)
         .join('\n');
 
-    const hints = modelId ? getModelHints(modelId) : [];
+    const hints = modelId ? getModelHints(modelId, 'tool_emulation') : [];
     const hintSection = hints.length > 0
         ? '\n\n<model_hints>\n' + hints.join('\n') + '\n</model_hints>'
         : '';

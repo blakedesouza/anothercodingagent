@@ -604,6 +604,18 @@ describe('consult context requests', () => {
         expect(prompt).toContain('Do not return JSON');
     });
 
+    it('keeps tool-emulation-only GLM hints out of finalization prompts', () => {
+        const prompt = buildFinalizationPrompt(
+            'Review the code.',
+            '{"needs_context":[]}',
+            [],
+            'zai-org/glm-5',
+        );
+
+        expect(prompt).not.toContain('your ENTIRE response must be ONLY the JSON object');
+        expect(prompt).not.toContain('The first character of your response must be `{`');
+    });
+
     it('builds generic no-tools context-request retry prompts', () => {
         const prompt = buildContextRequestRetryPrompt(
             'Review the code.',
@@ -671,6 +683,20 @@ describe('consult context requests', () => {
         expect(prompt).toContain('<model_hints>');
         expect(prompt).toContain('do not jump straight to a guessed file path');
         expect(prompt).toContain('For the repo root directory, use `"path": "."`');
+    });
+
+    it('keeps tool-emulation-only GLM hints out of witness context-request prompts', () => {
+        const prompt = buildContextRequestPrompt(
+            'Review the code.',
+            { maxSnippets: 2, maxLines: 50, maxBytes: 1000, maxRounds: 1 },
+            1,
+            1,
+            undefined,
+            'zai-org/glm-5',
+        );
+
+        expect(prompt).not.toContain('your ENTIRE response must be ONLY the JSON object');
+        expect(prompt).not.toContain('The first character of your response must be `{`');
     });
 
     it('normalizes empty tree paths to the repo root', () => {

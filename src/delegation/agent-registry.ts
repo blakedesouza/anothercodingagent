@@ -200,7 +200,7 @@ function buildBuiltInProfiles(toolRegistry: ToolRegistry): AgentProfile[] {
             systemPrompt: 'You are a triage aggregator for a multi-witness code review. Input: multiple witness reports on the same codebase. Output: a single deduplicated, severity-ranked JSON report. Prefer aggregating from the witness bundle directly; use tools only for high-severity, disputed, vague, or API/library claims that materially need verification. Your job is NOT to re-review the code from scratch — it is to dedupe, calibrate severity, and flag dissent. Do not modify files.',
             defaultTools: TRIAGE_TOOLS,
             canDelegate: false,
-            promptTier: 'synthesis',
+            promptTier: 'analytical',
         },
     ];
 }
