@@ -168,6 +168,8 @@ aca untrust [path]            Remove workspace trust
 
 Global flags: `--model`, `--verbose`, `--no-confirm`, `-r/--resume [session]`.
 
+`aca methods --json` is the machine-readable way to route natural-language ACA requests. It now includes language guidance for phrases like `ACA consult`, `ACA invoke`, `fix ACA`, and the fact that bare `ACA` is ambiguous without more context.
+
 ### Examples
 
 Describe the structured delegation contract:

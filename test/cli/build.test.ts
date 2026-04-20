@@ -94,17 +94,23 @@ describe('M8.1 — Build & Package', () => {
         const catalog = JSON.parse(stdout.trim()) as {
             intents: Array<{ intent: string; preferred_methods: string[] }>;
             methods: Array<{ id: string; invocation: string }>;
+            language_guidance: Array<{ trigger_examples: string[]; route_kind: string; preferred_method?: string }>;
         };
         expect(catalog.intents.some(intent => intent.intent === 'multi_model_second_opinion')).toBe(true);
         expect(catalog.methods.some(method => method.id === 'invoke')).toBe(true);
         expect(catalog.methods.some(method => method.id === 'consult')).toBe(true);
         expect(catalog.methods.some(method => method.id === 'rp-research')).toBe(true);
+        expect(catalog.language_guidance.some(item => item.preferred_method === 'consult' && item.trigger_examples.includes('ACA consult'))).toBe(true);
+        expect(catalog.language_guidance.some(item => item.route_kind === 'clarify' && item.trigger_examples.includes('ACA'))).toBe(true);
     });
 
     it('methods without --json renders readable workflow guidance', () => {
         const { stdout, exitCode } = runDist('methods');
         expect(exitCode).toBe(0);
         expect(stdout).toContain('ACA Methods');
+        expect(stdout).toContain('Language Routing:');
+        expect(stdout).toContain('ACA consult');
+        expect(stdout).toContain('Bare ACA is ambiguous');
         expect(stdout).toContain('aca consult --question <text> [options]');
         expect(stdout).toContain('aca invoke < stdin-json');
     });

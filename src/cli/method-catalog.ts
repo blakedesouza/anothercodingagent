@@ -35,11 +35,19 @@ export interface MethodCatalogIntentRoute {
     notes?: string;
 }
 
+export interface MethodCatalogLanguageGuidance {
+    trigger_examples: string[];
+    interpretation: string;
+    route_kind: 'method' | 'repo_work' | 'clarify';
+    preferred_method?: string;
+}
+
 export interface MethodCatalog {
     version: 1;
     generated_by: 'aca';
     intents: MethodCatalogIntentRoute[];
     methods: MethodCatalogEntry[];
+    language_guidance: MethodCatalogLanguageGuidance[];
 }
 
 const METHOD_CATALOG_ENTRIES: readonly MethodCatalogEntry[] = Object.freeze([
@@ -255,6 +263,37 @@ const METHOD_CATALOG_ENTRIES: readonly MethodCatalogEntry[] = Object.freeze([
     },
 ]);
 
+const METHOD_LANGUAGE_GUIDANCE: readonly MethodCatalogLanguageGuidance[] = Object.freeze([
+    {
+        trigger_examples: ['ACA consult', 'use ACA consult', 'consult with ACA', 'get an ACA second opinion'],
+        interpretation: 'Use the bounded witness-consult workflow instead of modifying ACA source code.',
+        route_kind: 'method',
+        preferred_method: 'consult',
+    },
+    {
+        trigger_examples: ['ACA invoke', 'use ACA invoke', 'run ACA as a worker'],
+        interpretation: 'Use the structured invoke executor contract.',
+        route_kind: 'method',
+        preferred_method: 'invoke',
+    },
+    {
+        trigger_examples: ['ACA rp-research', 'run ACA RP research', 'use ACA for RP pack generation'],
+        interpretation: 'Use the RP workflow subcommand instead of a generic coding task.',
+        route_kind: 'method',
+        preferred_method: 'rp-research',
+    },
+    {
+        trigger_examples: ['fix ACA', 'work on ACA', 'audit ACA', 'ACA CLI', 'fix ACA consult'],
+        interpretation: 'Modify or review the ACA repository/codebase itself, not an ACA workflow subcommand.',
+        route_kind: 'repo_work',
+    },
+    {
+        trigger_examples: ['ACA'],
+        interpretation: 'Bare ACA is ambiguous. Clarify whether the user means an ACA workflow/subcommand or the ACA codebase itself before choosing a route.',
+        route_kind: 'clarify',
+    },
+]);
+
 export function buildMethodCatalog(): MethodCatalog {
     return {
         version: 1,
@@ -293,6 +332,7 @@ export function buildMethodCatalog(): MethodCatalog {
             },
         ],
         methods: [...METHOD_CATALOG_ENTRIES],
+        language_guidance: [...METHOD_LANGUAGE_GUIDANCE],
     };
 }
 
@@ -301,7 +341,17 @@ export function runMethodsJson(): string {
 }
 
 export function runMethodsText(): string {
-    const sections = buildMethodCatalog().methods.map((method) => {
+    const catalog = buildMethodCatalog();
+    const languageSection = catalog.language_guidance.map((guidance) => {
+        const examples = guidance.trigger_examples.map(example => `  - ${example}`).join('\n');
+        const route = guidance.preferred_method
+            ? `Preferred method: ${guidance.preferred_method}`
+            : guidance.route_kind === 'repo_work'
+                ? 'Preferred route: work on the ACA repository itself'
+                : 'Preferred route: clarify before choosing a workflow';
+        return `- ${guidance.interpretation}\n${examples}\n  - ${route}`;
+    }).join('\n');
+    const sections = catalog.methods.map((method) => {
         const args = method.key_arguments.length > 0
             ? method.key_arguments.map(argument => {
                 const suffix = argument.default !== undefined ? ` (default: ${String(argument.default)})` : '';
@@ -326,6 +376,9 @@ ${examples}`;
     return `ACA Methods
 
 Use \`aca methods --json\` for the machine-readable catalog.
+
+Language Routing:
+${languageSection}
 
 ${sections.join('\n\n')}`;
 }

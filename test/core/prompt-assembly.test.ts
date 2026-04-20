@@ -135,6 +135,9 @@ describe('assemblePrompt', () => {
             const sysContent = result.messages[0].content as string;
             expect(sysContent).toContain('ACA');
             expect(sysContent).toContain('Instruction precedence');
+            expect(sysContent).toContain('Workflow name disambiguation');
+            expect(sysContent).toContain('"ACA consult" means use the `aca consult` workflow');
+            expect(sysContent).toContain('Bare "ACA" is ambiguous');
 
             // Layer 3: context block has environment info
             const ctxContent = result.messages[1].content as string;
@@ -652,6 +655,9 @@ describe('buildInvokeSystemMessages', () => {
         const content = msgs[0].content as string;
         expect(content).toContain('ACA');
         expect(content).toContain('coding agent');
+        expect(content).toContain('<workflow_disambiguation>');
+        expect(content).toContain('"ACA consult" means use the `aca consult` workflow');
+        expect(content).toContain('Bare "ACA" is ambiguous');
     });
 
     it('includes working directory', () => {
@@ -1007,6 +1013,8 @@ describe('buildAnalyticalSystemMessages', () => {
     it('includes <tool_policy> block', () => {
         const msgs = buildAnalyticalSystemMessages({ cwd: '/tmp', toolNames: ['read_file'] });
         const content = msgs[0].content as string;
+        expect(content).toContain('<workflow_disambiguation>');
+        expect(content).toContain('"ACA invoke" means use the `aca invoke` workflow');
         expect(content).toContain('<tool_policy>');
         expect(content).toContain('If the task is purely conceptual and does not ask you to verify against code');
     });
@@ -1090,6 +1098,8 @@ describe('buildSynthesisSystemMessages', () => {
     it('states tools are NOT available', () => {
         const msgs = buildSynthesisSystemMessages({ cwd: '/tmp', toolNames: [] });
         const content = msgs[0].content as string;
+        expect(content).toContain('<workflow_disambiguation>');
+        expect(content).toContain('"ACA consult" means use the `aca consult` workflow');
         expect(content).toContain('NOT available in this session');
     });
 

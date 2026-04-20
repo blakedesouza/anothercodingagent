@@ -135,6 +135,12 @@ export interface PreparedPrompt {
 
 // --- System prompt template ---
 
+const ACA_WORKFLOW_DISAMBIGUATION = `Workflow name disambiguation:
+- "ACA consult" means use the \`aca consult\` workflow; it does not mean modify ACA source code.
+- "ACA invoke" means use the \`aca invoke\` workflow.
+- Phrases like "fix ACA", "work on ACA", "audit ACA", "ACA CLI", or "fix ACA consult" mean modify or review the ACA repository/codebase itself.
+- Bare "ACA" is ambiguous. If the task depends on the distinction, clarify whether the user means an ACA workflow/subcommand or the ACA codebase.`;
+
 const SYSTEM_IDENTITY = `You are ACA (Another Coding Agent), an AI-powered coding assistant that helps users with software engineering tasks.
 
 Rules:
@@ -153,7 +159,9 @@ Instruction precedence (highest to lowest):
 2. Repository/user instruction files
 3. Current user request
 4. Durable task state
-5. Prior conversation context`;
+5. Prior conversation context
+
+${ACA_WORKFLOW_DISAMBIGUATION}`;
 
 // --- Builder functions ---
 
@@ -558,6 +566,14 @@ function appendModelHints(lines: string[], surface: ModelHintSurface, model?: st
     lines.push('</model_hints>');
 }
 
+function appendWorkflowDisambiguation(lines: string[]): void {
+    lines.push('<workflow_disambiguation>');
+    for (const line of ACA_WORKFLOW_DISAMBIGUATION.split('\n').slice(1)) {
+        lines.push(line);
+    }
+    lines.push('</workflow_disambiguation>');
+}
+
 export function buildInvokeSystemMessages(options: InvokePromptOptions): RequestMessage[] {
     const lines: string[] = [];
     const toolSet = new Set(options.toolNames);
@@ -612,6 +628,8 @@ export function buildInvokeSystemMessages(options: InvokePromptOptions): Request
         lines.push('You are skilled at reading and modifying codebases across many languages (TypeScript, Python, Rust, Go, Java, C/C++, and others), using tools to gather context and execute changes, and verifying your work via tests, linters, and type checkers.');
     }
     lines.push('You work methodically: gather the context you need, make the smallest correct set of changes, verify them, and produce a concise final summary.');
+    lines.push('');
+    appendWorkflowDisambiguation(lines);
     lines.push('');
 
     // === Operating mode ===
@@ -868,6 +886,8 @@ export function buildAnalyticalSystemMessages(options: InvokePromptOptions): Req
         lines.push('</profile>');
         lines.push('');
     }
+    appendWorkflowDisambiguation(lines);
+    lines.push('');
 
     lines.push('<tool_policy>');
     lines.push('- Use tools when the task requires reading files, running commands, or interacting with the filesystem.');
@@ -940,6 +960,8 @@ export function buildSynthesisSystemMessages(options: InvokePromptOptions): Requ
         lines.push('</profile>');
         lines.push('');
     }
+    appendWorkflowDisambiguation(lines);
+    lines.push('');
 
     lines.push(NO_NATIVE_FUNCTION_CALLING);
     lines.push(NO_PROTOCOL_DELIBERATION);
