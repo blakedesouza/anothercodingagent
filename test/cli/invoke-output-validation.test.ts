@@ -151,7 +151,25 @@ describe('validateRequiredOutputPaths', () => {
             'Done. {"tool_calls":[{"name":"read_file","arguments":{"path":"src/main.ts"}}]}',
         )).toEqual({
             code: 'turn.output_validation_failed',
-            message: 'final response leaked tool-call-shaped text after a short tool-intent preamble instead of a plain-language completion',
+            message: 'final response leaked embedded tool-call-shaped text instead of executing the tool call',
+        });
+    });
+
+    it('rejects embedded localized pseudo tool calls in final output', () => {
+        expect(validateFinalResultText(
+            'Let me gather context.\n[调用 find_paths] {"root":"/tmp/workspace","pattern":"*"}',
+        )).toEqual({
+            code: 'turn.output_validation_failed',
+            message: 'final response leaked embedded tool-call-shaped text instead of executing the tool call',
+        });
+    });
+
+    it('rejects unresolved tool-use intent without tool-call JSON', () => {
+        expect(validateFinalResultText(
+            'Let me inspect the source files and run the tests before making the fix.',
+        )).toEqual({
+            code: 'turn.output_validation_failed',
+            message: 'final response ended with unresolved tool-use intent instead of a completed outcome',
         });
     });
 

@@ -7,6 +7,8 @@ session history lives in [changelog-history.md](../archive/history/changelog-his
 
 - Hardened cross-platform path containment and command-risk checks for Windows-style paths, quoted `rm -rf` root targets, preauth cwd matching, context requests, and active-file tracking.
 - Fixed NanoGPT tool-emulation JSON repair so valid doubled backslashes in model-emitted regex strings no longer get corrupted into malformed tool payloads during parsing.
+- Added DeepSeek V4 Pro prompt hints to reduce literal tool-protocol narration and premature final answers in ACA tool-emulation workflows.
+- Hardened invoke final-output validation against embedded pseudo tool-call text and unresolved tool-use intent finals.
 - Added structured `aca invoke` and MCP server workflows for bounded agent delegation.
 - Added `aca consult` for bounded multi-model witness review with context-request follow-up.
 - Added runtime safety layers for sandbox zones, network policy, secret scrubbing, tool budgets, required outputs, and model-output validation.

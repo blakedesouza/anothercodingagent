@@ -74,6 +74,15 @@ describe('buildToolSchemaPrompt', () => {
         expect(prompt).toContain('Make tool calls directly');
         expect(prompt).not.toContain('needs_context JSON object');
     });
+
+    it('includes DeepSeek V4 Pro protocol hints in tool emulation prompts', () => {
+        const prompt = buildToolSchemaPrompt(sampleTools, 'deepseek/deepseek-v4-pro');
+        expect(prompt).toContain('Never write literal `Tool:`');
+        expect(prompt).toContain('Never end a response with intent phrases');
+        expect(prompt).toContain('your entire response must be only the executable JSON object');
+        expect(prompt).not.toContain('Do not finalize a coding task');
+        expect(prompt).not.toContain('<redacted:...>');
+    });
 });
 
 describe('injectToolsIntoRequest', () => {

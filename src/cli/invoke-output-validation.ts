@@ -77,7 +77,9 @@ export function buildProfileCompletionRepairTask(
 }
 
 const FINAL_RESULT_PSEUDO_TOOL_PREFIX = /^(?:```(?:json|javascript)?\s*)?(?:\{\s*"tool_calls"\s*:|\[\s*\{\s*"name"\s*:|<\s*(?:[\w-]+:)?(?:tool_call|function_calls?|call)\b|<\s*invoke\b|<\s*parameter\b|<\s*arg_(?:key|value)\b|\[\s*TOOL_CALL\s*\])/i;
+const FINAL_RESULT_PSEUDO_TOOL_ANYWHERE = /(?:\{\s*"tool_calls"\s*:|\[\s*调用\s+[\w-]+\]|(?:^|\n)\s*(?:Tool|Arguments):\s*)/i;
 const FINAL_RESULT_TOOL_INTENT = /^(?:i(?:'ll| will| can| need(?: to)?| should| am going to)|let me|next|now|first|to continue|continuing|using(?: a)? tool|calling(?: a)? tool)\b/i;
+const FINAL_RESULT_UNRESOLVED_TOOL_INTENT = /^(?:i(?:'ll| will| can| need(?: to)?| should| am going to)|let me|next|now|first)\b.{0,240}\b(?:tool|read|inspect|edit|fix|run|test|check|gather|context|project|source)\b/i;
 const FINAL_RESULT_EXPLANATORY = /\b(example|invalid|literal|quoted|string|markup|json|schema|protocol|field|property|parser|response|output|emitted|returned|contains?)\b/i;
 
 export function validateFinalResultText(resultText: string): ProfileCompletionIssue | null {
@@ -88,6 +90,20 @@ export function validateFinalResultText(resultText: string): ProfileCompletionIs
         return {
             code: 'turn.output_validation_failed',
             message: 'final response leaked raw tool-call-shaped text instead of a plain-language completion',
+        };
+    }
+
+    if (FINAL_RESULT_PSEUDO_TOOL_ANYWHERE.test(trimmed) && !FINAL_RESULT_EXPLANATORY.test(trimmed)) {
+        return {
+            code: 'turn.output_validation_failed',
+            message: 'final response leaked embedded tool-call-shaped text instead of executing the tool call',
+        };
+    }
+
+    if (FINAL_RESULT_UNRESOLVED_TOOL_INTENT.test(trimmed)) {
+        return {
+            code: 'turn.output_validation_failed',
+            message: 'final response ended with unresolved tool-use intent instead of a completed outcome',
         };
     }
 
