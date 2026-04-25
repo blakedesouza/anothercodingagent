@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
+import { pathsReferToSameLocation } from './path-comparison.js';
 
 // --- Types ---
 
@@ -246,7 +247,7 @@ export function renderProjectContext(snapshot: ProjectSnapshot): string {
 function isUsableGitRoot(dir: string): boolean {
     if (!existsSync(join(dir, '.git'))) return false;
     try {
-        return resolve(gitExec(dir, ['rev-parse', '--show-toplevel']).trim()) === resolve(dir);
+        return pathsReferToSameLocation(gitExec(dir, ['rev-parse', '--show-toplevel']).trim(), dir);
     } catch {
         return false;
     }

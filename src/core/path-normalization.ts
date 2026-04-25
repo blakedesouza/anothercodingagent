@@ -1,8 +1,14 @@
-import { isAbsolute, normalize, relative, resolve } from 'node:path';
+import { posix } from 'node:path';
+import {
+    isAbsolutePath,
+    isPathWithin,
+    normalizePathForComparison,
+    relativePathWithInputStyle,
+    resolvePathWithInputStyle,
+} from './path-comparison.js';
 
-function isWithinDirectory(parent: string, child: string): boolean {
-    const rel = relative(parent, child);
-    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+function toPortablePath(value: string): string {
+    return value.split(/[\\/]+/).join('/');
 }
 
 export function normalizeTrackedPath(rawPath: string, workspaceRoot?: string): string | undefined {
@@ -10,17 +16,22 @@ export function normalizeTrackedPath(rawPath: string, workspaceRoot?: string): s
     if (!trimmed) return undefined;
 
     if (!workspaceRoot) {
-        return isAbsolute(trimmed) ? resolve(trimmed) : normalize(trimmed);
+        return toPortablePath(
+            isAbsolutePath(trimmed)
+                ? normalizePathForComparison(trimmed)
+                : posix.normalize(toPortablePath(trimmed)),
+        );
     }
 
-    const root = resolve(workspaceRoot);
-    const resolvedPath = isAbsolute(trimmed) ? resolve(trimmed) : resolve(root, trimmed);
-    if (isWithinDirectory(root, resolvedPath)) {
-        const rel = relative(root, resolvedPath);
-        return rel === '' ? '.' : normalize(rel);
+    const resolvedPath = isAbsolutePath(trimmed)
+        ? normalizePathForComparison(trimmed)
+        : resolvePathWithInputStyle(workspaceRoot, trimmed);
+    if (isPathWithin(workspaceRoot, resolvedPath)) {
+        const rel = relativePathWithInputStyle(workspaceRoot, resolvedPath);
+        return rel === '' ? '.' : toPortablePath(rel);
     }
 
-    return resolvedPath;
+    return toPortablePath(normalizePathForComparison(resolvedPath));
 }
 
 export function normalizeTrackedPaths(paths: readonly string[], workspaceRoot?: string): string[] {

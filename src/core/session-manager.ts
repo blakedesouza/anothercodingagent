@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, renameSync, unlinkSync, readdirSync } from 'node:fs';
-import { join, resolve, normalize } from 'node:path';
+import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { generateId } from '../types/ids.js';
 import type { SessionId, WorkspaceId } from '../types/ids.js';
@@ -14,6 +14,7 @@ import type { ReadWarning } from './conversation-reader.js';
 import type { DurableTaskState } from './durable-task-state.js';
 import type { SerializedFileActivityIndex } from './file-activity-index.js';
 import { FileActivityIndex, getActiveOpenLoopFiles } from './file-activity-index.js';
+import { normalizePathForComparison } from './path-comparison.js';
 import { buildCoverageMap } from './summarizer.js';
 
 // --- Manifest schema (on-disk format) ---
@@ -64,7 +65,7 @@ export interface ResumeResult {
  * Normalizes the path (resolves `.`, `..`, trailing slashes) before hashing.
  */
 export function deriveWorkspaceId(workspaceRoot: string): WorkspaceId {
-    const normalized = resolve(normalize(workspaceRoot));
+    const normalized = normalizePathForComparison(workspaceRoot);
     const hash = createHash('sha256').update(normalized).digest('hex');
     return `wrk_${hash}` as WorkspaceId;
 }

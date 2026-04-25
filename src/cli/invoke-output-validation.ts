@@ -1,21 +1,22 @@
 import { existsSync, statSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolutePath, isPathWithin, resolvePathWithInputStyle } from '../core/path-comparison.js';
 import { parseEmulatedToolCalls } from '../providers/tool-emulation.js';
 import type { ConversationItem } from '../types/conversation.js';
 
 function isWithinDirectory(parent: string, child: string): boolean {
-    const rel = relative(parent, child);
-    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+    return isPathWithin(parent, child);
 }
 
 export function validateRequiredOutputPaths(workspaceRoot: string, paths: readonly string[] | undefined): string[] {
     if (!paths || paths.length === 0) return [];
-    const root = resolve(workspaceRoot);
+    const root = resolvePathWithInputStyle(workspaceRoot);
     const missingOrEmpty: string[] = [];
     for (const rawPath of paths) {
         const trimmed = rawPath.trim();
         if (!trimmed) continue;
-        const fullPath = isAbsolute(trimmed) ? resolve(trimmed) : resolve(root, trimmed);
+        const fullPath = isAbsolutePath(trimmed)
+            ? resolvePathWithInputStyle(trimmed)
+            : resolvePathWithInputStyle(root, trimmed);
         if (!isWithinDirectory(root, fullPath)) {
             missingOrEmpty.push(trimmed);
             continue;

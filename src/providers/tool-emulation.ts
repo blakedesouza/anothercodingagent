@@ -119,9 +119,48 @@ export function injectToolsIntoRequest(request: ModelRequest): ModelRequest {
  * Valid escape sequences are left untouched.
  */
 export function sanitizeModelJson(text: string): string {
-    // Match backslash NOT followed by a valid JSON escape character.
-    // Valid: " \ / b f n r t u
-    return text.replace(/\\([^"\\\/bfnrtu])/g, '$1');
+    let output = '';
+    let inString = false;
+
+    for (let index = 0; index < text.length; index += 1) {
+        const char = text[index];
+
+        if (!inString) {
+            output += char;
+            if (char === '"') {
+                inString = true;
+            }
+            continue;
+        }
+
+        if (char === '\\') {
+            const next = text[index + 1];
+            if (next === undefined) {
+                output += char;
+                continue;
+            }
+
+            // Preserve valid JSON escapes and doubled backslashes exactly as-is.
+            if ('"\\/bfnrtu'.includes(next) || next === '\\') {
+                output += char + next;
+                index += 1;
+                continue;
+            }
+
+            // Invalid single escape emitted by the model (for example \- or \.).
+            // Drop only the stray backslash and keep the literal character.
+            output += next;
+            index += 1;
+            continue;
+        }
+
+        output += char;
+        if (char === '"') {
+            inString = false;
+        }
+    }
+
+    return output;
 }
 
 /** Result of parsing emulated tool calls, including the preamble text before the JSON block. */

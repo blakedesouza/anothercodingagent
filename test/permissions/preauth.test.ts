@@ -100,6 +100,30 @@ describe('matchPreauthRules', () => {
         })).toBeNull();
     });
 
+    it('cwdPattern matches Windows descendants case-insensitively', () => {
+        const rules = [makeRule({
+            id: 'r1',
+            tool: 'exec_command',
+            match: { cwdPattern: 'C:\\Users\\Blake\\Project' },
+        })];
+        expect(matchPreauthRules(rules, {
+            toolName: 'exec_command',
+            cwd: 'c:/users/blake/project/packages/app',
+        })).not.toBeNull();
+    });
+
+    it('cwdPattern rejects Windows sibling paths that share a string prefix', () => {
+        const rules = [makeRule({
+            id: 'r1',
+            tool: 'exec_command',
+            match: { cwdPattern: 'C:\\Users\\Blake\\Project' },
+        })];
+        expect(matchPreauthRules(rules, {
+            toolName: 'exec_command',
+            cwd: 'C:\\Users\\Blake\\ProjectEvil',
+        })).toBeNull();
+    });
+
     it('skips rule when cwdPattern specified but no cwd in input', () => {
         const rules = [makeRule({
             id: 'r1',

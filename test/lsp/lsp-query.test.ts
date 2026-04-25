@@ -11,6 +11,7 @@ import {
     LspUnavailableError,
     LspWarmingUpError,
     LspCrashedError,
+    LspClient,
     type LspResult,
 } from '../../src/lsp/lsp-client.js';
 import {
@@ -406,6 +407,43 @@ describe('LspClient', () => {
         expect(tsConfig!.serverId).not.toBe(rsConfig!.serverId);
         expect(tsConfig!.serverId).toBe('typescript');
         expect(rsConfig!.serverId).toBe('rust-analyzer');
+    });
+
+    it('accepts absolute Windows paths within the workspace despite case differences', async () => {
+        const client = new LspClient(getServerById('typescript')!, 'C:\\Repo');
+        (client as unknown as { _state: string })._state = 'ready';
+        (client as unknown as { connection: object }).connection = {};
+
+        const ensureDocumentOpen = vi
+            .spyOn(client as unknown as { ensureDocumentOpen: () => Promise<void> }, 'ensureDocumentOpen')
+            .mockResolvedValue(undefined);
+        const doHover = vi
+            .spyOn(client as unknown as { doHover: () => Promise<LspResult> }, 'doHover')
+            .mockResolvedValue({ kind: 'hover', contents: 'ok' });
+
+        const result = await client.query({
+            operation: 'hover',
+            file: 'c:/repo/src/index.ts',
+            line: 1,
+            character: 1,
+        });
+
+        expect(result).toEqual({ kind: 'hover', contents: 'ok' });
+        expect(ensureDocumentOpen).toHaveBeenCalled();
+        expect(doHover).toHaveBeenCalled();
+    });
+
+    it('rejects absolute Windows paths outside the workspace', async () => {
+        const client = new LspClient(getServerById('typescript')!, 'C:\\Repo');
+        (client as unknown as { _state: string })._state = 'ready';
+        (client as unknown as { connection: object }).connection = {};
+
+        await expect(client.query({
+            operation: 'hover',
+            file: 'D:\\other\\index.ts',
+            line: 1,
+            character: 1,
+        })).rejects.toThrow(/path traversal denied/i);
     });
 });
 

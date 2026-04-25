@@ -9,7 +9,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { join, basename, resolve, sep } from 'node:path';
+import { join, basename, resolve } from 'node:path';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
 import { cosineSimilarity } from '../indexing/embedding.js';
@@ -17,6 +17,7 @@ import type { EmbeddingModel } from '../indexing/embedding.js';
 import { bufferToEmbedding } from '../indexing/index-store.js';
 import type { IndexStore, ChunkRecord, SymbolRecord } from '../indexing/index-store.js';
 import type { Indexer } from '../indexing/indexer.js';
+import { isPathWithin } from '../core/path-comparison.js';
 
 // --- Constants ---
 
@@ -130,10 +131,9 @@ async function readSnippet(
     try {
         const fullPath = join(workspaceRoot, relPath);
         const resolvedPath = resolve(fullPath);
-        const resolvedRoot = resolve(workspaceRoot);
 
         // Defense-in-depth: ensure path stays within workspace
-        if (!resolvedPath.startsWith(resolvedRoot + sep)) {
+        if (!isPathWithin(workspaceRoot, resolvedPath)) {
             return `[Lines ${startLine}-${endLine}]`;
         }
 

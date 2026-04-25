@@ -165,6 +165,18 @@ describe('parseEmulatedToolCalls', () => {
         });
     });
 
+    it('preserves valid doubled backslashes while repairing invalid single escapes', () => {
+        const text = String.raw`{"tool_calls":[{"name":"search_text","arguments":{"pattern":"kimi-k2\\.(5|6)|glm-5\\.1","other":"\"id\":\\s*\"foo","note":"bad\-escape"}}]}`;
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(1);
+        expect(JSON.parse(result!.calls[0].arguments)).toEqual({
+            pattern: String.raw`kimi-k2\.(5|6)|glm-5\.1`,
+            other: String.raw`"id":\s*"foo`,
+            note: 'bad-escape',
+        });
+    });
+
     it('parses a single tool call with object arguments', () => {
         const text = '{"tool_calls":[{"name":"read_file","arguments":{"path":"/tmp/foo"}}]}';
         const result = parseEmulatedToolCalls(text);

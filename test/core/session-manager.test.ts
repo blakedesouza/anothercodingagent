@@ -262,6 +262,12 @@ describe('M1.3 — Session Manager', () => {
             const id2 = deriveWorkspaceId('/home/user/other/../project');
             expect(id1).toBe(id2);
         });
+
+        it('should normalize Windows path casing and separators', () => {
+            const id1 = deriveWorkspaceId('C:/Users/Blake/Project');
+            const id2 = deriveWorkspaceId('c:\\users\\blake\\project\\');
+            expect(id1).toBe(id2);
+        });
     });
 
     describe('Loading nonexistent session throws typed error', () => {

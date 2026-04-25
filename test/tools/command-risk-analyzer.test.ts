@@ -8,6 +8,7 @@ import type { ToolContext } from '../../src/tools/tool-registry.js';
 // WORKSPACE is used for analyzeCommand workspace-aware logic tests.
 // It doesn't need to exist on disk — analyzeCommand is a pure function.
 const WORKSPACE = '/home/user/testproject';
+const WINDOWS_WORKSPACE = 'C:\\Users\\test\\project';
 
 // Integration tests that spawn real processes need a real directory.
 const REAL_WORKSPACE = '/tmp';
@@ -176,6 +177,49 @@ describe('rm -rf ./build inside workspace', () => {
     it('returns normal when cwd is inside workspace', () => {
         const result = analyzeCommand('rm -rf ./build', WORKSPACE, undefined, WORKSPACE);
         expect(result.tier).toBe('normal');
+    });
+});
+
+describe('rm -rf node_modules inside Windows workspace', () => {
+    it('returns normal for a Windows descendant cwd with different casing', () => {
+        const result = analyzeCommand(
+            'rm -rf node_modules',
+            'c:\\users\\test\\project\\packages\\app',
+            undefined,
+            WINDOWS_WORKSPACE,
+        );
+        expect(result.tier).toBe('normal');
+    });
+});
+
+describe('rm -rf node_modules at Windows drive root', () => {
+    it('returns high when no workspace root is provided', () => {
+        const result = analyzeCommand('rm -rf node_modules', 'C:\\');
+        expect(result.tier).toBe('high');
+    });
+});
+
+describe('rm -rf quoted roots', () => {
+    it('returns forbidden for quoted POSIX root', () => {
+        const result = analyzeCommand('rm -rf "/"', WORKSPACE, undefined, WORKSPACE);
+        expect(result.tier).toBe('forbidden');
+    });
+
+    it('returns forbidden for quoted Windows root glob inside a workspace', () => {
+        const result = analyzeCommand('rm -rf "C:\\\\*"', WINDOWS_WORKSPACE, undefined, WINDOWS_WORKSPACE);
+        expect(result.tier).toBe('forbidden');
+    });
+});
+
+describe('rm -rf Windows absolute non-root target', () => {
+    it('returns high even when cwd is inside the workspace', () => {
+        const result = analyzeCommand(
+            'rm -rf C:\\Users\\test\\Downloads',
+            WINDOWS_WORKSPACE,
+            undefined,
+            WINDOWS_WORKSPACE,
+        );
+        expect(result.tier).toBe('high');
     });
 });
 

@@ -15,7 +15,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { resolve, sep } from 'node:path';
+import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
     createMessageConnection,
@@ -24,6 +24,7 @@ import {
     type MessageConnection,
 } from 'vscode-jsonrpc';
 import type { LspServerConfig } from './server-registry.js';
+import { isPathWithin, resolvePathWithInputStyle } from '../core/path-comparison.js';
 
 // --- Constants ---
 
@@ -179,9 +180,8 @@ export class LspClient {
         }
 
         // Defense-in-depth: ensure file stays within workspace
-        const resolvedFile = resolve(this.workspaceRoot, params.file);
-        const resolvedRoot = resolve(this.workspaceRoot);
-        if (!resolvedFile.startsWith(resolvedRoot + sep) && resolvedFile !== resolvedRoot) {
+        const resolvedFile = resolvePathWithInputStyle(this.workspaceRoot, params.file);
+        if (!isPathWithin(this.workspaceRoot, resolvedFile)) {
             throw new Error(`Path traversal denied: ${params.file}`);
         }
 
