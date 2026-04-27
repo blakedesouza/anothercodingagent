@@ -16,6 +16,8 @@
     "test:full": "npm run test && npm run test:live",
     "test:live": "vitest run -c vitest.live.config.ts",
     "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm run lint && npm test && npm run build",
     "bakeoff:workflow": "node --import tsx scripts/live-workflow-bakeoff.ts",
     "lint": "eslint src/ test/"
   },

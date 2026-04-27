@@ -7,7 +7,7 @@ Use this before pushing ACA as a public GitHub repository or linking it from a w
 - [ ] Review `git status --short` and commit only intended files.
 - [ ] Confirm no local runtime folders are tracked: `.aca/`, `.claude/`, `.codex`, `.mcp.json`.
 - [ ] Confirm no generated RP artifacts are tracked under the ACA repo.
-- [ ] Run `npx tsc --noEmit`.
+- [ ] Run `npm run typecheck`.
 - [ ] Run `npm run build`.
 - [ ] Run `npm test`.
 - [ ] Run `npm run lint` or document any pre-existing lint failures.

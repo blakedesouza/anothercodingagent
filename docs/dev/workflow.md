@@ -8,14 +8,14 @@ Standard operating procedure for every milestone substep. Current default consul
 ## The Cycle
 
 ```
-1. Read        → Understand requirements from handoff/step doc
-2. Implement   → Write the code
-3. Lint        → tsc --noEmit + ESLint (catch compiler issues before consultation)
-4. Test        → vitest run (all tests must pass)
-5. Consult     → Send implementation to the default witness pair for review
-6. Apply       → Fix consensus findings
-7. Re-test     → Confirm fixes don't break anything
-8. Update      → Mark checkboxes in step file, update current project-state docs, append changelog
+1. Route       → Decide whether this is repo work, `aca consult`, `aca invoke`, or another ACA workflow
+2. Read        → Understand requirements from handoff/step doc, `CONTEXT.md`, and relevant source
+3. Classify    → Name the change class, affected contracts, likely blast radius, and strongest risk
+4. Implement   → Write the smallest complete slice
+5. Validate    → Run focused checks first, then `npm run verify` when the change warrants the full gate
+6. Consult     → Send implementation to the default witness pair for review when logic, types, I/O, safety, or contracts changed
+7. Apply       → Fix grounded findings, then rerun the affected checks
+8. Update      → Mark task docs, update current project-state docs, and append changelog only when project convention expects it
 ```
 
 ## When to Skip Consultation (Step 5)
@@ -40,7 +40,7 @@ Tailor the prompt based on what the substep does:
 | **Logic/State** | State machines, business rules, control flow | Invariant preservation, exhaustive transitions, race conditions, ordering |
 | **Security** | Permissions, exec, sandboxing, secrets | Injection, TOCTOU, privilege escalation, input validation |
 
-Always include the relevant `docs/archive/planning/fundamentals.md` spec block excerpt in the prompt so witnesses can verify semantic correctness (not just syntactic).
+Include bounded evidence with the prompt: relevant spec chunks, source excerpts, changed files, failing output, or an evidence pack. Prefer `docs/spec/` chunks over the monolithic foundation unless the exact archived source block is needed.
 
 ## Milestone Boundaries
 
@@ -55,7 +55,7 @@ Categories that witness-pair consensus can still miss:
 
 | Category | Why | Mitigation |
 |----------|-----|-----------|
-| **Semantic bugs** | Code is correct but solves wrong problem | Include spec excerpts in prompt |
+| **Semantic bugs** | Code is correct but solves wrong problem | Include spec excerpts or an evidence pack in prompt |
 | **Performance** | AI optimizes correctness, not efficiency | Manual review for hot paths |
 | **Integration** | Each substep reviewed in isolation | Milestone integration tests |
 | **Async races** | Happy-path bias in training data | Extra scrutiny on concurrent code |
@@ -64,5 +64,5 @@ Categories that witness-pair consensus can still miss:
 
 - **Opus is the judge, not a vote counter.** Minority positions with stronger evidence override majority.
 - **Track misses.** If a bug is found post-consultation, analyze why witnesses missed it and improve prompts.
-- **Include spec context.** Witnesses can't read project files — inline the relevant spec block.
+- **Include bounded evidence.** Witnesses can request context, but the prompt should still provide the key spec/source/test evidence needed for the review.
 - **Don't skip re-testing.** Consultation fixes can introduce new issues.
