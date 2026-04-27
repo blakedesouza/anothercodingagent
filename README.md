@@ -265,7 +265,7 @@ Example invoke request:
 - Public API compatibility is not guaranteed
 - Model behavior varies by NanoGPT route and model alias — we test across kimi / deepseek / qwen / gemma because any one of them alone is not a proof
 - Broad web / research workflows can still be token-heavy
-- Full repo lint currently has known pre-existing test-only `no-explicit-any` failures — see [Known issues](docs/planning/known-issues.md)
+- Live real-model CLI coverage is opt-in because it depends on NanoGPT keys and current model availability — see [Known issues](docs/planning/known-issues.md)
 
 ---
 
