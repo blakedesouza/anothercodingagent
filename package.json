@@ -13,6 +13,7 @@
     "dev": "node --import tsx src/index.ts",
     "aca:src": "node --import tsx src/index.ts",
     "test": "vitest run",
+    "test:tool-calls": "vitest run test/tools/tool-schema-lint.test.ts test/tools/tool-call-conformance-report.test.ts test/providers/tool-emulation.test.ts test/providers/nanogpt-driver.test.ts test/providers/tool-calling-contract.test.ts test/cli/invoke-output-validation.test.ts",
     "test:full": "npm run test && npm run test:live",
     "test:live": "vitest run -c vitest.live.config.ts",
     "test:watch": "vitest",
@@ -20,6 +21,7 @@
     "verify": "npm run typecheck && npm run lint && npm test && npm run build",
     "bakeoff:workflow": "node --import tsx scripts/live-workflow-bakeoff.ts",
     "probe:native-tools": "node --import tsx scripts/native-tool-probe.ts",
+    "probe:tool-calls": "node --import tsx scripts/tool-call-conformance.ts",
     "lint": "eslint src/ test/"
   },
   "dependencies": {
