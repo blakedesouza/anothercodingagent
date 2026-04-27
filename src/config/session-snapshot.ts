@@ -9,6 +9,13 @@ export interface SessionSnapshotOptions {
     verbose?: boolean;
 }
 
+export type SessionConfigSnapshot = ResolvedConfig & Record<string, unknown> & {
+    workspaceRoot: string;
+    mode?: string;
+    sessionTag?: string;
+    verbose?: boolean;
+};
+
 const DRIFT_BASELINE_KEYS = [
     'model',
     'defaultProvider',
@@ -31,21 +38,15 @@ export function buildEffectiveResolvedConfig(
 export function buildSessionConfigSnapshot(
     config: ResolvedConfig,
     options: SessionSnapshotOptions,
-): Record<string, unknown> {
-    const snapshot = buildEffectiveResolvedConfig(config, options) as Record<string, unknown>;
-    snapshot.workspaceRoot = options.workspaceRoot;
-
-    if (options.mode !== undefined) {
-        snapshot.mode = options.mode;
-    }
-    if (options.sessionTag !== undefined) {
-        snapshot.sessionTag = options.sessionTag;
-    }
-    if (options.verbose !== undefined) {
-        snapshot.verbose = options.verbose;
-    }
-
-    return snapshot;
+): SessionConfigSnapshot {
+    const effective = buildEffectiveResolvedConfig(config, options);
+    return {
+        ...effective,
+        workspaceRoot: options.workspaceRoot,
+        ...(options.mode !== undefined ? { mode: options.mode } : {}),
+        ...(options.sessionTag !== undefined ? { sessionTag: options.sessionTag } : {}),
+        ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
+    };
 }
 
 export function hasConfigDriftBaseline(snapshot: Record<string, unknown>): boolean {

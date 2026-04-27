@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { join, relative } from 'node:path';
+import { join, relative, win32 } from 'node:path';
 
 const execFileAsync = promisify(execFile);
 
@@ -15,6 +15,52 @@ export interface SymbolLocation {
 const COMMON_ENGLISH_WORDS = new Set([
     'JavaScript', 'TypeScript', 'NodeJs', 'GitHub', 'CamelCase', 'PascalCase',
 ]);
+
+function escapeRegexLiteral(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isWindowsPath(value: string): boolean {
+    return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\');
+}
+
+function toPortableRelativePath(projectDir: string, absoluteFile: string): string {
+    const rel = (isWindowsPath(projectDir) || isWindowsPath(absoluteFile))
+        ? win32.relative(projectDir, absoluteFile)
+        : relative(projectDir, absoluteFile);
+    return rel.split(/[\\/]+/).join('/');
+}
+
+export interface ParsedSymbolMatch {
+    file: string;
+    line: number;
+    snippet: string;
+}
+
+/**
+ * Parse an rg/grep match line of the form "{absolutePath}:{line}:{source line}".
+ * Uses the first valid ":<digits>:" separator so Windows drive-letter paths keep working.
+ */
+export function _parseSearchResultLine(
+    line: string,
+    projectDir: string,
+): ParsedSymbolMatch | null {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+
+    const match = /^(.+?):(\d+):(.*)$/.exec(trimmed);
+    if (!match) return null;
+
+    const [, absFile, lineStr, snippetRaw] = match;
+    const lineNum = parseInt(lineStr, 10);
+    if (!Number.isFinite(lineNum) || lineNum < 1) return null;
+
+    return {
+        file: toPortableRelativePath(projectDir, absFile),
+        line: lineNum,
+        snippet: snippetRaw.trim(),
+    };
+}
 
 /**
  * Extracts camelCase and PascalCase identifiers from question text.
@@ -57,10 +103,11 @@ export async function resolveSymbolLocations(
         if (results.length >= 5) break;
 
         // Regex covers all standard TypeScript export forms.
-        // Identifier is camelCase/PascalCase so no regex special chars present.
+        // Escape defensively so direct callers cannot widen the search pattern.
+        const escapedIdentifier = escapeRegexLiteral(identifier);
         const pattern =
-            `export\\s+(async\\s+)?function\\s+${identifier}\\b` +
-            `|export\\s+(const|class|interface|type)\\s+${identifier}\\b`;
+            `export\\s+(async\\s+)?function\\s+${escapedIdentifier}\\b` +
+            `|export\\s+(const|class|interface|type)\\s+${escapedIdentifier}\\b`;
 
         let stdout: string | null = null;
 
@@ -95,23 +142,10 @@ export async function resolveSymbolLocations(
         const firstLine = stdout.split('\n').find(l => l.trim() !== '');
         if (!firstLine) continue;
 
-        // Split at the first two colons: path, line number, rest
-        const colonIdx1 = firstLine.indexOf(':');
-        if (colonIdx1 < 0) continue;
-        const colonIdx2 = firstLine.indexOf(':', colonIdx1 + 1);
-        if (colonIdx2 < 0) continue;
+        const parsed = _parseSearchResultLine(firstLine, projectDir);
+        if (!parsed) continue;
 
-        const absFile = firstLine.slice(0, colonIdx1);
-        const lineStr = firstLine.slice(colonIdx1 + 1, colonIdx2);
-        const snippetRaw = firstLine.slice(colonIdx2 + 1);
-
-        const lineNum = parseInt(lineStr, 10);
-        if (!Number.isFinite(lineNum) || lineNum < 1) continue;
-
-        const relFile = relative(projectDir, absFile);
-        const snippet = snippetRaw.trim();
-
-        results.push({ identifier, file: relFile, line: lineNum, snippet });
+        results.push({ identifier, ...parsed });
     }
 
     return results;

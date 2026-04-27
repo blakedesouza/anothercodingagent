@@ -18,7 +18,7 @@ The monolithic design document. Created through iterative brainstorming, consult
 - **What it is:** The complete spec — every block, every decision, every type definition
 - **How it's made:** Back-and-forth with AI consultation. Expect multiple sessions of drafting, reviewing, consulting witnesses, and revising
 - **Rule:** This is the source of truth. When anything disagrees, this wins
-- **Lesson learned:** Witnesses CANNOT read this file directly — it's 2389 lines / ~80K tokens. Always use the split chunks instead
+- **Lesson learned:** Do not ask witnesses to consume this file directly — it's 2389 lines / ~80K tokens. Use split chunks or bounded evidence packs instead.
 
 ## 2. Spec Chunks (`docs/spec/`)
 
@@ -75,8 +75,8 @@ Created as substeps complete. Everything the next session needs to pick up where
 
 ## Key Lessons
 
-1. **Never let AI witnesses read the monolithic foundation.** Always use spec chunks
+1. **Do not send witnesses the monolithic foundation by default.** Use spec chunks or bounded evidence packs.
 2. **Split at 300 lines.** External AI agents timeout above ~10K tokens
 3. **Foundation first, code last.** The creative design phase takes multiple sessions — don't rush it
-4. **Every substep gets consulted.** 4 AI witnesses review every piece of code before it's finalized
+4. **Consult meaningful code changes.** Use the default witness pair unless the task needs a broader lineup.
 5. **Handoffs preserve context.** Sessions end, context windows clear — handoffs are how you survive that

@@ -1,10 +1,11 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { sanitizeModelJson } from '../providers/tool-emulation.js';
-import { resolve, isAbsolute, relative, join } from 'node:path';
+import { resolve, join } from 'node:path';
 import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
 import { getModelHints } from '../prompts/model-hints.js';
 import { IGNORE_DIRS } from './evidence-pack.js';
 import type { SymbolLocation } from './symbol-lookup.js';
+import { isPathWithin, resolvePathWithInputStyle } from '../core/path-comparison.js';
 
 export interface ContextRequest {
     /** 'file' (default) reads line ranges; 'tree' returns a directory listing. */
@@ -1509,8 +1510,7 @@ function parseLineRange(file: Record<string, unknown>, limits: ContextRequestLim
 }
 
 function isInside(root: string, path: string): boolean {
-    const rel = relative(root, path);
-    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+    return isPathWithin(root, path);
 }
 
 export function fulfillContextRequests(
@@ -1518,10 +1518,10 @@ export function fulfillContextRequests(
     projectDir: string,
     limits: ContextRequestLimits = DEFAULT_CONTEXT_REQUEST_LIMITS,
 ): ContextSnippet[] {
-    const root = resolve(projectDir);
+    const root = resolvePathWithInputStyle(projectDir);
     const snippets: ContextSnippet[] = [];
     for (const request of requests.slice(0, limits.maxSnippets)) {
-        const resolved = resolve(root, request.path);
+        const resolved = resolvePathWithInputStyle(root, request.path);
         if (!isInside(root, resolved)) {
             snippets.push({
                 ...request,

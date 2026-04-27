@@ -19,6 +19,7 @@ Design references:
 - [Implementation steps](steps/): milestone-level engineering history.
 - [Archive](archive/): historical handoffs, reviews, planning notes, and audit workstreams.
 - [Workflow](dev/workflow.md): internal development/review loop.
+- [Tool call conformance](dev/tool-call-conformance.md): native/emulated tool-call contract, local gate, and optional live probe.
 - [Structure](dev/structure.md): how the design docs were split for agent consumption.
 
 Archive notes:

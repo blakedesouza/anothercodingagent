@@ -19,10 +19,12 @@ import { SessionManager } from './core/session-manager.js';
 import { Repl } from './cli/repl.js';
 import {
     buildFinalResultRepairTask,
+    buildCodingCompletionRepairTask,
     buildProfileCompletionRepairTask,
     buildRequiredOutputRepairTask,
     countHardRejectedToolCalls,
     validateFinalResultText,
+    validateCodingCompletion,
     validateProfileCompletion,
     validateRequiredOutputPaths,
 } from './cli/invoke-output-validation.js';
@@ -2122,7 +2124,7 @@ program
             maxInputTokens: request.constraints?.max_input_tokens,
             maxRepeatedReadCalls: request.constraints?.max_repeated_read_calls,
             maxTotalTokens: request.constraints?.max_total_tokens,
-            temperature: contextTemperature,
+            temperature: contextTemperature ?? config.model.temperature,
             topP: contextTopP,
             thinking: contextThinking,
             responseFormat: contextResponseFormat,
@@ -2201,7 +2203,13 @@ program
         }> => {
             const firstResult = await runInvokeTurn(task, existingItems, configOverride);
             const firstItems = [...existingItems, ...firstResult.items];
-            if (!shouldRetryRpAbort(contextProfile, firstResult)) {
+            const shouldRetryFlashAbort = effectiveModel === 'deepseek/deepseek-v4-flash'
+                && firstResult.turn.outcome === 'aborted'
+                && (
+                    firstResult.lastError?.code === 'llm.malformed'
+                    || firstResult.lastError?.code === 'llm.server_error'
+                );
+            if (!shouldRetryRpAbort(contextProfile, firstResult) && !shouldRetryFlashAbort) {
                 return {
                     finalResult: firstResult,
                     allResults: [firstResult],
@@ -2288,6 +2296,35 @@ program
                 turnResults.push(...outputRepairRun.allResults);
                 conversationItems = outputRepairRun.allItems;
                 missingRequiredOutputs = validateRequiredOutputPaths(cwd, request.constraints?.required_output_paths);
+            }
+
+            const initialCodingCompletionIssue = validateCodingCompletion(
+                request.task,
+                effectiveAllowedTools,
+                conversationItems,
+            );
+            const canRepairCodingCompletion = initialCodingCompletionIssue !== null
+                && turnResult.turn.outcome === 'assistant_final'
+                && effectiveAllowedTools.length > 0;
+
+            if (canRepairCodingCompletion) {
+                const repairTurnConfig: TurnEngineConfig = {
+                    ...baseTurnConfig,
+                    ...buildRpRepairTurnConfig(request.constraints),
+                    allowedTools: effectiveAllowedTools.filter(name =>
+                        name === 'edit_file'
+                        || name === 'write_file'
+                        || name === 'exec_command',
+                    ),
+                };
+                const codingRepairRun = await runInvokeTurnWithRpRetry(
+                    buildCodingCompletionRepairTask(initialCodingCompletionIssue),
+                    conversationItems,
+                    repairTurnConfig,
+                );
+                turnResult = codingRepairRun.finalResult;
+                turnResults.push(...codingRepairRun.allResults);
+                conversationItems = codingRepairRun.allItems;
             }
 
             const initialFinalResultIssue = validateFinalResultText(extractAssistantText(turnResult.items));
@@ -2441,6 +2478,24 @@ program
                 buildErrorResponse(
                     profileCompletionIssue.code,
                     profileCompletionIssue.message,
+                    true,
+                    safety,
+                    {
+                        input_tokens: totalInputTokens,
+                        output_tokens: totalOutputTokens,
+                        cost_usd: 0,
+                    },
+                ),
+            ) + '\n');
+            process.exit(EXIT_RUNTIME);
+        }
+
+        const codingCompletionIssue = validateCodingCompletion(request.task, effectiveAllowedTools, conversationItems);
+        if (codingCompletionIssue) {
+            process.stdout.write(JSON.stringify(
+                buildErrorResponse(
+                    codingCompletionIssue.code,
+                    codingCompletionIssue.message,
                     true,
                     safety,
                     {

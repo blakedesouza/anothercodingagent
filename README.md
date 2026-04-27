@@ -23,7 +23,7 @@ The design bet: safety should come from a real sandbox and a wall-clock deadline
 
 ## What Works Today
 
-All milestones M1–M11 are complete. The current default validation surface passes `npm test` and `npm run build` on the supported Node 20 runtime.
+All milestones M1–M11 are complete. The current default validation surface passes `npm run verify` on the supported Node 20 runtime.
 
 ### Core agent loop
 - JSONL conversation log, session manager with resume
@@ -120,7 +120,13 @@ npm test
 Typecheck:
 
 ```bash
-npx tsc --noEmit
+npm run typecheck
+```
+
+Run the standard local verification gate:
+
+```bash
+npm run verify
 ```
 
 ## Configuration

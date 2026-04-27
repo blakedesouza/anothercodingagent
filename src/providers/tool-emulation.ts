@@ -1,6 +1,7 @@
 import type { ModelRequest, RequestMessage, ToolDefinition, StreamEvent } from '../types/provider.js';
 import { NO_NATIVE_FUNCTION_CALLING, NO_PROTOCOL_DELIBERATION } from '../prompts/prompt-guardrails.js';
 import { getModelHints } from '../prompts/model-hints.js';
+import { normalizeToolArguments } from '../tools/tool-argument-normalizer.js';
 
 /**
  * A parsed emulated tool call (arguments stored as a JSON string, matching
@@ -119,9 +120,48 @@ export function injectToolsIntoRequest(request: ModelRequest): ModelRequest {
  * Valid escape sequences are left untouched.
  */
 export function sanitizeModelJson(text: string): string {
-    // Match backslash NOT followed by a valid JSON escape character.
-    // Valid: " \ / b f n r t u
-    return text.replace(/\\([^"\\\/bfnrtu])/g, '$1');
+    let output = '';
+    let inString = false;
+
+    for (let index = 0; index < text.length; index += 1) {
+        const char = text[index];
+
+        if (!inString) {
+            output += char;
+            if (char === '"') {
+                inString = true;
+            }
+            continue;
+        }
+
+        if (char === '\\') {
+            const next = text[index + 1];
+            if (next === undefined) {
+                output += char;
+                continue;
+            }
+
+            // Preserve valid JSON escapes and doubled backslashes exactly as-is.
+            if ('"\\/bfnrtu'.includes(next) || next === '\\') {
+                output += char + next;
+                index += 1;
+                continue;
+            }
+
+            // Invalid single escape emitted by the model (for example \- or \.).
+            // Drop only the stray backslash and keep the literal character.
+            output += next;
+            index += 1;
+            continue;
+        }
+
+        output += char;
+        if (char === '"') {
+            inString = false;
+        }
+    }
+
+    return output;
 }
 
 /** Result of parsing emulated tool calls, including the preamble text before the JSON block. */
@@ -149,6 +189,7 @@ export function parseEmulatedToolCalls(text: string): EmulatedToolCallResult | n
 function parseToolCallPayload(text: string): EmulatedToolCallResult | null {
     return parseStructuredJsonToolCalls(text)
         ?? parseWrappedJsonToolCalls(text)
+        ?? parseBracketToolUseCall(text)
         ?? parseArgTagToolCall(text)
         ?? parseInvokeTagToolCall(text)
         ?? parseFunctionTagToolCall(text);
@@ -274,11 +315,45 @@ function parseSingleToolCallObject(candidate: string): EmulatedToolCall | null {
 
 function toEmulatedToolCall(value: { name?: unknown; arguments?: unknown }): EmulatedToolCall | null {
     if (typeof value.name !== 'string' || value.name.trim() === '') return null;
+    const name = value.name;
+    const normalizedArgs = typeof value.arguments === 'string'
+        ? value.arguments
+        : JSON.stringify(normalizeToolArguments(name, value.arguments ?? {}));
     return {
-        name: value.name,
-        arguments: typeof value.arguments === 'string'
-            ? value.arguments
-            : JSON.stringify(value.arguments ?? {}),
+        name,
+        arguments: normalizedArgs,
+    };
+}
+
+function parseBracketToolUseCall(text: string): EmulatedToolCallResult | null {
+    const calls: EmulatedToolCall[] = [];
+    let firstIndex: number | undefined;
+    const prefixRe = /\[\s*tool_use\s*:\s*([A-Za-z0-9_.-]+)\s*,\s*input\s*:/gi;
+    let match: RegExpExecArray | null;
+    while ((match = prefixRe.exec(text)) !== null) {
+        const name = match[1]?.trim();
+        if (!name) continue;
+        const objectStart = text.indexOf('{', prefixRe.lastIndex);
+        if (objectStart === -1) continue;
+        const objectEnd = findMatchingObjectEnd(text, objectStart);
+        if (objectEnd === -1) continue;
+        const closeIndex = text.indexOf(']', objectEnd);
+        if (closeIndex === -1) continue;
+
+        try {
+            const args = JSON.parse(sanitizeModelJson(text.slice(objectStart, objectEnd))) as Record<string, unknown>;
+            calls.push({ name, arguments: JSON.stringify(normalizeToolArguments(name, args)) });
+            firstIndex ??= match.index;
+            prefixRe.lastIndex = closeIndex + 1;
+        } catch {
+            continue;
+        }
+    }
+    if (calls.length === 0 || firstIndex === undefined) return null;
+
+    return {
+        calls,
+        preamble: text.slice(0, firstIndex).trim(),
     };
 }
 
@@ -305,7 +380,7 @@ function parseArgTagToolCall(text: string): EmulatedToolCallResult | null {
 
 function parseInvokeTagToolCall(text: string): EmulatedToolCallResult | null {
     const matches = [...text.matchAll(
-        /<(?:[\w-]+:)?invoke\b[^>]*\bname=(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))[^>]*>\s*([\s\S]*?)\s*<\/(?:[\w-]+:)?invoke>/gi,
+        /<[^\s>]*invoke\b[^>]*\bname=(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))[^>]*>\s*([\s\S]*?)\s*<\/[^\s>]*invoke>/gi,
     )];
     if (matches.length === 0) return null;
 
@@ -314,13 +389,16 @@ function parseInvokeTagToolCall(text: string): EmulatedToolCallResult | null {
         if (!name) return null;
         const args = extractParameterArguments(match[4] ?? '');
         if (!args) return null;
-        return { name, arguments: JSON.stringify(args) };
+        return { name, arguments: JSON.stringify(normalizeToolArguments(name, args)) };
     }).filter((call): call is EmulatedToolCall => call !== null);
     if (calls.length === 0) return null;
 
     return {
         calls,
-        preamble: text.slice(0, matches[0]?.index ?? 0).replace(/<(?:[\w-]+:)?tool_call>\s*$/i, '').trim(),
+        preamble: text.slice(0, matches[0]?.index ?? 0)
+            .replace(/<[^>\s]*tool_calls>\s*$/i, '')
+            .replace(/<[^>\s]*tool_call>\s*$/i, '')
+            .trim(),
     };
 }
 
@@ -347,7 +425,7 @@ function extractParameterArguments(text: string): Record<string, unknown> | null
     const args: Record<string, unknown> = {};
     let matched = false;
     for (const match of text.matchAll(
-        /<parameter(?:=([A-Za-z0-9_.-]+)|\s+name=(?:"([^"]+)"|'([^']+)'))>\s*([\s\S]*?)\s*<\/parameter>/gi,
+        /<[^\s>]*parameter(?:=([A-Za-z0-9_.-]+)|\b[^>]*\sname=(?:"([^"]+)"|'([^']+)'))[^>]*>\s*([\s\S]*?)\s*<\/[^\s>]*parameter>/gi,
     )) {
         const key = match[1]?.trim() || match[2]?.trim() || match[3]?.trim() || '';
         if (!key) continue;

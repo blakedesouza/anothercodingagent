@@ -1,21 +1,22 @@
 import { existsSync, statSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolutePath, isPathWithin, resolvePathWithInputStyle } from '../core/path-comparison.js';
 import { parseEmulatedToolCalls } from '../providers/tool-emulation.js';
 import type { ConversationItem } from '../types/conversation.js';
 
 function isWithinDirectory(parent: string, child: string): boolean {
-    const rel = relative(parent, child);
-    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+    return isPathWithin(parent, child);
 }
 
 export function validateRequiredOutputPaths(workspaceRoot: string, paths: readonly string[] | undefined): string[] {
     if (!paths || paths.length === 0) return [];
-    const root = resolve(workspaceRoot);
+    const root = resolvePathWithInputStyle(workspaceRoot);
     const missingOrEmpty: string[] = [];
     for (const rawPath of paths) {
         const trimmed = rawPath.trim();
         if (!trimmed) continue;
-        const fullPath = isAbsolute(trimmed) ? resolve(trimmed) : resolve(root, trimmed);
+        const fullPath = isAbsolutePath(trimmed)
+            ? resolvePathWithInputStyle(trimmed)
+            : resolvePathWithInputStyle(root, trimmed);
         if (!isWithinDirectory(root, fullPath)) {
             missingOrEmpty.push(trimmed);
             continue;
@@ -75,18 +76,39 @@ export function buildProfileCompletionRepairTask(
     ].join(' ');
 }
 
-const FINAL_RESULT_PSEUDO_TOOL_PREFIX = /^(?:```(?:json|javascript)?\s*)?(?:\{\s*"tool_calls"\s*:|\[\s*\{\s*"name"\s*:|<\s*(?:[\w-]+:)?(?:tool_call|function_calls?|call)\b|<\s*invoke\b|<\s*parameter\b|<\s*arg_(?:key|value)\b|\[\s*TOOL_CALL\s*\])/i;
+const FINAL_RESULT_PSEUDO_TOOL_PREFIX = /^(?:```(?:json|javascript)?\s*)?(?:\{\s*"tool_calls"\s*:|\[\s*\{\s*"name"\s*:|<\s*(?:[\w-]+:)?(?:tool_call|function_calls?|call)\b|<\s*invoke\b|<\s*parameter\b|<\s*arg_(?:key|value)\b|\[\s*(?:TOOL_CALL|tool_use\s*:)\s*)/i;
+const FINAL_RESULT_PSEUDO_TOOL_ANYWHERE = /(?:\{\s*"tool_calls"\s*:|\[\s*tool_use\s*:|\[\s*调用\s+[\w-]+\]|(?:^|\n)\s*(?:Tool|Arguments):\s*)/i;
 const FINAL_RESULT_TOOL_INTENT = /^(?:i(?:'ll| will| can| need(?: to)?| should| am going to)|let me|next|now|first|to continue|continuing|using(?: a)? tool|calling(?: a)? tool)\b/i;
+const FINAL_RESULT_UNRESOLVED_TOOL_INTENT = /^(?:i(?:'ll| will| can| need(?: to)?| should| am going to)|let me|next|now|first)\b.{0,240}\b(?:tool|read|inspect|edit|fix|run|test|check|gather|context|project|source)\b/i;
 const FINAL_RESULT_EXPLANATORY = /\b(example|invalid|literal|quoted|string|markup|json|schema|protocol|field|property|parser|response|output|emitted|returned|contains?)\b/i;
 
 export function validateFinalResultText(resultText: string): ProfileCompletionIssue | null {
     const trimmed = resultText.trim();
-    if (!trimmed) return null;
+    if (!trimmed) {
+        return {
+            code: 'turn.output_validation_failed',
+            message: 'final response was empty instead of a completed outcome',
+        };
+    }
 
     if (FINAL_RESULT_PSEUDO_TOOL_PREFIX.test(trimmed)) {
         return {
             code: 'turn.output_validation_failed',
             message: 'final response leaked raw tool-call-shaped text instead of a plain-language completion',
+        };
+    }
+
+    if (FINAL_RESULT_PSEUDO_TOOL_ANYWHERE.test(trimmed) && !FINAL_RESULT_EXPLANATORY.test(trimmed)) {
+        return {
+            code: 'turn.output_validation_failed',
+            message: 'final response leaked embedded tool-call-shaped text instead of executing the tool call',
+        };
+    }
+
+    if (FINAL_RESULT_UNRESOLVED_TOOL_INTENT.test(trimmed)) {
+        return {
+            code: 'turn.output_validation_failed',
+            message: 'final response ended with unresolved tool-use intent instead of a completed outcome',
         };
     }
 
@@ -119,12 +141,57 @@ export function buildFinalResultRepairTask(issue: ProfileCompletionIssue): strin
     return [
         `Your previous final response was invalid: ${issue.message}.`,
         'Continue from the existing context.',
-        'Do not restate your plan, narrate more tool use, or ask to call a tool.',
-        'Do not emit raw tool-call JSON, XML/function markup, or quoted pseudo-tool-call text.',
-        'Unless a specific missing fact truly blocks the answer, do not call any more tools.',
-        'Write a brief plain-language final answer that states the concrete outcome of the work already completed.',
+        'If the task is not fully completed and verified, make the next required tool call immediately in this response.',
+        'Do not narrate planned tool use, ask to call a tool, or stop after saying what you will do.',
+        'Do not emit raw tool-call JSON, XML/function markup, or quoted pseudo-tool-call text; use the real tool-call channel when tools are needed.',
+        'If the work is already complete and verified, write a brief plain-language final answer that states the concrete outcome.',
         'If files were written, mention the path(s) plainly. If code changed, summarize the fix plainly.',
-        'Stop after the final answer.',
+    ].join(' ');
+}
+
+const CODE_MUTATION_TOOLS = new Set(['edit_file', 'write_file', 'move_path', 'delete_path']);
+const CODE_FIX_INTENT = /\b(?:fix|patch|repair|modify|edit|change|update|implement|resolve|failing|failure|bug|regression)\b/i;
+const ADVISORY_INTENT = /\b(?:explain|describe|suggest|recommend|plan|review|how would|what would|tell me)\b/i;
+
+export function countFilesystemMutations(items: readonly ConversationItem[]): number {
+    return items.filter((item) =>
+        item.kind === 'tool_result'
+        && item.output.status === 'success'
+        && (
+            item.output.mutationState === 'filesystem'
+            || CODE_MUTATION_TOOLS.has(item.toolName)
+        ),
+    ).length;
+}
+
+export function validateCodingCompletion(
+    task: string,
+    allowedTools: readonly string[],
+    items: readonly ConversationItem[],
+): ProfileCompletionIssue | null {
+    const wantsCodeChange = CODE_FIX_INTENT.test(task) && !ADVISORY_INTENT.test(task);
+    if (!wantsCodeChange) return null;
+
+    const canEdit = allowedTools.some(tool => CODE_MUTATION_TOOLS.has(tool));
+    if (!canEdit) return null;
+
+    if (countFilesystemMutations(items) > 0) return null;
+
+    return {
+        code: 'turn.coding_completion_failed',
+        message: 'coding task ended without any filesystem mutation; diagnosis-only text is not a completed fix',
+    };
+}
+
+export function buildCodingCompletionRepairTask(issue: ProfileCompletionIssue): string {
+    return [
+        `Your previous final response was invalid: ${issue.message}.`,
+        'Continue from the existing context.',
+        'The task asks for an actual code change, not advice.',
+        'Do not restate the diagnosis or explain the intended patch as final output.',
+        'Make the minimal required filesystem edit now using edit_file or write_file.',
+        'Then run the requested validation command if one was requested.',
+        'Only finish after the file has been changed and validation has been run or clearly could not be run.',
     ].join(' ');
 }
 

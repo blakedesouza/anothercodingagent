@@ -284,7 +284,7 @@ const METHOD_LANGUAGE_GUIDANCE: readonly MethodCatalogLanguageGuidance[] = Objec
     },
     {
         trigger_examples: ['fix ACA', 'work on ACA', 'audit ACA', 'ACA CLI', 'fix ACA consult'],
-        interpretation: 'Modify or review the ACA repository/codebase itself, not an ACA workflow subcommand.',
+        interpretation: 'Modify or review the ACA repository/codebase itself, not an ACA workflow subcommand. For audits, start with docs/dev/audit-workflow.md.',
         route_kind: 'repo_work',
     },
     {

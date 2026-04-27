@@ -217,6 +217,24 @@ describe('FileActivityIndex', () => {
             expect(index.getEntry('src/a.ts')?.score).toBe(15);
             expect(index.getEntry('/repo/src/a.ts')).toBeUndefined();
         });
+
+        it('normalizes Windows search results and tool args to one portable key', () => {
+            index = new FileActivityIndex(undefined, 'C:\\Repo');
+
+            const searchTurn = makeToolTurn('search_text', { root: 'C:\\Repo\\src', pattern: 'foo' }, JSON.stringify({
+                matches: [
+                    { file: 'c:\\repo\\src\\a.ts', line: 1, content: 'foo' },
+                ],
+                truncated: false,
+            }));
+            index.processTurn(searchTurn);
+
+            const readTurn = makeToolTurn('read_file', { path: 'src\\a.ts' }, 'contents');
+            index.processTurn(readTurn);
+
+            expect(index.getEntry('src/a.ts')?.score).toBe(15);
+            expect(index.getEntry('src\\a.ts')).toBeUndefined();
+        });
     });
 
     describe('decay', () => {

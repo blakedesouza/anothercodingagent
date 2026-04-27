@@ -40,7 +40,7 @@ interface BakeoffCase {
 
 interface ParsedArgs {
     models: string[];
-    suite: 'basic' | 'aca-native' | 'aca-hard' | 'all';
+    suite: 'basic' | 'aca-native' | 'aca-hard' | 'stress' | 'all';
     outDir: string;
     concurrency: number;
 }
@@ -95,7 +95,13 @@ function parseArgs(argv: string[]): ParsedArgs {
             index += 1;
         } else if (arg === '--suite') {
             const value = argv[index + 1];
-            if (value === 'basic' || value === 'aca-native' || value === 'aca-hard' || value === 'all') {
+            if (
+                value === 'basic'
+                || value === 'aca-native'
+                || value === 'aca-hard'
+                || value === 'stress'
+                || value === 'all'
+            ) {
                 options.suite = value;
             }
             index += 1;
@@ -113,7 +119,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 
 Options:
   --models <list>       Comma-separated model IDs
-  --suite <name>        basic | aca-native | aca-hard | all (default: aca-native)
+  --suite <name>        basic | aca-native | aca-hard | stress | all (default: aca-native)
   --out-dir <path>      Output directory for JSON results
   --concurrency <n>     Parallel invoke slots (default: 3, max: 3)
 `);
@@ -1144,14 +1150,488 @@ test('unknown handles still return tool.not_found', () => {
     ];
 }
 
+function stressTasks(): FixtureTask[] {
+    return [
+        {
+            id: 'state-roundtrip-hard',
+            prompt: [
+                'Fix the persisted task-state roundtrip bug in this small Node project.',
+                'Counters and message sequence numbers must keep increasing after save/load/resume.',
+                'IDs and sequence numbers must stay unique across the second run.',
+                'Keep the patch minimal, do not modify the tests, run `node --test`, and reply with a short summary.',
+            ].join(' '),
+            files: {
+                'package.json': JSON.stringify({
+                    name: 'state-roundtrip-hard-fixture',
+                    type: 'module',
+                    private: true,
+                    scripts: { test: 'node --test' },
+                }, null, 2) + '\n',
+                'src/state.js': `export function createInitialState() {
+    return {
+        turns: [],
+        nextTurn: 1,
+        nextMessageSeq: 1,
+    };
+}
+
+export function appendTurn(state, { role, content }) {
+    const turn = {
+        id: 'turn_' + state.nextTurn,
+        messages: [
+            {
+                seq: state.nextMessageSeq,
+                role,
+                content,
+            },
+        ],
+    };
+
+    return {
+        ...state,
+        turns: [...state.turns, turn],
+        nextTurn: state.nextTurn + 1,
+        nextMessageSeq: state.nextMessageSeq + 1,
+    };
+}
+
+export function serializeState(state) {
+    return JSON.stringify({ turns: state.turns }, null, 2);
+}
+
+export function loadState(raw) {
+    const parsed = JSON.parse(raw);
+    return {
+        turns: parsed.turns ?? [],
+        nextTurn: 1,
+        nextMessageSeq: 1,
+    };
+}
+`,
+                'test/state.test.js': `import test from 'node:test';
+import assert from 'node:assert/strict';
+import { appendTurn, createInitialState, loadState, serializeState } from '../src/state.js';
+
+test('save/load/resume keeps turn ids and message seq values unique', () => {
+    let state = createInitialState();
+    state = appendTurn(state, { role: 'user', content: 'first' });
+    state = appendTurn(state, { role: 'assistant', content: 'second' });
+
+    const resumed = loadState(serializeState(state));
+    const afterResume = appendTurn(resumed, { role: 'user', content: 'third' });
+
+    assert.deepEqual(afterResume.turns.map(turn => turn.id), ['turn_1', 'turn_2', 'turn_3']);
+    assert.deepEqual(afterResume.turns.flatMap(turn => turn.messages.map(message => message.seq)), [1, 2, 3]);
+    assert.equal(afterResume.nextTurn, 4);
+    assert.equal(afterResume.nextMessageSeq, 4);
+});
+
+test('legacy empty snapshots still resume from the first ids', () => {
+    const state = loadState(JSON.stringify({ turns: [] }));
+    const afterResume = appendTurn(state, { role: 'user', content: 'hello' });
+
+    assert.equal(afterResume.turns[0].id, 'turn_1');
+    assert.equal(afterResume.turns[0].messages[0].seq, 1);
+});
+`,
+            },
+        },
+        {
+            id: 'tool-event-roundtrip-hard',
+            prompt: [
+                'Fix the tool-event persistence roundtrip bug in this small Node project.',
+                'Persisted native tool events must keep one canonical id, preserve parsed arguments, and rebuild valid assistant/tool history.',
+                'Keep the patch minimal, do not modify the tests, run `node --test`, and reply with a short summary.',
+            ].join(' '),
+            files: {
+                'package.json': JSON.stringify({
+                    name: 'tool-event-roundtrip-hard-fixture',
+                    type: 'module',
+                    private: true,
+                    scripts: { test: 'node --test' },
+                }, null, 2) + '\n',
+                'src/tool-events.js': `export function persistNativeToolCall(call) {
+    return {
+        type: 'tool_call',
+        name: call.function.name,
+        arguments: call.function.arguments,
+    };
+}
+
+export function rebuildAssistantMessage(events) {
+    return {
+        role: 'assistant',
+        content: '',
+        tool_calls: events.map(event => ({
+            id: event.id,
+            type: 'function',
+            function: {
+                name: event.name,
+                arguments: event.arguments,
+            },
+        })),
+    };
+}
+
+export function rebuildToolResultMessage(event) {
+    return {
+        role: 'tool',
+        tool_call_id: event.toolCallId,
+        content: JSON.stringify(event.result),
+    };
+}
+`,
+                'test/tool-events.test.js': `import test from 'node:test';
+import assert from 'node:assert/strict';
+import { persistNativeToolCall, rebuildAssistantMessage, rebuildToolResultMessage } from '../src/tool-events.js';
+
+test('native tool calls persist id, name, and parsed arguments', () => {
+    const event = persistNativeToolCall({
+        id: 'call_123',
+        type: 'function',
+        function: {
+            name: 'edit_file',
+            arguments: '{"path":"src/a.js","edits":[{"search":"old","replace":"new"}]}',
+        },
+    });
+
+    assert.equal(event.id, 'call_123');
+    assert.equal(event.name, 'edit_file');
+    assert.deepEqual(event.arguments, {
+        path: 'src/a.js',
+        edits: [{ search: 'old', replace: 'new' }],
+    });
+});
+
+test('assistant history rebuilds with content null when only native tool calls exist', () => {
+    const message = rebuildAssistantMessage([
+        {
+            id: 'call_123',
+            name: 'read_file',
+            arguments: { path: 'src/a.js' },
+        },
+    ]);
+
+    assert.equal(message.role, 'assistant');
+    assert.equal(message.content, null);
+    assert.equal(message.tool_calls[0].id, 'call_123');
+    assert.equal(message.tool_calls[0].function.arguments, '{"path":"src/a.js"}');
+});
+
+test('tool result history uses the same canonical call id', () => {
+    const message = rebuildToolResultMessage({
+        id: 'evt_1',
+        toolCallId: 'call_123',
+        result: { status: 'success', content: 'ok' },
+    });
+
+    assert.equal(message.role, 'tool');
+    assert.equal(message.tool_call_id, 'call_123');
+    assert.match(message.content, /success/);
+});
+`,
+            },
+        },
+        {
+            id: 'derived-transcript-hard',
+            prompt: [
+                'Fix the derived transcript builder in this small Node project.',
+                'When an assistant event contains native tool calls, transcript text must ignore stray model prose but keep the tool calls.',
+                'Pure assistant text must still be preserved.',
+                'Keep the patch minimal, do not modify the tests, run `node --test`, and reply with a short summary.',
+            ].join(' '),
+            files: {
+                'package.json': JSON.stringify({
+                    name: 'derived-transcript-hard-fixture',
+                    type: 'module',
+                    private: true,
+                    scripts: { test: 'node --test' },
+                }, null, 2) + '\n',
+                'src/transcript.js': `export function buildTranscript(events) {
+    const messages = [];
+    for (const event of events) {
+        if (event.type === 'assistant') {
+            messages.push({
+                role: 'assistant',
+                content: event.content ?? '',
+                tool_calls: event.toolCalls ?? [],
+            });
+        } else if (event.type === 'tool_result') {
+            messages.push({
+                role: 'tool',
+                tool_call_id: event.toolCallId,
+                content: JSON.stringify(event.result),
+            });
+        } else if (event.type === 'user') {
+            messages.push({ role: 'user', content: event.content });
+        }
+    }
+    return messages;
+}
+
+export function visibleText(messages) {
+    return messages
+        .filter(message => message.role !== 'tool')
+        .map(message => message.content ?? '')
+        .join('\\n')
+        .trim();
+}
+`,
+                'test/transcript.test.js': `import test from 'node:test';
+import assert from 'node:assert/strict';
+import { buildTranscript, visibleText } from '../src/transcript.js';
+
+test('native tool-call assistant events drop stray prose but keep tool calls', () => {
+    const transcript = buildTranscript([
+        { type: 'user', content: 'read package' },
+        {
+            type: 'assistant',
+            content: 'I will inspect it now.',
+            toolCalls: [
+                {
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'read_file', arguments: '{"path":"package.json"}' },
+                },
+            ],
+        },
+        { type: 'tool_result', toolCallId: 'call_1', result: { status: 'success', content: '{}' } },
+    ]);
+
+    assert.equal(transcript[1].content, null);
+    assert.equal(transcript[1].tool_calls[0].id, 'call_1');
+    assert.equal(visibleText(transcript), 'read package');
+});
+
+test('plain assistant text without tool calls is preserved', () => {
+    const transcript = buildTranscript([
+        { type: 'assistant', content: 'Done.' },
+    ]);
+
+    assert.equal(transcript[0].content, 'Done.');
+    assert.equal(visibleText(transcript), 'Done.');
+});
+`,
+            },
+        },
+        {
+            id: 'disk-atomic-save-hard',
+            prompt: [
+                'Fix the atomic JSON save helper in this small Node project.',
+                'It must write a temp file, rename it into place, and clean the temp file on write or rename failure.',
+                'It must never write directly to the final path.',
+                'Keep the patch minimal, do not modify the tests, run `node --test`, and reply with a short summary.',
+            ].join(' '),
+            files: {
+                'package.json': JSON.stringify({
+                    name: 'disk-atomic-save-hard-fixture',
+                    type: 'module',
+                    private: true,
+                    scripts: { test: 'node --test' },
+                }, null, 2) + '\n',
+                'src/atomic-json.js': `import { writeFileSync } from 'node:fs';
+
+export function saveJsonAtomic(path, value, fs = { writeFileSync }) {
+    writeFileSync(path, JSON.stringify(value, null, 2) + '\\n', 'utf8');
+}
+`,
+                'test/atomic-json.test.js': `import test from 'node:test';
+import assert from 'node:assert/strict';
+import { saveJsonAtomic } from '../src/atomic-json.js';
+
+function makeFs({ failWrite = false, failRename = false } = {}) {
+    const calls = [];
+    return {
+        calls,
+        writeFileSync(path, content, encoding) {
+            calls.push(['write', path, content, encoding]);
+            if (failWrite) throw new Error('write failed');
+        },
+        renameSync(from, to) {
+            calls.push(['rename', from, to]);
+            if (failRename) throw new Error('rename failed');
+        },
+        rmSync(path, options) {
+            calls.push(['rm', path, options?.force === true]);
+        },
+    };
+}
+
+test('writes temp file then renames into the final path', () => {
+    const fs = makeFs();
+    saveJsonAtomic('/sessions/ses_1/manifest.json', { ok: true }, fs);
+
+    assert.equal(fs.calls[0][0], 'write');
+    assert.match(fs.calls[0][1], /manifest\\.json\\.tmp-/);
+    assert.notEqual(fs.calls[0][1], '/sessions/ses_1/manifest.json');
+    assert.deepEqual(fs.calls[1].slice(0, 3), ['rename', fs.calls[0][1], '/sessions/ses_1/manifest.json']);
+});
+
+test('cleans temp file when writing fails', () => {
+    const fs = makeFs({ failWrite: true });
+    assert.throws(() => saveJsonAtomic('/x/manifest.json', { ok: true }, fs), /write failed/);
+
+    assert.equal(fs.calls.at(-1)[0], 'rm');
+    assert.match(fs.calls.at(-1)[1], /manifest\\.json\\.tmp-/);
+});
+
+test('cleans temp file when rename fails', () => {
+    const fs = makeFs({ failRename: true });
+    assert.throws(() => saveJsonAtomic('/x/manifest.json', { ok: true }, fs), /rename failed/);
+
+    assert.equal(fs.calls.at(-1)[0], 'rm');
+    assert.match(fs.calls.at(-1)[1], /manifest\\.json\\.tmp-/);
+});
+`,
+            },
+        },
+        {
+            id: 'disk-project-walk-hard',
+            prompt: [
+                'Fix the project file walker in this small Node project.',
+                'It must skip .git and node_modules, avoid following directory symlinks, and return stable sorted relative file paths.',
+                'Keep the patch minimal, do not modify the tests, run `node --test`, and reply with a short summary.',
+            ].join(' '),
+            files: {
+                'package.json': JSON.stringify({
+                    name: 'disk-project-walk-hard-fixture',
+                    type: 'module',
+                    private: true,
+                    scripts: { test: 'node --test' },
+                }, null, 2) + '\n',
+                'src/walk.js': `import { readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+
+export function collectProjectFiles(root) {
+    const results = [];
+
+    function visit(dir) {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+            const path = join(dir, entry.name);
+            if (entry.isDirectory()) {
+                visit(path);
+            } else if (statSync(path).isFile()) {
+                results.push(relative(root, path).replaceAll('\\\\', '/'));
+            }
+        }
+    }
+
+    visit(root);
+    return results;
+}
+`,
+                'test/walk.test.js': `import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { collectProjectFiles } from '../src/walk.js';
+
+test('collects stable project files while skipping ignored and symlinked directories', () => {
+    const root = join(tmpdir(), 'walk-hard-' + Date.now());
+    mkdirSync(join(root, 'src'), { recursive: true });
+    mkdirSync(join(root, 'node_modules', 'pkg'), { recursive: true });
+    mkdirSync(join(root, '.git', 'objects'), { recursive: true });
+    mkdirSync(join(root, 'linked-target'), { recursive: true });
+    writeFileSync(join(root, 'src', 'b.js'), '');
+    writeFileSync(join(root, 'src', 'a.js'), '');
+    writeFileSync(join(root, 'node_modules', 'pkg', 'index.js'), '');
+    writeFileSync(join(root, '.git', 'config'), '');
+    writeFileSync(join(root, 'linked-target', 'secret.js'), '');
+
+    try {
+        symlinkSync(join(root, 'linked-target'), join(root, 'src', 'linked'), 'dir');
+        assert.deepEqual(collectProjectFiles(root), ['linked-target/secret.js', 'src/a.js', 'src/b.js']);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+`,
+            },
+        },
+        {
+            id: 'disk-content-store-hard',
+            prompt: [
+                'Fix the content-addressed blob store in this small Node project.',
+                'Blobs must be stored by sha256 digest, duplicate writes must reuse the same path, and reads must reject unsafe ids.',
+                'Keep the patch minimal, do not modify the tests, run `node --test`, and reply with a short summary.',
+            ].join(' '),
+            files: {
+                'package.json': JSON.stringify({
+                    name: 'disk-content-store-hard-fixture',
+                    type: 'module',
+                    private: true,
+                    scripts: { test: 'node --test' },
+                }, null, 2) + '\n',
+                'src/blob-store.js': `import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+export function writeBlob(root, id, content) {
+    mkdirSync(root, { recursive: true });
+    const path = join(root, id);
+    writeFileSync(path, content);
+    return { id, path };
+}
+
+export function readBlob(root, id) {
+    return readFileSync(join(root, id), 'utf8');
+}
+`,
+                'test/blob-store.test.js': `import test from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readBlob, writeBlob } from '../src/blob-store.js';
+
+function sha256(text) {
+    return createHash('sha256').update(text).digest('hex');
+}
+
+test('writes blobs by sha256 digest and reuses duplicate content path', () => {
+    const root = mkdtempSync(join(tmpdir(), 'blob-store-hard-'));
+    try {
+        const first = writeBlob(root, 'user-name', 'hello');
+        const second = writeBlob(root, 'different-name', 'hello');
+        const digest = sha256('hello');
+
+        assert.equal(first.id, digest);
+        assert.equal(second.id, digest);
+        assert.equal(first.path, second.path);
+        assert.equal(basename(first.path), digest);
+        assert.equal(readBlob(root, digest), 'hello');
+        assert.equal(existsSync(join(root, 'user-name')), false);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('readBlob rejects unsafe ids', () => {
+    const root = mkdtempSync(join(tmpdir(), 'blob-store-hard-'));
+    try {
+        assert.throws(() => readBlob(root, '../secret'), /invalid|unsafe/i);
+        assert.throws(() => readBlob(root, 'not-a-digest'), /invalid|unsafe/i);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+`,
+            },
+        },
+    ];
+}
+
 function buildTasks(suite: ParsedArgs['suite']): FixtureTask[] {
     switch (suite) {
         case 'basic':
             return basicTasks();
         case 'aca-hard':
             return acaHardTasks();
+        case 'stress':
+            return stressTasks();
         case 'all':
-            return [...basicTasks(), ...acaNativeTasks(), ...acaHardTasks()];
+            return [...basicTasks(), ...acaNativeTasks(), ...acaHardTasks(), ...stressTasks()];
         case 'aca-native':
         default:
             return acaNativeTasks();

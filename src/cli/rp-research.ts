@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { InvokeResponse } from './executor.js';
 import { parseInvokeOutput, runAcaInvoke } from '../mcp/server.js';
 import { parseEmulatedToolCalls, sanitizeModelJson } from '../providers/tool-emulation.js';
+import { isPathWithin, pathsReferToSameLocation } from '../core/path-comparison.js';
 
 export const DEFAULT_RP_INVOKE_DEADLINE_MS = 20 * 60 * 1000;
 
@@ -157,8 +158,7 @@ export const RP_FRESH_RETRYABLE_INVOKE_ERROR_CODES = new Set([
 ]);
 
 function isWithinDirectory(parent: string, child: string): boolean {
-    const rel = relative(parent, child);
-    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+    return isPathWithin(parent, child);
 }
 
 function normalizeManifestRelativePath(rawPath: string): string {
@@ -819,7 +819,7 @@ function findFreshSessionDir(
             const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
             const configSnapshot = manifest.configSnapshot as Record<string, unknown> | undefined;
             if (typeof configSnapshot?.workspaceRoot !== 'string') continue;
-            if (resolve(configSnapshot.workspaceRoot) !== resolve(workspaceRoot)) continue;
+            if (!pathsReferToSameLocation(configSnapshot.workspaceRoot, workspaceRoot)) continue;
             if (expectedTag !== undefined && configSnapshot.sessionTag !== expectedTag) continue;
             return sessionDir;
         } catch {

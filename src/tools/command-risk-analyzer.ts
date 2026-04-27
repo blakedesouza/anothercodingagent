@@ -1,3 +1,5 @@
+import { isAbsolutePath, isFilesystemRootPath, isPathWithin } from '../core/path-comparison.js';
+
 export type RiskTier = 'forbidden' | 'high' | 'normal';
 
 export type RiskFacet =
@@ -72,12 +74,14 @@ function tierOrdinal(t: RiskTier): number {
  * Used to decide whether a relative-path rm is safe.
  */
 function isInWorkspace(cwd: string, workspaceRoot?: string): boolean {
+    if (!cwd) return false;
+
     if (workspaceRoot) {
-        return cwd === workspaceRoot || cwd.startsWith(workspaceRoot + '/');
+        return isPathWithin(workspaceRoot, cwd);
     }
     // Heuristic: treat any non-root directory as workspace context when no
     // explicit root is provided.
-    return cwd !== '/' && cwd.length > 1;
+    return !isFilesystemRootPath(cwd);
 }
 
 /**
@@ -89,7 +93,17 @@ function stripObfuscationQuotes(command: string): string {
         .replace(/(\w)'(\w)/g, '$1$2')
         .replace(/(\w)"(\w)/g, '$1$2');
     // Remove lone quotes left over before whitespace or end-of-string.
-    result = result.replace(/'(?=\s|$)/g, '').replace(/"(?=\s|$)/g, '');
+    result = result.split(/(\s+)/).map(token => {
+        if (/^\s+$/.test(token)) return token;
+        let stripped = token;
+        for (const quote of ['\'', '"']) {
+            const quoteCount = [...stripped].filter(char => char === quote).length;
+            if (quoteCount === 1 && stripped.endsWith(quote)) {
+                stripped = stripped.slice(0, -1);
+            }
+        }
+        return stripped;
+    }).join('');
     return result;
 }
 
@@ -103,6 +117,26 @@ function extractShellCArg(command: string): string | null {
     );
     if (!m) return null;
     return m[1] ?? m[2] ?? m[3] ?? null;
+}
+
+function stripWrappingQuotes(value: string): string {
+    if (value.length < 2) return value;
+    const first = value[0];
+    const last = value[value.length - 1];
+    return (first === last && (first === '\'' || first === '"')) ? value.slice(1, -1) : value;
+}
+
+function stripTrailingRootGlob(value: string): string {
+    return value.endsWith('*') ? value.slice(0, -1) : value;
+}
+
+function hasWindowsDrivePrefix(value: string): boolean {
+    return /^[a-zA-Z]:/.test(value);
+}
+
+function isDangerousRootTarget(target: string): boolean {
+    const rootCandidate = stripTrailingRootGlob(target);
+    return isFilesystemRootPath(rootCandidate);
 }
 
 // --- rm command analysis ---
@@ -158,12 +192,11 @@ function analyzeRmCommand(
         };
     }
 
-    const target = rawTargets[0];
+    const target = stripWrappingQuotes(rawTargets[0]);
 
     // Dangerous absolute paths: /, /*, ~, ~/…, $HOME
     if (
-        target === '/' ||
-        target === '/*' ||
+        isDangerousRootTarget(target) ||
         /^~/.test(target) ||
         target === '$HOME' ||
         /^\$HOME\//.test(target)
@@ -176,7 +209,12 @@ function analyzeRmCommand(
     }
 
     // Relative path (doesn't start with /, ~, or $)
-    if (!target.startsWith('/') && !target.startsWith('~') && !target.startsWith('$')) {
+    if (
+        !isAbsolutePath(target) &&
+        !hasWindowsDrivePrefix(target) &&
+        !target.startsWith('~') &&
+        !target.startsWith('$')
+    ) {
         const inWs = isInWorkspace(cwd, workspaceRoot);
         return {
             tier: inWs ? 'normal' : 'high',

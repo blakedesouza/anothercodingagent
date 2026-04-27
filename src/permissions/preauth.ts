@@ -7,7 +7,7 @@
  */
 
 import type { PreauthRule } from '../config/schema.js';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isPathWithin, resolvePathWithInputStyle } from '../core/path-comparison.js';
 
 export interface PreauthMatchInput {
     toolName: string;
@@ -55,8 +55,7 @@ export function matchPreauthRules(
 }
 
 function matchesCwdPattern(inputCwd: string, cwdPattern: string): boolean {
-    const resolvedInput = resolve(inputCwd);
-    const resolvedPattern = resolve(cwdPattern);
-    const rel = relative(resolvedPattern, resolvedInput);
-    return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
+    const resolvedInput = resolvePathWithInputStyle(inputCwd);
+    const resolvedPattern = resolvePathWithInputStyle(cwdPattern);
+    return isPathWithin(resolvedPattern, resolvedInput);
 }

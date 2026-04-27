@@ -247,6 +247,7 @@ export class OpenAiDriver implements ProviderDriver {
 
                     const toolCallParts = msg.content.filter(p => p.type === 'tool_call');
                     if (toolCallParts.length > 0) {
+                        if (!textParts) out.content = null;
                         out.tool_calls = toolCallParts.map((p, i) => ({
                             id: p.toolCallId,
                             type: 'function',

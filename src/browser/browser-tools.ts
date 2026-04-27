@@ -11,7 +11,7 @@
  * capabilityId: 'browser' — masked when browser is unavailable.
  */
 
-import { join, resolve, sep } from 'node:path';
+import { join, resolve } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation } from '../tools/tool-registry.js';
@@ -22,6 +22,7 @@ import {
     BrowserUnavailableError,
     BROWSER_CAPABILITY_ID,
 } from './browser-manager.js';
+import { isPathWithin } from '../core/path-comparison.js';
 
 // --- Constants ---
 
@@ -359,8 +360,7 @@ export function createBrowserToolImpls(
 
             // Defense-in-depth: path traversal guard
             const resolvedPath = resolve(filePath);
-            const resolvedRoot = resolve(context.workspaceRoot);
-            if (!resolvedPath.startsWith(resolvedRoot + sep)) {
+            if (!isPathWithin(context.workspaceRoot, resolvedPath)) {
                 return errorOutput('path_traversal', 'Screenshot path outside workspace');
             }
 

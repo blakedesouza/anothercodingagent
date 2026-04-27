@@ -87,27 +87,23 @@ export class NanoGptDriver implements ProviderDriver {
             if (entry) {
                 // Catalog provides runtime-discovered limits; static registry
                 // fills in behavioral details (toolReliability, specialFeatures, etc.).
-                // NanoGPT invocation intentionally forces ACA-managed tool
-                // emulation for every tool-enabled model, even if the upstream
-                // routed model advertises native tool calling.
+                // Prefer NanoGPT's native OpenAI-compatible tool bridge when
+                // the live catalog advertises it. Fall back to ACA-managed
+                // prompt emulation only for models without native tool support.
                 const base = getModelCapabilitiesOrDefaults(model);
                 return {
                     ...base,
                     maxContext: entry.contextLength,
                     maxOutput: entry.maxOutputTokens,
                     supportsVision: entry.capabilities.vision,
-                    supportsTools: entry.capabilities.toolCalling ? 'emulated' : 'none',
+                    supportsTools: entry.capabilities.toolCalling ? 'native' : 'emulated',
                     costPerMillion: entry.pricing
                         ? { input: entry.pricing.input, output: entry.pricing.output }
                         : base.costPerMillion,
                 };
             }
         }
-        const base = getModelCapabilitiesOrDefaults(model);
-        return {
-            ...base,
-            supportsTools: base.supportsTools === 'none' ? 'none' : 'emulated',
-        };
+        return getModelCapabilitiesOrDefaults(model);
     }
 
     async *stream(request: ModelRequest): AsyncGenerator<StreamEvent> {
@@ -122,16 +118,18 @@ export class NanoGptDriver implements ProviderDriver {
             return;
         }
 
-        // NanoGPT is a routing/meta-provider. Keep ACA's tool protocol under our
-        // control by emulating tools in-prompt and forcing native tool_choice=none
-        // in the upstream OpenAI-compatible request.
-        const needsEmulation = !!request.tools && request.tools.length > 0;
+        // NanoGPT is a routing/meta-provider. Use native OpenAI-compatible
+        // tools when the selected model supports them; otherwise keep ACA's
+        // prompt-level tool emulation as a compatibility fallback.
+        const hasTools = !!request.tools && request.tools.length > 0;
+        const toolSupport = hasTools ? this.capabilities(request.model).supportsTools : 'none';
+        const needsEmulation = hasTools && toolSupport !== 'native';
 
         const effectiveRequest = needsEmulation
             ? injectToolsIntoRequest({ ...request, responseFormat: undefined })
             : request;
 
-        if (needsEmulation) {
+        if (hasTools) {
             yield* wrapStreamWithToolEmulation(this.rawStream(effectiveRequest));
         } else {
             // No tools, but still strip model preambles (e.g. Qwen's
@@ -298,11 +296,8 @@ export class NanoGptDriver implements ProviderDriver {
         const maxTokens = this.getMaxOutputForModel(request.model) ?? request.maxTokens;
 
         // Emulation mode: no tool schemas are sent to the API; the model generates
-        // tool calls as plain JSON text which we extract locally. In this mode we
-        // must NOT re-serialize those extracted calls back as native tool_calls in
-        // subsequent turns, because models like DeepSeek will then respond with
-        // native function calls that NanoGPT rejects (502 malformed_tool_call).
-        // Detect emulation mode by the absence of a tool schema on the request.
+        // tool calls as plain JSON text which we extract locally. Detect emulation
+        // mode by the absence of a tool schema on the request.
         const isEmulationMode = !request.tools || request.tools.length === 0;
 
         const body: Record<string, unknown> = {
@@ -327,6 +322,7 @@ export class NanoGptDriver implements ProviderDriver {
 
                     const toolCallParts = msg.content.filter(p => p.type === 'tool_call');
                     if (toolCallParts.length > 0) {
+                        if (!textParts) out.content = null;
                         if (isEmulationMode) {
                             // Re-encode as emulation JSON text so the model sees its
                             // own output format rather than a native tool_calls field
@@ -367,11 +363,24 @@ export class NanoGptDriver implements ProviderDriver {
         if (request.thinking !== undefined) {
             body.thinking = request.thinking;
         }
+        if (request.tools && request.tools.length > 0) {
+            body.tools = request.tools.map(t => ({
+                type: 'function',
+                function: {
+                    name: t.name,
+                    description: t.description,
+                    parameters: t.parameters,
+                },
+            }));
+            body.tool_choice = 'auto';
+            body.parallel_tool_calls = true;
+        } else {
+            body.tool_choice = 'none';
+        }
+
         if (request.responseFormat !== undefined && this.supportsResponseFormat(request.model)) {
             body.response_format = request.responseFormat;
         }
-
-        body.tool_choice = 'none';
 
         return body;
     }
