@@ -39,6 +39,7 @@ playwright-report/
 bug-report-*/
 codex-ideas/
 codex-troubleshooting/
+docs/superpowers/
 
 # Local/generated RP research output; ACA product code lives in this repo, not
 # generated compendium folders.
