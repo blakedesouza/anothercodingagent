@@ -894,13 +894,63 @@ function loginHtml() {
       margin: 0;
       color: #aab3bd;
     }
+    form {
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      color: #aab3bd;
+    }
+    input {
+      width: 100%;
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid #2d333a;
+      background: #0e1012;
+      color: #e7ebf0;
+      font: 13px ui-monospace, Menlo, Consolas, monospace;
+      box-sizing: border-box;
+    }
+    button {
+      justify-self: start;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid #2d333a;
+      background: #e7ebf0;
+      color: #0e1012;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    code {
+      color: #e7ebf0;
+      font: 13px ui-monospace, Menlo, Consolas, monospace;
+    }
   </style>
 </head>
 <body>
   <main>
     <h1>ACA Debug UI</h1>
-    <p>This local dashboard requires the token printed by the server.</p>
+    <p>This local dashboard requires the current debug token printed by the server.</p>
+    <form id="tokenForm">
+      <label>
+        <span>Debug token</span>
+        <input name="token" autocomplete="off" spellcheck="false">
+      </label>
+      <button type="submit">Open dashboard</button>
+    </form>
+    <p style="margin-top:14px;font-size:12px">Run <code>aca debug-ui</code> or check the terminal that started ACA for the current local URL.</p>
   </main>
+  <script>
+    document.getElementById('tokenForm').addEventListener('submit', (event) => {
+      event.preventDefault();
+      const token = new FormData(event.currentTarget).get('token');
+      if (!token) return;
+      location.href = '/?token=' + encodeURIComponent(String(token));
+    });
+  </script>
 </body>
 </html>`;
 }
