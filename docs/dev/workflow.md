@@ -3,6 +3,8 @@
 This is an internal development workflow, not the public user guide. Start with
 the root `README.md` for normal usage.
 
+For repository audits or hardening passes, start with [audit-workflow.md](audit-workflow.md).
+
 Standard operating procedure for every milestone substep. Current default consultation uses the `minimax + gemma` witness pair unless a task explicitly needs a different lineup.
 
 ## The Cycle

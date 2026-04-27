@@ -138,7 +138,7 @@ export interface PreparedPrompt {
 const ACA_WORKFLOW_DISAMBIGUATION = `Workflow name disambiguation:
 - "ACA consult" means use the \`aca consult\` workflow; it does not mean modify ACA source code.
 - "ACA invoke" means use the \`aca invoke\` workflow.
-- Phrases like "fix ACA", "work on ACA", "audit ACA", "ACA CLI", or "fix ACA consult" mean modify or review the ACA repository/codebase itself.
+- Phrases like "fix ACA", "work on ACA", "audit ACA", "ACA CLI", or "fix ACA consult" mean modify or review the ACA repository/codebase itself. For audits, start with docs/dev/audit-workflow.md.
 - Bare "ACA" is ambiguous. If the task depends on the distinction, clarify whether the user means an ACA workflow/subcommand or the ACA codebase.`;
 
 const SYSTEM_IDENTITY = `You are ACA (Another Coding Agent), an AI-powered coding assistant that helps users with software engineering tasks.

@@ -137,6 +137,7 @@ describe('assemblePrompt', () => {
             expect(sysContent).toContain('Instruction precedence');
             expect(sysContent).toContain('Workflow name disambiguation');
             expect(sysContent).toContain('"ACA consult" means use the `aca consult` workflow');
+            expect(sysContent).toContain('docs/dev/audit-workflow.md');
             expect(sysContent).toContain('Bare "ACA" is ambiguous');
 
             // Layer 3: context block has environment info
@@ -657,6 +658,7 @@ describe('buildInvokeSystemMessages', () => {
         expect(content).toContain('coding agent');
         expect(content).toContain('<workflow_disambiguation>');
         expect(content).toContain('"ACA consult" means use the `aca consult` workflow');
+        expect(content).toContain('docs/dev/audit-workflow.md');
         expect(content).toContain('Bare "ACA" is ambiguous');
     });
 
@@ -1015,6 +1017,7 @@ describe('buildAnalyticalSystemMessages', () => {
         const content = msgs[0].content as string;
         expect(content).toContain('<workflow_disambiguation>');
         expect(content).toContain('"ACA invoke" means use the `aca invoke` workflow');
+        expect(content).toContain('docs/dev/audit-workflow.md');
         expect(content).toContain('<tool_policy>');
         expect(content).toContain('If the task is purely conceptual and does not ask you to verify against code');
     });
@@ -1100,6 +1103,7 @@ describe('buildSynthesisSystemMessages', () => {
         const content = msgs[0].content as string;
         expect(content).toContain('<workflow_disambiguation>');
         expect(content).toContain('"ACA consult" means use the `aca consult` workflow');
+        expect(content).toContain('docs/dev/audit-workflow.md');
         expect(content).toContain('NOT available in this session');
     });
 
