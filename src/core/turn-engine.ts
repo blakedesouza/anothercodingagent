@@ -40,6 +40,7 @@ import {
     type ApprovalRequest,
 } from '../permissions/approval.js';
 import { analyzeCommand } from '../tools/command-risk-analyzer.js';
+import { normalizeToolArguments } from '../tools/tool-argument-normalizer.js';
 import type { CommandRiskAssessment } from '../tools/command-risk-analyzer.js';
 import { evaluateShellNetworkAccess } from '../permissions/network-policy.js';
 import type { CapabilityHealthMap } from './capability-health.js';
@@ -1612,18 +1613,16 @@ export class TurnEngine extends EventEmitter {
             }
         }
 
-        const textParts: TextPart[] = [];
-        if (fullText.length > 0) {
-            textParts.push({ type: 'text', text: fullText });
-        }
-
         const toolCallParts: ToolCallPart[] = [];
         const jsonParseFailures = new Set<string>();
         for (const accum of toolCallSlots) {
             let args: Record<string, unknown> = {};
             let parseFailure = false;
             try {
-                args = JSON.parse(sanitizeModelJson(accum.arguments || '{}'));
+                args = normalizeToolArguments(
+                    accum.name,
+                    JSON.parse(sanitizeModelJson(accum.arguments || '{}')),
+                );
             } catch {
                 args = {};
                 parseFailure = true;
@@ -1638,6 +1637,11 @@ export class TurnEngine extends EventEmitter {
             if (parseFailure) {
                 jsonParseFailures.add(toolCallId);
             }
+        }
+
+        const textParts: TextPart[] = [];
+        if (fullText.length > 0 && toolCallParts.length === 0) {
+            textParts.push({ type: 'text', text: fullText });
         }
 
         return { textParts, toolCallParts, finishReason, tokenUsage, jsonParseFailures };

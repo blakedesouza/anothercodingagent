@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit",
     "verify": "npm run typecheck && npm run lint && npm test && npm run build",
     "bakeoff:workflow": "node --import tsx scripts/live-workflow-bakeoff.ts",
+    "probe:native-tools": "node --import tsx scripts/native-tool-probe.ts",
     "lint": "eslint src/ test/"
   },
   "dependencies": {

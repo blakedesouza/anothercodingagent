@@ -103,7 +103,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             const caps = driver.capabilities('claude-sonnet-4-20250514');
             expect(caps.maxContext).toBe(200_000);
             expect(caps.maxOutput).toBe(16_384);
-            expect(caps.supportsTools).toBe('emulated');
+            expect(caps.supportsTools).toBe('native');
             expect(caps.supportsStreaming).toBe(true);
             expect(caps.bytesPerToken).toBe(3.5);
         });
@@ -111,12 +111,12 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
         it('returns correct capabilities for GPT-4o', () => {
             const caps = driver.capabilities('gpt-4o');
             expect(caps.maxContext).toBe(128_000);
-            expect(caps.supportsTools).toBe('emulated');
+            expect(caps.supportsTools).toBe('native');
         });
 
         it('returns default capabilities for unknown model', () => {
             const caps = driver.capabilities('nonexistent-model');
-            expect(caps.supportsTools).toBe('emulated');
+            expect(caps.supportsTools).toBe('native');
             expect(caps.maxContext).toBe(32_000);
         });
     });
@@ -220,7 +220,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             }
         });
 
-        it('passes through native tool calls even when ACA emulation is enabled', async () => {
+        it('passes through native tool calls when the selected model supports them', async () => {
             server.addToolCallResponse([
                 { id: 'call_002', name: 'write_file', arguments: { path: '/tmp/out.txt', content: 'hello' } },
             ]);
@@ -242,13 +242,51 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
 
             const toolDeltas = events.filter(e => e.type === 'tool_call_delta');
             expect(toolDeltas.length).toBeGreaterThan(0);
+            const body = server.receivedRequests[0].body as Record<string, unknown>;
+            expect(body.tools).toBeDefined();
+            expect(body.tool_choice).toBe('auto');
+            expect(body.parallel_tool_calls).toBe(true);
             const argJson = toolDeltas
-                .filter((e): e is Extract<import('../../src/types/provider.js').StreamEvent, { type: 'tool_call_delta' }> =>
+                .filter((e): e is Extract<StreamEvent, { type: 'tool_call_delta' }> =>
                     e.type === 'tool_call_delta')
                 .map(e => e.arguments ?? '')
                 .join('');
             const parsed = JSON.parse(argJson);
             expect(parsed).toEqual({ path: '/tmp/out.txt', content: 'hello' });
+        });
+
+        it('sends content:null for prior native assistant tool-call messages', async () => {
+            server.addTextResponse('done');
+
+            await collectEvents(driver.stream(makeRequest({
+                messages: [
+                    { role: 'user', content: 'Read this file' },
+                    {
+                        role: 'assistant',
+                        content: [{
+                            type: 'tool_call',
+                            toolCallId: 'call_prev',
+                            toolName: 'read_file',
+                            arguments: { path: '/tmp/input.txt' },
+                        }],
+                    },
+                    { role: 'tool', toolCallId: 'call_prev', content: '{"status":"success","data":"hello"}' },
+                ],
+                tools: [{
+                    name: 'read_file',
+                    description: 'Read a file',
+                    parameters: {
+                        type: 'object',
+                        properties: { path: { type: 'string' } },
+                        required: ['path'],
+                    },
+                }],
+            })));
+
+            const body = server.receivedRequests[0].body as { messages: Array<Record<string, unknown>> };
+            expect(body.messages[1].content).toBeNull();
+            expect(body.messages[1].tool_calls).toBeDefined();
+            expect(body.messages[2].tool_call_id).toBe('call_prev');
         });
     });
 
@@ -487,10 +525,11 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
     // --- stream(): tools in request ---
 
     describe('stream() — tools in request body', () => {
-        it('emulates ACA tools and disables native NanoGPT tool calling', async () => {
+        it('emulates ACA tools and disables native NanoGPT tool calling for non-native models', async () => {
             server.addTextResponse('{"tool_calls":[{"name":"read_file","arguments":{"path":"/tmp/test.txt"}}]}');
 
             const request = makeRequest({
+                model: 'moonshot-v1-8k',
                 tools: [{
                     name: 'read_file',
                     description: 'Read a file from disk',
@@ -527,6 +566,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             server.addTextResponse('<tool_call>{"name":"read_file","arguments":{"path":"/tmp/pseudo.txt"}}</tool_call>');
 
             const request = makeRequest({
+                model: 'moonshot-v1-8k',
                 tools: [{
                     name: 'read_file',
                     description: 'Read a file from disk',
@@ -558,6 +598,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             ].join('\n'));
 
             const request = makeRequest({
+                model: 'moonshot-v1-8k',
                 tools: [{
                     name: 'write_file',
                     description: 'Write a file to disk',
@@ -586,6 +627,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             server.addTextResponse('{"tool_calls":[{"name":"read_file","arguments":{"path":"/tmp/test.txt"}}]}');
 
             await collectEvents(driver.stream(makeRequest({
+                model: 'moonshot-v1-8k',
                 tools: [{
                     name: 'read_file',
                     description: 'Read a file from disk',
@@ -724,6 +766,7 @@ describe('M1.4 — Provider Interface + NanoGPT Driver', () => {
             server.addResponse({ type: 'raw_stream', rawBody });
 
             const request = makeRequest({
+                model: 'moonshot-v1-8k',
                 tools: [{ name: 'read_file', description: 'Read a file', parameters: { type: 'object' as const, properties: { path: { type: 'string' } }, required: ['path'] } }],
             });
             const events = await collectEvents(driver.stream(request));
@@ -819,8 +862,8 @@ describe('M11.2 — Driver + ModelCatalog Integration', () => {
             expect(caps.maxContext).toBe(200_000);
             expect(caps.maxOutput).toBe(64_000);
             expect(caps.supportsVision).toBe(true);
-            // Tool support reflects NanoGPT's intentional forced emulation layer
-            expect(caps.supportsTools).toBe('emulated');
+            // Tool support reflects NanoGPT's live native tool bridge when advertised.
+            expect(caps.supportsTools).toBe('native');
             expect(caps.supportsStreaming).toBe(true);
             expect(caps.bytesPerToken).toBe(3.5);
         });
@@ -838,7 +881,7 @@ describe('M11.2 — Driver + ModelCatalog Integration', () => {
             const caps = driver.capabilities('claude-sonnet-4-20250514');
             expect(caps.maxContext).toBe(200_000);
             expect(caps.maxOutput).toBe(16_384);
-            expect(caps.supportsTools).toBe('emulated');
+            expect(caps.supportsTools).toBe('native');
         });
 
         it('falls back to UNKNOWN_MODEL_DEFAULTS when no catalog and unknown model', () => {
@@ -851,7 +894,7 @@ describe('M11.2 — Driver + ModelCatalog Integration', () => {
             const caps = driver.capabilities('nonexistent-model-xyz');
             expect(caps.maxContext).toBe(32_000);
             expect(caps.maxOutput).toBe(8192);
-            expect(caps.supportsTools).toBe('emulated');
+            expect(caps.supportsTools).toBe('native');
         });
 
         it('merges catalog pricing into costPerMillion when available', () => {
@@ -893,7 +936,7 @@ describe('M11.2 — Driver + ModelCatalog Integration', () => {
             expect(caps.costPerMillion).toBeDefined();
         });
 
-        it('maps toolCalling=false to supportsTools="none"', () => {
+        it('maps toolCalling=false to emulated tool support', () => {
             const entry = makeCatalogEntry({
                 id: 'no-tools-model',
                 capabilities: { vision: false, toolCalling: false, reasoning: false, structuredOutput: false },
@@ -907,7 +950,7 @@ describe('M11.2 — Driver + ModelCatalog Integration', () => {
             });
 
             const caps = driver.capabilities('no-tools-model');
-            expect(caps.supportsTools).toBe('none');
+            expect(caps.supportsTools).toBe('emulated');
         });
 
         it('omits response_format when live catalog says structured output is unsupported', async () => {
@@ -933,8 +976,9 @@ describe('M11.2 — Driver + ModelCatalog Integration', () => {
             expect(body.tool_choice).toBe('none');
         });
 
-        it('preserves emulated tool support from static registry', () => {
-            // moonshot-v1-8k has supportsTools='emulated' in models.json
+        it('uses native tool support from the live catalog over static emulation hints', () => {
+            // moonshot-v1-8k is static-emulated, but a live NanoGPT catalog
+            // toolCalling=true means the gateway can serve native tool calls.
             const entry = makeCatalogEntry({
                 id: 'moonshot-v1-8k',
                 contextLength: 8_000,
@@ -950,7 +994,7 @@ describe('M11.2 — Driver + ModelCatalog Integration', () => {
             });
 
             const caps = driver.capabilities('moonshot-v1-8k');
-            expect(caps.supportsTools).toBe('emulated');
+            expect(caps.supportsTools).toBe('native');
         });
     });
 

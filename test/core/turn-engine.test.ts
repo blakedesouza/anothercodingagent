@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { writeFileSpec, writeFileImpl } from '../../src/tools/write-file.js';
+import { editFileSpec, editFileImpl } from '../../src/tools/edit-file.js';
 import { confirmActionSpec, confirmActionImpl } from '../../src/tools/confirm-action.js';
 
 // --- Helpers ---
@@ -1686,6 +1687,29 @@ describe('TurnEngine', () => {
     //      call arguments" → llm.confused after 3 strikes → tool_error.
     // ---------------------------------------------------------------------
     describe('tool_call_delta accumulation', () => {
+        it('drops narration text from native tool-call turns before saving assistant history', async () => {
+            const provider = createMockProvider([
+                [
+                    { type: 'text_delta', text: "\n\nI'll inspect the file first:" },
+                    { type: 'tool_call_delta', index: 0, id: 'call_abc', name: 'echo', arguments: '{"text":"hi"}' },
+                    { type: 'done', finishReason: 'tool_calls', usage: { inputTokens: 10, outputTokens: 5 } },
+                ],
+                textResponse('done'),
+            ]);
+            registerEchoTool(registry);
+            const { engine } = createEngine(provider, registry, dir);
+
+            const result = await engine.executeTurn(makeConfig(), 'echo hi', []);
+
+            const assistantToolMessage = result.items.find((item): item is MessageItem =>
+                item.kind === 'message'
+                && item.role === 'assistant'
+                && item.parts.some(part => part.type === 'tool_call'),
+            );
+            expect(assistantToolMessage).toBeDefined();
+            expect(assistantToolMessage?.parts.some(part => part.type === 'text')).toBe(false);
+        });
+
         it('standard OpenAI streaming: id on first chunk, args chunked across later deltas', async () => {
             // Simulates: chunk 1 has {id, name, ""}, chunk 2 has {arguments: '{"text":'},
             // chunk 3 has {arguments: '"hi"}'}. All chunks share index=0.
@@ -1708,6 +1732,49 @@ describe('TurnEngine', () => {
             expect(toolResults[0].toolName).toBe('echo');
             expect(toolResults[0].output.data).toBe('hi');
             expect(toolResults[0].output.status).toBe('success');
+        });
+
+        it('normalizes DeepSeek edit_file oldText/newText arguments before validation', async () => {
+            const target = join(dir, 'target.txt');
+            writeFileSync(target, 'before\n');
+            const provider = createMockProvider([
+                toolCallResponse([{
+                    name: 'edit_file',
+                    args: {
+                        path: target,
+                        edits: [{
+                            oldText: 'before',
+                            newText: 'after',
+                            search: 'before',
+                            replace: 'after',
+                        }],
+                    },
+                }]),
+                textResponse('done'),
+            ]);
+            registry.register(editFileSpec, editFileImpl);
+            const { engine } = createEngine(provider, registry, dir);
+
+            const result = await engine.executeTurn(
+                makeConfig({ workspaceRoot: dir, interactive: false, isSubAgent: true }),
+                'edit target',
+                [],
+            );
+
+            const toolResults = result.items.filter(isToolResult);
+            expect(toolResults).toHaveLength(1);
+            expect(toolResults[0].output.status).toBe('success');
+            expect(readFileSync(target, 'utf8')).toBe('after\n');
+            const assistantMessage = result.items.find((item): item is MessageItem =>
+                item.kind === 'message'
+                && item.role === 'assistant'
+                && item.parts.some(part => part.type === 'tool_call'),
+            );
+            const toolPart = assistantMessage?.parts.find(part => part.type === 'tool_call');
+            expect(toolPart?.arguments).toEqual({
+                path: target,
+                edits: [{ search: 'before', replace: 'after' }],
+            });
         });
 
         it('standard parallel: distinct indices, each chunk also has its own id', async () => {

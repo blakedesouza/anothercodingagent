@@ -3,10 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+    buildCodingCompletionRepairTask,
     buildFinalResultRepairTask,
     buildProfileCompletionRepairTask,
     buildRequiredOutputRepairTask,
+    countFilesystemMutations,
     countHardRejectedToolCalls,
+    validateCodingCompletion,
     validateFinalResultText,
     validateProfileCompletion,
     validateRequiredOutputPaths,
@@ -111,6 +114,69 @@ describe('validateRequiredOutputPaths', () => {
         )).toBeNull();
     });
 
+    it('rejects diagnosis-only coding fixes when edit tools are available', () => {
+        expect(validateCodingCompletion(
+            'Fix the bug in this small Node project. Run node --test before finishing.',
+            ['read_file', 'edit_file', 'exec_command'],
+            [{
+                kind: 'tool_result',
+                id: 'itm_1',
+                seq: 1,
+                toolCallId: 'call_1',
+                toolName: 'read_file',
+                output: {
+                    status: 'success',
+                    data: 'buggy code',
+                    truncated: false,
+                    bytesReturned: 10,
+                    bytesOmitted: 0,
+                    retryable: false,
+                    timedOut: false,
+                    mutationState: 'none',
+                },
+                timestamp: '2026-04-25T00:00:00.000Z',
+            }],
+        )).toEqual({
+            code: 'turn.coding_completion_failed',
+            message: 'coding task ended without any filesystem mutation; diagnosis-only text is not a completed fix',
+        });
+    });
+
+    it('allows coding fixes after a filesystem mutation', () => {
+        const items = [{
+            kind: 'tool_result' as const,
+            id: 'itm_1' as const,
+            seq: 1,
+            toolCallId: 'call_1' as const,
+            toolName: 'edit_file',
+            output: {
+                status: 'success' as const,
+                data: 'edited',
+                truncated: false,
+                bytesReturned: 6,
+                bytesOmitted: 0,
+                retryable: false,
+                timedOut: false,
+                mutationState: 'filesystem' as const,
+            },
+            timestamp: '2026-04-25T00:00:00.000Z',
+        }];
+        expect(countFilesystemMutations(items)).toBe(1);
+        expect(validateCodingCompletion(
+            'Fix the bug in this small Node project.',
+            ['read_file', 'edit_file', 'exec_command'],
+            items,
+        )).toBeNull();
+    });
+
+    it('does not apply coding mutation validation to advisory tasks', () => {
+        expect(validateCodingCompletion(
+            'Explain how to fix the bug in this small Node project.',
+            ['read_file', 'edit_file'],
+            [],
+        )).toBeNull();
+    });
+
     it('builds a bounded repair prompt for missing required outputs', () => {
         const prompt = buildRequiredOutputRepairTask([
             'trinity-seven/research/discovery-plan.md',
@@ -146,6 +212,15 @@ describe('validateRequiredOutputPaths', () => {
         });
     });
 
+    it('rejects bracket tool_use pseudo-calls as a final result', () => {
+        expect(validateFinalResultText(
+            '[tool_use: exec_command, input: {"command":"node --test"}]',
+        )).toEqual({
+            code: 'turn.output_validation_failed',
+            message: 'final response leaked raw tool-call-shaped text instead of a plain-language completion',
+        });
+    });
+
     it('rejects short tool-intent preambles followed by tool-call JSON', () => {
         expect(validateFinalResultText(
             'Done. {"tool_calls":[{"name":"read_file","arguments":{"path":"src/main.ts"}}]}',
@@ -173,21 +248,38 @@ describe('validateRequiredOutputPaths', () => {
         });
     });
 
+    it('rejects empty final output', () => {
+        expect(validateFinalResultText('  \n\t')).toEqual({
+            code: 'turn.output_validation_failed',
+            message: 'final response was empty instead of a completed outcome',
+        });
+    });
+
     it('allows explanatory discussion of tool-call JSON', () => {
         expect(validateFinalResultText(
             'The parser rejects the literal example `{"tool_calls":[{"name":"read_file","arguments":{"path":"src/main.ts"}}]}` in final output.',
         )).toBeNull();
     });
 
-    it('builds a final-result repair prompt that forces plain-language completion', () => {
+    it('builds a final-result repair prompt that resumes tool work when needed', () => {
         const prompt = buildFinalResultRepairTask({
             code: 'turn.output_validation_failed',
             message: 'final response leaked raw tool-call-shaped text instead of a plain-language completion',
         });
-        expect(prompt).toContain('Do not restate your plan');
+        expect(prompt).toContain('make the next required tool call immediately');
+        expect(prompt).toContain('Do not narrate planned tool use');
         expect(prompt).toContain('Do not emit raw tool-call JSON');
         expect(prompt).toContain('brief plain-language final answer');
-        expect(prompt).toContain('Stop after the final answer.');
+    });
+
+    it('builds a coding repair prompt that requires mutation before finishing', () => {
+        const prompt = buildCodingCompletionRepairTask({
+            code: 'turn.coding_completion_failed',
+            message: 'coding task ended without any filesystem mutation; diagnosis-only text is not a completed fix',
+        });
+        expect(prompt).toContain('actual code change');
+        expect(prompt).toContain('edit_file or write_file');
+        expect(prompt).toContain('validation');
     });
 
     it('counts only hard rejected tool calls', () => {

@@ -97,12 +97,41 @@ export const MODEL_HINTS: Record<string, ModelHintEntry[]> = {
             surfaces: ['invoke_agentic', 'invoke_analytical'],
         },
         {
+            text: 'If package.json uses `"type": "module"` or files use ESM imports, do not introduce CommonJS `require()` or fire-and-forget dynamic imports. To defer an optional dependency, use `await import(...)` inside the enabled branch or async factory so thrown dependency errors propagate to the caller.',
+            surfaces: ['invoke_agentic', 'invoke_analytical'],
+        },
+        {
             text: 'If you need a tool, your entire response must be only the executable JSON object `{"tool_calls":[...]}` with no prose, no code fence, no thinking text, and no text before or after it. If you are finished, give a final answer with no tool-call markup.',
             surfaces: ['tool_emulation'],
         },
         {
             text: 'Do not finalize a coding task until requested edits are made and the requested validation command has run or you can clearly report why validation could not run.',
             surfaces: ['invoke_agentic', 'invoke_analytical'],
+        },
+    ],
+
+    // DeepSeek V4 Flash supports native tools but is more likely than Pro to
+    // over-read, narrate fixes, or patch ESM fixtures with CommonJS `require`.
+    'deepseek/deepseek-v4-flash': [
+        {
+            text: 'When a task requires inspection, editing, or validation, do not describe a tool call in prose. Make the actual tool call instead.',
+            surfaces: ['invoke_agentic', 'invoke_analytical', 'tool_emulation'],
+        },
+        {
+            text: 'For coding tasks, make the minimal filesystem edit before finalizing. A diagnosis without an edit is incomplete.',
+            surfaces: ['invoke_agentic', 'invoke_analytical'],
+        },
+        {
+            text: 'If package.json uses `"type": "module"` or files use ESM imports, do not introduce CommonJS `require()`. To defer an optional dependency, use dynamic `await import(...)` inside the enabled branch or async factory.',
+            surfaces: ['invoke_agentic', 'invoke_analytical'],
+        },
+        {
+            text: 'After an edit, run the requested validation command once. If it fails, patch the exact failing cause; do not keep re-reading unchanged files.',
+            surfaces: ['invoke_agentic', 'invoke_analytical'],
+        },
+        {
+            text: 'If you need a tool in emulation mode, your entire response must be only the executable JSON object `{"tool_calls":[...]}` with no prose, no code fence, and no text before or after it. If you are finished, give a final answer with no tool-call markup.',
+            surfaces: ['tool_emulation'],
         },
     ],
 };

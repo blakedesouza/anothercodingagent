@@ -220,6 +220,38 @@ describe('parseEmulatedToolCalls', () => {
         expect(result!.calls[1].name).toBe('list_directory');
     });
 
+    it('parses bracket tool_use pseudo-calls emitted by native-capable models', () => {
+        const text = '[tool_use: exec_command, input: {"command":"node --test","cwd":"/tmp/project"}]';
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(1);
+        expect(result!.calls[0].name).toBe('exec_command');
+        expect(JSON.parse(result!.calls[0].arguments)).toEqual({
+            command: 'node --test',
+            cwd: '/tmp/project',
+        });
+    });
+
+    it('parses DeepSeek DSML invoke pseudo-calls and normalizes edit args', () => {
+        const text = '<｜DSML｜tool_calls>\n'
+            + '<｜DSML｜invoke name="edit_file">\n'
+            + '<｜DSML｜parameter name="path" string="true">/tmp/project/src/runtime.js</｜DSML｜parameter>\n'
+            + '<｜DSML｜parameter name="edits" string="false">[{"oldText":"return launchWorkspaceRoot;","newText":"return storedWorkspaceRoot ?? launchWorkspaceRoot;"}]</｜DSML｜parameter>\n'
+            + '</｜DSML｜invoke>\n'
+            + '</｜DSML｜tool_calls>';
+        const result = parseEmulatedToolCalls(text);
+        expect(result).not.toBeNull();
+        expect(result!.calls).toHaveLength(1);
+        expect(result!.calls[0].name).toBe('edit_file');
+        expect(JSON.parse(result!.calls[0].arguments)).toEqual({
+            path: '/tmp/project/src/runtime.js',
+            edits: [{
+                search: 'return launchWorkspaceRoot;',
+                replace: 'return storedWorkspaceRoot ?? launchWorkspaceRoot;',
+            }],
+        });
+    });
+
     it('returns null for plain text with no tool call', () => {
         expect(parseEmulatedToolCalls('Hello, world!')).toBeNull();
         expect(parseEmulatedToolCalls('')).toBeNull();
@@ -425,6 +457,40 @@ describe('wrapStreamWithToolEmulation', () => {
         const argsParsed = JSON.parse((toolDeltas[0] as { arguments: string }).arguments) as { path: string };
         expect(argsParsed.path).toBe('/tmp/test');
         // No preamble text_delta when tool call JSON starts at beginning
+        expect(events.filter(e => e.type === 'text_delta')).toHaveLength(0);
+    });
+
+    it('converts bracket tool_use text into tool_call_delta events', async () => {
+        async function* inner(): AsyncIterable<StreamEvent> {
+            yield { type: 'text_delta', text: '[tool_use: exec_command, input: {"command":"node --test"}]' };
+            yield { type: 'done', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 5 } };
+        }
+
+        const events = await collectStream(wrapStreamWithToolEmulation(inner()));
+        const toolDeltas = events.filter(e => e.type === 'tool_call_delta');
+        expect(toolDeltas).toHaveLength(1);
+        expect(toolDeltas[0]).toMatchObject({ type: 'tool_call_delta', index: 0, name: 'exec_command' });
+        expect(JSON.parse((toolDeltas[0] as { arguments: string }).arguments)).toEqual({ command: 'node --test' });
+        expect(events.filter(e => e.type === 'text_delta')).toHaveLength(0);
+    });
+
+    it('converts DeepSeek DSML invoke text into tool_call_delta events', async () => {
+        async function* inner(): AsyncIterable<StreamEvent> {
+            yield {
+                type: 'text_delta',
+                text: '<｜DSML｜tool_calls><｜DSML｜invoke name="edit_file"><｜DSML｜parameter name="path">src/runtime.js</｜DSML｜parameter><｜DSML｜parameter name="edits">[{"oldText":"bad","newText":"good"}]</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>',
+            };
+            yield { type: 'done', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 5 } };
+        }
+
+        const events = await collectStream(wrapStreamWithToolEmulation(inner()));
+        const toolDeltas = events.filter(e => e.type === 'tool_call_delta');
+        expect(toolDeltas).toHaveLength(1);
+        expect(toolDeltas[0]).toMatchObject({ type: 'tool_call_delta', index: 0, name: 'edit_file' });
+        expect(JSON.parse((toolDeltas[0] as { arguments: string }).arguments)).toEqual({
+            path: 'src/runtime.js',
+            edits: [{ search: 'bad', replace: 'good' }],
+        });
         expect(events.filter(e => e.type === 'text_delta')).toHaveLength(0);
     });
 
