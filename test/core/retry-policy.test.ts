@@ -78,6 +78,10 @@ describe('Retry policy table', () => {
         expect(p.healthTransition?.state).toBe('degraded');
     });
 
+    it('llm.rate_limited aliases to the canonical rate-limit retry policy', () => {
+        expect(getRetryPolicy('llm.rate_limited')).toBe(LLM_RETRY_POLICIES[LLM_ERRORS.RATE_LIMIT]);
+    });
+
     it('llm.server_error → 3 attempts, 1s base, cap 16s, → degraded', () => {
         const p = LLM_RETRY_POLICIES[LLM_ERRORS.SERVER_ERROR];
         expect(p.maxAttempts).toBe(3);
@@ -97,6 +101,10 @@ describe('Retry policy table', () => {
         const p = LLM_RETRY_POLICIES[LLM_ERRORS.MALFORMED];
         expect(p.maxAttempts).toBe(2);
         expect(p.baseDelayMs).toBe(0);
+    });
+
+    it('llm.malformed_response aliases to the canonical malformed retry policy', () => {
+        expect(getRetryPolicy('llm.malformed_response')).toBe(LLM_RETRY_POLICIES[LLM_ERRORS.MALFORMED]);
     });
 
     it('llm.context_length → 2 attempts (1 + compress)', () => {
@@ -304,6 +312,32 @@ describe('Malformed response', () => {
         ]);
 
         const result = await executeWithLlmRetry(factory, undefined, immediateSleep);
+        expect(result.attempts).toBe(2);
+        expect(result.events.some(e => e.type === 'done')).toBe(true);
+    });
+});
+
+describe('Retry aliases', () => {
+    it('retries provider rate_limited aliases', async () => {
+        const factory = makeStreamFactory([
+            errorResponse('llm.rate_limited'),
+            textResponse('rate limit recovered'),
+        ]);
+
+        const result = await executeWithLlmRetry(factory, undefined, immediateSleep);
+
+        expect(result.attempts).toBe(2);
+        expect(result.events.some(e => e.type === 'done')).toBe(true);
+    });
+
+    it('retries provider malformed_response aliases', async () => {
+        const factory = makeStreamFactory([
+            errorResponse('llm.malformed_response'),
+            textResponse('malformed recovered'),
+        ]);
+
+        const result = await executeWithLlmRetry(factory, undefined, immediateSleep);
+
         expect(result.attempts).toBe(2);
         expect(result.events.some(e => e.type === 'done')).toBe(true);
     });

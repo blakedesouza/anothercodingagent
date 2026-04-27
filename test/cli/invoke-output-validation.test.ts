@@ -9,6 +9,7 @@ import {
     buildRequiredOutputRepairTask,
     countFilesystemMutations,
     countHardRejectedToolCalls,
+    validateContradictoryFinalResult,
     validateCodingCompletion,
     validateFinalResultText,
     validateProfileCompletion,
@@ -174,6 +175,56 @@ describe('validateRequiredOutputPaths', () => {
             'Explain how to fix the bug in this small Node project.',
             ['read_file', 'edit_file'],
             [],
+        )).toBeNull();
+    });
+
+    function successfulEditResult() {
+        return {
+            kind: 'tool_result' as const,
+            id: 'itm_edit' as const,
+            seq: 1,
+            toolCallId: 'call_edit' as const,
+            toolName: 'edit_file',
+            output: {
+                status: 'success' as const,
+                data: 'edited',
+                truncated: false,
+                bytesReturned: 6,
+                bytesOmitted: 0,
+                retryable: false,
+                timedOut: false,
+                mutationState: 'filesystem' as const,
+            },
+            timestamp: '2026-04-27T00:00:00.000Z',
+        };
+    }
+
+    it('rejects contradictory final text after successful mutation', () => {
+        expect(validateContradictoryFinalResult(
+            [successfulEditResult()],
+            'The tool returned an error, so I could not complete the request.',
+            [],
+        )).toEqual({
+            code: 'turn.output_validation_failed',
+            message: 'final response claimed the task could not complete after successful work evidence',
+        });
+    });
+
+    it('rejects unable-to-complete final text when required outputs are satisfied', () => {
+        expect(validateContradictoryFinalResult(
+            [],
+            'Unable to complete the task.',
+            [],
+            ['report.md'],
+        )?.code).toBe('turn.output_validation_failed');
+    });
+
+    it('allows failure phrasing when there was no successful work evidence', () => {
+        expect(validateContradictoryFinalResult(
+            [],
+            'The tool returned an error, so I could not complete the request.',
+            ['report.md'],
+            ['report.md'],
         )).toBeNull();
     });
 

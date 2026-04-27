@@ -105,6 +105,15 @@ export const LLM_RETRY_POLICIES: Record<string, RetryPolicy> = {
     },
 };
 
+const LLM_RETRY_POLICY_ALIASES: Record<string, string> = {
+    'llm.rate_limited': LLM_ERRORS.RATE_LIMIT,
+    'llm.malformed_response': LLM_ERRORS.MALFORMED,
+};
+
+export function canonicalRetryCode(code: ErrorCode | string): string {
+    return LLM_RETRY_POLICY_ALIASES[code] ?? code;
+}
+
 /**
  * Compute backoff delay for a given attempt number.
  * attempt is 1-indexed (attempt 1 = first retry after initial call).
@@ -128,7 +137,7 @@ export function computeBackoff(attempt: number, policy: RetryPolicy, rng?: () =>
  * Returns undefined for non-LLM codes (tool.*, delegation.*, system.*).
  */
 export function getRetryPolicy(code: ErrorCode | string): RetryPolicy | undefined {
-    return LLM_RETRY_POLICIES[code];
+    return LLM_RETRY_POLICIES[canonicalRetryCode(code)];
 }
 
 // --- LLM retry runner ---
@@ -192,7 +201,7 @@ export async function executeWithLlmRetry(
         }
 
         const code = errorEvent.error.code;
-        const policy = LLM_RETRY_POLICIES[code];
+        const policy = getRetryPolicy(code);
 
         // No retry policy or single-attempt policy — return immediately
         if (!policy || policy.maxAttempts <= 1) {

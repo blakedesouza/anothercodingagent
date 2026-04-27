@@ -175,6 +175,9 @@ async function main(): Promise<void> {
                 const workflowFailureSummary = workflowFailures.length > 0
                     ? ` ${workflowFailures.length} workflow case(s) failed.`
                     : '';
+                if (workflowFailures.length > 0) {
+                    process.stderr.write(`${JSON.stringify(workflowFailures, null, 2)}\n`);
+                }
                 process.stderr.write(`Live conformance failed.${workflowFailureSummary} Report: ${args.out}\n`);
                 process.exit(nativeProbe.exitCode || workflowProbe.exitCode || 1);
             }

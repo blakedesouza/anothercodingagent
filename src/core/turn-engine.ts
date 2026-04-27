@@ -50,6 +50,8 @@ import { EventEmitter } from 'node:events';
 import { readFile, stat } from 'node:fs/promises';
 import { estimateRequestTokens } from './token-estimator.js';
 import { preparePrompt } from './prompt-assembly.js';
+import { computeBackoff, getRetryPolicy } from './retry-policy.js';
+import type { RetryPolicy } from './retry-policy.js';
 import type {
     CapabilityHealth,
     DurableTaskSummary,
@@ -68,7 +70,20 @@ const FALLBACK_TRIGGER_CODES = new Set([
     'llm.rate_limited',
     'llm.server_error',
     'llm.timeout',
+    'llm.malformed_response',
 ]);
+
+function shouldRetryLlmStep(
+    _code: string,
+    attempts: number,
+    policy: RetryPolicy | undefined,
+): policy is RetryPolicy {
+    return policy !== undefined && policy.maxAttempts > 1 && attempts < policy.maxAttempts;
+}
+
+function sleep(ms: number): Promise<void> {
+    return ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
+}
 
 // --- Confusion limit constants ---
 export const CONFUSION_CONSECUTIVE_THRESHOLD = 3;
@@ -739,27 +754,77 @@ export class TurnEngine extends EventEmitter {
                 toolCount: request.tools?.length ?? 0,
             } satisfies LlmRequestEvent);
 
-            const streamEvents: StreamEvent[] = [];
+            let streamEvents: StreamEvent[] = [];
             let streamError: StreamEvent | null = null;
             const llmStartMs = Date.now();
+            let llmAttempts = 0;
 
-            for await (const event of activeDriver.stream(request)) {
-                // Point 4: scrub secrets from text_delta before persisting to streamEvents
-                // (which feeds conversation.jsonl). The display callback reuses the already-
-                // scrubbed text. Known limitation: a secret split across chunk boundaries is
-                // not caught because the scrubber operates per-chunk. A streaming-safe
-                // sliding-window buffer is planned for M7.8.
-                const storedEvent = (event.type === 'text_delta' && this.scrubber)
-                    ? { ...event, text: this.scrubber.scrub(event.text) }
-                    : event;
-                streamEvents.push(storedEvent);
-                if (storedEvent.type === 'text_delta' && config.onTextDelta) {
-                    config.onTextDelta(storedEvent.text);
+            for (;;) {
+                llmAttempts += 1;
+                const attemptEvents: StreamEvent[] = [];
+                const attemptTextDeltas: string[] = [];
+                let attemptError: StreamEvent | null = null;
+
+                for await (const event of activeDriver.stream(request)) {
+                    // Point 4: scrub secrets from text_delta before persisting to streamEvents
+                    // (which feeds conversation.jsonl). The display callback reuses the already-
+                    // scrubbed text. Known limitation: a secret split across chunk boundaries is
+                    // not caught because the scrubber operates per-chunk. A streaming-safe
+                    // sliding-window buffer is planned for M7.8.
+                    const storedEvent = (event.type === 'text_delta' && this.scrubber)
+                        ? { ...event, text: this.scrubber.scrub(event.text) }
+                        : event;
+                    attemptEvents.push(storedEvent);
+                    if (storedEvent.type === 'text_delta') {
+                        attemptTextDeltas.push(storedEvent.text);
+                        if (config.interactive && config.onTextDelta) {
+                            config.onTextDelta(storedEvent.text);
+                        }
+                    }
+                    if (event.type === 'error') {
+                        attemptError = event;
+                    }
+                    if (this.interrupted) break;
                 }
-                if (event.type === 'error') {
-                    streamError = event;
+
+                if (this.interrupted) {
+                    streamEvents = attemptEvents;
+                    streamError = attemptError;
+                    break;
                 }
-                if (this.interrupted) break;
+
+                if (attemptError?.type === 'error' && !config.interactive) {
+                    const policy = getRetryPolicy(attemptError.error.code);
+                    if (shouldRetryLlmStep(attemptError.error.code, llmAttempts, policy)) {
+                        const delay = computeBackoff(llmAttempts, policy);
+                        await sleep(delay);
+                        continue;
+                    }
+                }
+
+                const normalizedAttempt = this.normalizeStreamEvents(attemptEvents);
+                const emptyAssistantAttempt =
+                    attemptError === null
+                    && normalizedAttempt.textParts.length === 0
+                    && normalizedAttempt.toolCallParts.length === 0;
+
+                if (emptyAssistantAttempt && !config.interactive) {
+                    const policy = getRetryPolicy('llm.malformed');
+                    if (shouldRetryLlmStep('llm.malformed', llmAttempts, policy)) {
+                        const delay = computeBackoff(llmAttempts, policy);
+                        await sleep(delay);
+                        continue;
+                    }
+                }
+
+                streamEvents = attemptEvents;
+                streamError = attemptError;
+                if (!config.interactive && config.onTextDelta) {
+                    for (const text of attemptTextDeltas) {
+                        config.onTextDelta(text);
+                    }
+                }
+                break;
             }
 
             if (this.interrupted) {
@@ -778,6 +843,7 @@ export class TurnEngine extends EventEmitter {
                         model: activeModel,
                         provider: activeProvider,
                         step: stepNumber,
+                        attempts: llmAttempts,
                     },
                 } satisfies RuntimeErrorEvent);
 
@@ -874,6 +940,7 @@ export class TurnEngine extends EventEmitter {
                         model: activeModel,
                         provider: activeProvider,
                         step: stepNumber,
+                        attempts: llmAttempts,
                     },
                 } satisfies RuntimeErrorEvent);
                 lastError = { code: 'llm.malformed', message };

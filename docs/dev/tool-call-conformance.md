@@ -49,6 +49,21 @@ Live failures are not automatically code bugs. First classify whether:
 - The model/provider returned malformed or low-quality behavior while ACA handled it correctly.
 - The workflow failed after valid tool calls due model autonomy, timeout, or provider availability.
 
+## Live Failure Classifications
+
+`npm run probe:tool-calls -- --live` writes additive classification fields into live workflow case results:
+
+- `server_error_before_mutation`: provider/server failure before any file changes.
+- `server_error_after_mutation`: provider/server failure after file changes; inspect diff before rerun.
+- `post_mutation_malformed_salvage_candidate`: tests passed and files changed, but final LLM response malformed.
+- `malformed_after_tool_results`: malformed response after accepted tool calls, without a verified patch.
+- `contradictory_final_after_mutation`: final text claims failure despite successful mutation evidence.
+- `unknown_workflow_failure`: not enough evidence for a known bucket.
+
+`salvageCandidate: true` means the artifact may contain a useful patch or completed output even when the invoke result failed.
+
+For non-interactive turns, retryable provider failures are retried within the active model before ACA falls back to the next model. Empty assistant responses are retried as `llm.malformed`. Live probes remain opt-in because retries can spend provider quota and make slow transient failures slower.
+
 ## Failure Classes
 
 - `schema_hygiene`: tool schema is hard for models or strict providers to call.

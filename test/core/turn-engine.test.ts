@@ -13,6 +13,7 @@ import { SequenceGenerator } from '../../src/types/sequence.js';
 import type { ProviderDriver, StreamEvent, ModelRequest, ModelCapabilities } from '../../src/types/provider.js';
 import type { MessageItem, ToolResultItem } from '../../src/types/conversation.js';
 import type { ItemId, SessionId } from '../../src/types/ids.js';
+import { ProviderRegistry } from '../../src/providers/provider-registry.js';
 import { SessionGrantStore } from '../../src/permissions/session-grants.js';
 import { CONFIG_DEFAULTS } from '../../src/config/schema.js';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
@@ -88,6 +89,12 @@ function textResponse(text: string, inputTokens = 10, outputTokens = 5): StreamE
 function emptyResponse(inputTokens = 10, outputTokens = 0): StreamEvent[] {
     return [
         { type: 'done', finishReason: 'stop', usage: { inputTokens, outputTokens } },
+    ];
+}
+
+function errorResponse(code: string, message = `Mock: ${code}`): StreamEvent[] {
+    return [
+        { type: 'error', error: { code, message } },
     ];
 }
 
@@ -273,6 +280,186 @@ describe('TurnEngine', () => {
         expect(result.items).toHaveLength(1);
         const msg0 = result.items[0];
         expect(isMessage(msg0) && msg0.role).toBe('user');
+    });
+
+    it('non-interactive provider server_error retries before succeeding', async () => {
+        const provider = createMockProvider([
+            errorResponse('llm.server_error'),
+            textResponse('Recovered after retry'),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true }),
+            'Hi',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(result.steps).toHaveLength(1);
+        expect(result.items.filter(isMessage).map(item => item.role)).toEqual(['user', 'assistant']);
+        const assistant = result.items.filter(isMessage).find(item => item.role === 'assistant');
+        expect(assistant?.parts).toEqual([{ type: 'text', text: 'Recovered after retry' }]);
+    });
+
+    it('non-interactive provider malformed_response retries before succeeding', async () => {
+        const provider = createMockProvider([
+            errorResponse('llm.malformed_response'),
+            textResponse('Recovered from malformed stream'),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true }),
+            'Hi',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(result.lastError).toBeUndefined();
+        const assistant = result.items.filter(isMessage).find(item => item.role === 'assistant');
+        expect(assistant?.parts).toEqual([{ type: 'text', text: 'Recovered from malformed stream' }]);
+    });
+
+    it('non-interactive provider server_error aborts after retry exhaustion', async () => {
+        const provider = createMockProvider([
+            errorResponse('llm.server_error', 'attempt 1'),
+            errorResponse('llm.server_error', 'attempt 2'),
+            errorResponse('llm.server_error', 'attempt 3'),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true }),
+            'Hi',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('aborted');
+        expect(result.lastError).toEqual({ code: 'llm.server_error', message: 'attempt 3' });
+        expect(result.steps).toHaveLength(0);
+        expect(result.items.filter(isMessage).map(item => item.role)).toEqual(['user']);
+    });
+
+    it('non-interactive empty assistant response retries before succeeding', async () => {
+        const provider = createMockProvider([
+            emptyResponse(),
+            textResponse('Recovered from empty response'),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true }),
+            'Hi',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(result.steps).toHaveLength(1);
+        const assistant = result.items.filter(isMessage).find(item => item.role === 'assistant');
+        expect(assistant?.parts).toEqual([{ type: 'text', text: 'Recovered from empty response' }]);
+    });
+
+    it('non-interactive empty assistant response aborts after retry exhaustion', async () => {
+        const provider = createMockProvider([
+            emptyResponse(),
+            emptyResponse(),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true }),
+            'Hi',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('aborted');
+        expect(result.lastError).toEqual({
+            code: 'llm.malformed',
+            message: 'Model returned an empty response',
+        });
+        expect(result.steps).toHaveLength(1);
+        expect(result.items.filter(isMessage).map(item => item.role)).toEqual(['user']);
+    });
+
+    it('non-interactive retry does not emit failed-attempt text deltas', async () => {
+        const provider = createMockProvider([
+            [
+                { type: 'text_delta', text: 'partial failure text' },
+                { type: 'error', error: { code: 'llm.server_error', message: 'stream broke' } },
+            ],
+            textResponse('clean final text'),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+        const deltas: string[] = [];
+
+        const result = await engine.executeTurn(
+            makeConfig({
+                interactive: false,
+                isSubAgent: true,
+                onTextDelta: text => deltas.push(text),
+            }),
+            'Hi',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(deltas).toEqual(['clean final text']);
+    });
+
+    it('falls back only after provider retry exhaustion', async () => {
+        const primary = createMockProvider([
+            errorResponse('llm.server_error', 'first primary error'),
+            errorResponse('llm.server_error', 'second primary error'),
+            errorResponse('llm.server_error', 'third primary error'),
+        ]);
+        const fallback = createMockProvider([
+            textResponse('fallback recovered'),
+        ]);
+        registerEchoTool(registry);
+        const providerRegistry = new ProviderRegistry();
+        providerRegistry.register(fallback, {
+            name: 'fallback-provider',
+            driver: 'mock',
+            baseUrl: 'mock://fallback',
+            timeout: 1000,
+            priority: 0,
+        });
+        const logPath = join(dir, 'conversation-fallback-retry.jsonl');
+        writeFileSync(logPath, '');
+        const writer = new ConversationWriter(logPath);
+        const seq = new SequenceGenerator(0);
+        const engine = new TurnEngine(
+            primary,
+            registry,
+            writer,
+            seq,
+            undefined,
+            providerRegistry,
+        );
+        const fallbackEvents: unknown[] = [];
+        engine.on('model.fallback', event => fallbackEvents.push(event));
+
+        const result = await engine.executeTurn(
+            makeConfig({
+                interactive: false,
+                isSubAgent: true,
+                fallbackChain: ['fallback-model'],
+            }),
+            'Hi',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(fallbackEvents).toHaveLength(1);
+        const assistant = result.items.filter(isMessage).find(item => item.role === 'assistant');
+        expect(assistant?.parts).toEqual([{ type: 'text', text: 'fallback recovered' }]);
     });
 
     // Test 2: Single tool call

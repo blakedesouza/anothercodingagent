@@ -23,6 +23,7 @@ import {
     buildProfileCompletionRepairTask,
     buildRequiredOutputRepairTask,
     countHardRejectedToolCalls,
+    validateContradictoryFinalResult,
     validateFinalResultText,
     validateCodingCompletion,
     validateProfileCompletion,
@@ -2327,7 +2328,15 @@ program
                 conversationItems = codingRepairRun.allItems;
             }
 
-            const initialFinalResultIssue = validateFinalResultText(extractAssistantText(turnResult.items));
+            const initialFinalResultText = extractAssistantText(turnResult.items);
+            const initialFinalResultIssue =
+                validateFinalResultText(initialFinalResultText)
+                ?? validateContradictoryFinalResult(
+                    conversationItems,
+                    initialFinalResultText,
+                    missingRequiredOutputs,
+                    request.constraints?.required_output_paths,
+                );
             const canRepairFinalResult = initialFinalResultIssue !== null
                 && turnResult.turn.outcome === 'assistant_final';
 
@@ -2454,7 +2463,14 @@ program
 
         resultText = extractAssistantText(turnResult.items);
 
-        const finalResultIssue = validateFinalResultText(resultText);
+        const finalResultIssue =
+            validateFinalResultText(resultText)
+            ?? validateContradictoryFinalResult(
+                conversationItems,
+                resultText,
+                validateRequiredOutputPaths(cwd, request.constraints?.required_output_paths),
+                request.constraints?.required_output_paths,
+            );
         if (finalResultIssue) {
             process.stdout.write(JSON.stringify(
                 buildErrorResponse(

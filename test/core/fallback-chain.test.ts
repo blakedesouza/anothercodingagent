@@ -1,10 +1,10 @@
 /**
  * Tests for TurnEngine model fallback chain (M5.2).
  *
- * Fallback is triggered on: llm.rate_limited, llm.server_error, llm.timeout.
+ * Fallback is triggered after retry exhaustion on: llm.rate_limited, llm.server_error, llm.timeout.
  * Fallback is NOT triggered on: llm.content_filtered, llm.auth_error, llm.context_too_long.
  */
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { TurnEngine } from '../../src/core/turn-engine.js';
 import type { TurnEngineConfig } from '../../src/core/turn-engine.js';
 import { ToolRegistry } from '../../src/tools/tool-registry.js';
@@ -89,6 +89,10 @@ function errorResponse(code: string): StreamEvent[] {
     ];
 }
 
+function repeatedErrorResponses(code: string, count: number): StreamEvent[][] {
+    return Array.from({ length: count }, () => errorResponse(code));
+}
+
 function makeTurnEngine(
     primary: ProviderDriver,
     registry?: ProviderRegistry,
@@ -111,9 +115,14 @@ function makeTurnEngine(
 
 // --- Tests ---
 
+afterEach(() => {
+    vi.useRealTimers();
+});
+
 describe('TurnEngine fallback chain', () => {
     it('tries next model when primary returns llm.rate_limited (429)', async () => {
-        const primaryDriver = makeDriver([errorResponse('llm.rate_limited')]);
+        vi.useFakeTimers();
+        const primaryDriver = makeDriver(repeatedErrorResponses('llm.rate_limited', 5));
         const fallbackDriver = makeDriver([textResponse('fallback response')]);
 
         const registry = new ProviderRegistry();
@@ -135,7 +144,7 @@ describe('TurnEngine fallback chain', () => {
         const fallbackEvents: unknown[] = [];
         engine.on('model.fallback', (payload) => fallbackEvents.push(payload));
 
-        const result = await engine.executeTurn(
+        const resultPromise = engine.executeTurn(
             makeConfig({
                 model: 'primary-model',
                 fallbackChain: ['fallback-model'],
@@ -143,8 +152,11 @@ describe('TurnEngine fallback chain', () => {
             'hello',
             [],
         );
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+        vi.useRealTimers();
 
-        // Fallback was triggered
+        // Fallback was triggered after primary retry exhaustion.
         expect(fallbackEvents).toHaveLength(1);
         expect((fallbackEvents[0] as { reason: string }).reason).toBe('llm.rate_limited');
         // Turn completed successfully using fallback
@@ -152,7 +164,8 @@ describe('TurnEngine fallback chain', () => {
     });
 
     it('tries next model when primary returns llm.server_error', async () => {
-        const primaryDriver = makeDriver([errorResponse('llm.server_error')]);
+        vi.useFakeTimers();
+        const primaryDriver = makeDriver(repeatedErrorResponses('llm.server_error', 3));
         const fallbackDriverWithModel: ProviderDriver = {
             capabilities: (model: string) => {
                 if (model === 'backup-model') return BASE_CAPS;
@@ -171,18 +184,21 @@ describe('TurnEngine fallback chain', () => {
         const fallbackEvents: unknown[] = [];
         engine.on('model.fallback', (payload) => fallbackEvents.push(payload));
 
-        const result = await engine.executeTurn(
+        const resultPromise = engine.executeTurn(
             makeConfig({ fallbackChain: ['backup-model'] }),
             'hello',
             [],
         );
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+        vi.useRealTimers();
 
         expect(fallbackEvents).toHaveLength(1);
         expect(result.turn.outcome).toBe('assistant_final');
     });
 
     it('tries next model when primary returns llm.timeout', async () => {
-        const primaryDriver = makeDriver([errorResponse('llm.timeout')]);
+        const primaryDriver = makeDriver(repeatedErrorResponses('llm.timeout', 2));
         const fallbackDriverWithModel: ProviderDriver = {
             capabilities: (model: string) => {
                 if (model === 'fast-model') return BASE_CAPS;
@@ -274,7 +290,8 @@ describe('TurnEngine fallback chain', () => {
 
     it('aborts when fallback chain is exhausted', async () => {
         // Primary fails, fallback also fails
-        const primaryDriver = makeDriver([errorResponse('llm.rate_limited')]);
+        vi.useFakeTimers();
+        const primaryDriver = makeDriver(repeatedErrorResponses('llm.rate_limited', 5));
         const fallbackDriverWithModel: ProviderDriver = {
             capabilities: (model: string) => {
                 if (model === 'fallback-model') return BASE_CAPS;
@@ -291,18 +308,22 @@ describe('TurnEngine fallback chain', () => {
 
         const { engine } = makeTurnEngine(primaryDriver, registry);
 
-        const result = await engine.executeTurn(
+        const resultPromise = engine.executeTurn(
             makeConfig({ fallbackChain: ['fallback-model'] }),
             'hello',
             [],
         );
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+        vi.useRealTimers();
 
         // Chain exhausted — aborted
         expect(result.turn.outcome).toBe('aborted');
     });
 
     it('emits model.fallback event with correct payload', async () => {
-        const primaryDriver = makeDriver([errorResponse('llm.rate_limited')]);
+        vi.useFakeTimers();
+        const primaryDriver = makeDriver(repeatedErrorResponses('llm.rate_limited', 5));
         const fallbackDriverWithModel: ProviderDriver = {
             capabilities: (model: string) => {
                 if (model === 'backup-model') return BASE_CAPS;
@@ -322,7 +343,7 @@ describe('TurnEngine fallback chain', () => {
         const fallbackPayloads: unknown[] = [];
         engine.on('model.fallback', (p) => fallbackPayloads.push(p));
 
-        await engine.executeTurn(
+        const resultPromise = engine.executeTurn(
             makeConfig({
                 model: 'primary-model',
                 provider: 'primary-provider',
@@ -331,6 +352,9 @@ describe('TurnEngine fallback chain', () => {
             'hello',
             [],
         );
+        await vi.runAllTimersAsync();
+        await resultPromise;
+        vi.useRealTimers();
 
         expect(fallbackPayloads).toHaveLength(1);
         const payload = fallbackPayloads[0] as {

@@ -137,6 +137,27 @@ export function validateFinalResultText(resultText: string): ProfileCompletionIs
     return null;
 }
 
+const FINAL_RESULT_CONTRADICTORY_FAILURE =
+    /\b(?:tool returned an error|could not complete|couldn't complete|unable to complete)\b/i;
+
+export function validateContradictoryFinalResult(
+    items: readonly ConversationItem[],
+    resultText: string,
+    missingRequiredPaths: readonly string[] = [],
+    requiredOutputPaths: readonly string[] = [],
+): ProfileCompletionIssue | null {
+    const hasSuccessfulMutation = countFilesystemMutations(items) > 0;
+    const requiredOutputsSatisfied = requiredOutputPaths.length > 0 && missingRequiredPaths.length === 0;
+    if (!hasSuccessfulMutation && !requiredOutputsSatisfied) return null;
+
+    if (!FINAL_RESULT_CONTRADICTORY_FAILURE.test(resultText)) return null;
+
+    return {
+        code: 'turn.output_validation_failed',
+        message: 'final response claimed the task could not complete after successful work evidence',
+    };
+}
+
 export function buildFinalResultRepairTask(issue: ProfileCompletionIssue): string {
     return [
         `Your previous final response was invalid: ${issue.message}.`,

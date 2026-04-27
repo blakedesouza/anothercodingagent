@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadSecrets } from '../src/config/secrets.ts';
+import { extractWorkflowFailures } from '../src/tools/tool-call-conformance-report.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST_INDEX = join(ROOT, 'dist', 'index.js');
@@ -75,6 +76,8 @@ interface CaseResult {
     stderr: string;
     validationStderr: string;
     overallPass: boolean;
+    classification: string | null;
+    salvageCandidate: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -1824,7 +1827,12 @@ async function runCase(
         stderr: invoke.stderr.trim(),
         validationStderr: validation.stderr.trim(),
         overallPass: Boolean(success && testsPassed && !changedTests),
+        classification: null,
+        salvageCandidate: false,
     };
+    const [failure] = extractWorkflowFailures([result]);
+    result.classification = failure?.classification ?? null;
+    result.salvageCandidate = failure?.salvageCandidate ?? false;
 
     const caseFile = join(outDir, `${sanitizeName(model)}--${sanitizeName(task.id)}.json`);
     await fs.writeFile(caseFile, JSON.stringify(result, null, 2) + '\n', 'utf8');
@@ -1864,6 +1872,8 @@ function buildSummary(models: string[], results: CaseResult[]): Record<string, u
         totalAcceptedToolCalls: 0,
         totalRejectedToolCalls: 0,
         totalElapsedMs: 0,
+        classifications: {} as Record<string, number>,
+        salvageCandidates: 0,
     }])) as Record<string, {
         cases: number;
         pass: number;
@@ -1873,6 +1883,8 @@ function buildSummary(models: string[], results: CaseResult[]): Record<string, u
         totalAcceptedToolCalls: number;
         totalRejectedToolCalls: number;
         totalElapsedMs: number;
+        classifications: Record<string, number>;
+        salvageCandidates: number;
     }>;
 
     for (const result of results) {
@@ -1885,6 +1897,11 @@ function buildSummary(models: string[], results: CaseResult[]): Record<string, u
         bucket.totalAcceptedToolCalls += result.acceptedToolCalls ?? 0;
         bucket.totalRejectedToolCalls += result.rejectedToolCalls ?? 0;
         bucket.totalElapsedMs += result.elapsedMs;
+        if (result.classification) {
+            bucket.classifications[result.classification] =
+                (bucket.classifications[result.classification] ?? 0) + 1;
+        }
+        if (result.salvageCandidate) bucket.salvageCandidates += 1;
     }
 
     return summary;
