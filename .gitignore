@@ -27,23 +27,40 @@ debug/
 screenshots/
 test-results/
 playwright-report/
+.playwright-cli/
 
 # Local agent/editor runtime config
 .aca/
 .claude/
-.codex
+.codex/
 .mcp.json
+.worktrees/
+worktrees/
 
 # Scratch investigation notes/artifacts
 .local/
 bug-report-*/
 codex-ideas/
 codex-troubleshooting/
+docs/handoffs/
 docs/superpowers/
 
 # Local/generated RP research output; ACA product code lives in this repo, not
 # generated compendium folders.
 rpproject/
+quints-compendium.md
+
+# Alternate package-manager scratch files; package-lock.json is canonical here.
+bunfig.toml
+bun.lock
+bun.lockb
+pnpm-lock.yaml
+yarn.lock
+
+# Local package-manager config may contain machine-specific or secret values.
+.npmrc
+.yarnrc
+.yarnrc.yml
 
 # Local-only agent guidance
 agents.md
