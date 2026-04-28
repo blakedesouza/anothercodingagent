@@ -39,6 +39,9 @@ return {
   buildActivityRows,
   filterActivityRows,
   rowMatchesSearch,
+  classificationLabel,
+  diagnosticBadgeClass,
+  renderContractPanel,
 };`,
     )(window, document, localStorage, new URL('http://127.0.0.1:4777/?token=test'));
 }
@@ -228,7 +231,7 @@ describe('ACA debug UI static contracts', () => {
 
         expect(rows.map((row: { title: string }) => row.title)).toEqual([
             'Consult run - degraded',
-            'llm.malformed - historical',
+            'Malformed - unclassified - historical',
         ]);
         expect(rows.every((row: { status: string }) => row.status === 'degraded' || row.status === 'error')).toBe(true);
     });
@@ -396,6 +399,41 @@ describe('ACA debug UI static contracts', () => {
         expect(helpers.rowMatchesSearch(row, 'llm.malformed')).toBe(true);
         expect(helpers.rowMatchesSearch(row, 'claude')).toBe(true);
         expect(helpers.rowMatchesSearch(row, 'not-present')).toBe(false);
+    });
+
+    it('labels universal malformed classifications without exposing raw llm.malformed alone', () => {
+        const helpers = loadAppHelpers();
+        expect(helpers.classificationLabel({
+            classification: 'provider_model_nonconformance',
+            diagnosticBucket: 'provider_empty_final',
+            errorCode: 'llm.malformed',
+        })).toBe('Provider/model nonconformance');
+        expect(helpers.classificationLabel({
+            classification: 'salvaged_success',
+            diagnosticBucket: 'post_mutation_empty_final',
+            errorCode: 'llm.malformed',
+        })).toBe('Salvaged success');
+    });
+
+    it('renders contract panel rows from diagnostics', () => {
+        const helpers = loadAppHelpers();
+        const html = helpers.renderContractPanel({
+            classification: 'provider_model_nonconformance',
+            diagnosticBucket: 'provider_empty_final',
+            salvageCandidate: true,
+            salvaged: false,
+            completionEvidence: {
+                changedFiles: ['src/runtime.js'],
+                testsPassed: false,
+                changedTests: false,
+                requiredOutputsSatisfied: false,
+                filesystemMutations: 1,
+            },
+        });
+        expect(html).toContain('Provider/model nonconformance');
+        expect(html).toContain('provider_empty_final');
+        expect(html).toContain('src/runtime.js');
+        expect(helpers.diagnosticBadgeClass({ classification: 'salvaged_success' })).toBe('ok');
     });
 
     it('adds Relevant, Sessions, Consults, and Archive navigation with scope controls', () => {

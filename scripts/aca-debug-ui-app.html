@@ -543,6 +543,25 @@
     height: 1px;
     background: var(--line);
   }
+  .contract-panel {
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+    margin-top: 16px;
+  }
+  .contract-grid {
+    display: grid;
+    grid-template-columns: minmax(120px, 0.35fr) 1fr;
+    gap: 8px 14px;
+    color: var(--text-3);
+    font-size: 13px;
+  }
+  .contract-grid strong,
+  .contract-grid code,
+  .contract-grid span {
+    color: var(--text);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
   .turn {
     display: grid;
     grid-template-columns: 120px 1fr auto;
@@ -1613,7 +1632,68 @@ function sessionArchiveReason(session, nowMs) {
   return 'archived';
 }
 
+function classificationLabel(source) {
+  const classification = source?.classification || source?.latestClassification || '';
+  if (classification === 'salvaged_success') return 'Salvaged success';
+  if (classification === 'provider_model_nonconformance') return 'Provider/model nonconformance';
+  if (classification === 'aca_contract_failure') return 'ACA contract failure';
+  if (classification === 'aca_parser_gap') return 'ACA parser gap';
+  if (classification === 'aca_final_validation_gap') return 'ACA final validation gap';
+  if (classification === 'unknown_needs_artifact') return 'Unknown - artifact needed';
+  if (source?.errorCode === 'llm.malformed' || source?.latestErrorCode === 'llm.malformed') return 'Malformed - unclassified';
+  return '';
+}
+
+function diagnosticBadgeClass(source) {
+  const classification = source?.classification || source?.latestClassification || '';
+  if (classification === 'salvaged_success') return 'ok';
+  if (classification === 'provider_model_nonconformance') return 'warn';
+  if (classification === 'aca_contract_failure' || classification === 'aca_parser_gap') return 'err';
+  if (classification === 'aca_final_validation_gap') return 'warn';
+  return '';
+}
+
+function normalizedCompletionEvidence(source) {
+  const raw = source?.completionEvidence || source?.completion_evidence || source?.latestCompletionEvidence || {};
+  return {
+    changedFiles: raw.changedFiles || raw.changed_files || [],
+    testsPassed: raw.testsPassed ?? raw.tests_passed ?? false,
+    changedTests: raw.changedTests ?? raw.changed_tests ?? false,
+    requiredOutputsSatisfied: raw.requiredOutputsSatisfied ?? raw.required_outputs_satisfied ?? false,
+    filesystemMutations: raw.filesystemMutations ?? raw.filesystem_mutations ?? 0,
+  };
+}
+
+function renderContractPanel(source) {
+  const label = classificationLabel(source);
+  if (!label) return '';
+  const bucket = source?.diagnosticBucket || source?.diagnostic_bucket || source?.latestDiagnosticBucket || 'unknown_needs_artifact';
+  const evidence = normalizedCompletionEvidence(source);
+  const files = evidence.changedFiles.length > 0 ? evidence.changedFiles.join(', ') : 'none recorded';
+  const salvage = source?.salvaged || source?.latestSalvaged
+    ? 'salvaged'
+    : source?.salvageCandidate || source?.salvage_candidate || source?.latestSalvageCandidate
+      ? 'candidate'
+      : 'none';
+  const badgeClass = diagnosticBadgeClass(source);
+  return `
+    <section class="contract-panel">
+      <div class="section-title">CONTRACT</div>
+      <div class="contract-grid">
+        <div>Classification</div><strong>${badgeClass ? `<span class="summary-badge ${badgeClass}">${escapeHtml(label)}</span>` : escapeHtml(label)}</strong>
+        <div>Bucket</div><code>${escapeHtml(bucket)}</code>
+        <div>Salvage</div><span>${escapeHtml(salvage)}</span>
+        <div>Changed files</div><span>${escapeHtml(files)}</span>
+        <div>Validation</div><span>${evidence.testsPassed ? 'passed' : 'not proven'}</span>
+        <div>Required outputs</div><span>${evidence.requiredOutputsSatisfied ? 'satisfied' : 'not proven'}</span>
+      </div>
+    </section>
+  `;
+}
+
 function sessionRowTitle(session) {
+  const label = classificationLabel(session);
+  if (session.hasErrors && label) return `${label} - historical`;
   if (session.hasErrors && session.latestErrorCode) return `${session.latestErrorCode} - historical`;
   return `CLI session - ${session.latestOutcome || session.status || 'unknown'}`;
 }
@@ -1639,6 +1719,11 @@ function buildSessionRow(session, context, visibleReason, archived = false) {
     turnCount: Number(session.turnCount || 0),
     model: formatModelName(session.model),
     errorCode: session.latestErrorCode || '',
+    classification: session.classification || session.latestClassification || '',
+    diagnosticBucket: session.diagnosticBucket || session.latestDiagnosticBucket || '',
+    salvageCandidate: Boolean(session.salvageCandidate || session.latestSalvageCandidate),
+    salvaged: Boolean(session.salvaged || session.latestSalvaged),
+    completionEvidence: session.completionEvidence || session.latestCompletionEvidence || null,
     raw: session,
   };
 }
@@ -1658,6 +1743,11 @@ function buildConsultRow(consult, context, visibleReason, archived = false) {
     visibleReason,
     sourceId: consult.suffix,
     witnessNames,
+    classification: consult.classification || consult.latestClassification || '',
+    diagnosticBucket: consult.diagnosticBucket || consult.latestDiagnosticBucket || '',
+    salvageCandidate: Boolean(consult.salvageCandidate || consult.latestSalvageCandidate),
+    salvaged: Boolean(consult.salvaged || consult.latestSalvaged),
+    completionEvidence: consult.completionEvidence || consult.latestCompletionEvidence || null,
     raw: consult,
   };
 }
@@ -1737,6 +1827,9 @@ function rowMatchesSearch(row, query) {
     row.visibleReason,
     row.model,
     row.errorCode,
+    row.classification,
+    row.diagnosticBucket,
+    classificationLabel(row),
     ...(row.witnessNames || []),
   ].join(' ').toLowerCase();
   return text.includes(String(query || '').toLowerCase());
@@ -2173,7 +2266,8 @@ function renderSessionDetail() {
   $('#conversationCount').textContent = String(state.sessionConversation.length);
   $('#turns').innerHTML = renderSessionFreshnessBanner(session) + renderTurns(detail.turns || []);
   $('#toolBars').innerHTML = renderToolBars((state.overview && state.overview.last7Days && state.overview.last7Days.topTools) || []);
-  $('#sessionErrors').innerHTML = renderSessionErrors(detail.errors || [], state.sessionEvents, session);
+  $('#sessionErrors').innerHTML = renderSessionErrors(detail.errors || [], state.sessionEvents, session)
+    + renderContractPanel(detail.diagnostic || session);
   $('#events').innerHTML = renderEvents(state.sessionEvents);
   $('#conversation').innerHTML = renderConversation(state.sessionConversation);
   $('#manifestView').textContent = JSON.stringify(detail.manifest || {}, null, 2);
