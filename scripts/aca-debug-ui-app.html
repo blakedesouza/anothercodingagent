@@ -306,6 +306,31 @@
     border-color: color-mix(in oklab, var(--accent) 45%, transparent);
     color: var(--accent);
   }
+  .scope-row {
+    padding-top: 2px;
+  }
+  .scope-row .chip {
+    font-size: 10px;
+    color: var(--text-3);
+  }
+  .sr-title {
+    font-weight: 700;
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.25;
+    word-break: break-word;
+  }
+  .sr-sub {
+    color: var(--text-3);
+    font: 10px/1.35 var(--mono);
+    margin-top: 3px;
+    word-break: break-word;
+  }
+  .sr-reason {
+    color: var(--text-3);
+    font: 10px var(--mono);
+    text-transform: uppercase;
+  }
   .session-list {
     flex: 1;
     overflow: auto;
@@ -338,10 +363,12 @@
     background: var(--text-3);
   }
   .session-row.status-active .rail,
-  .session-row.status-running .rail { background: var(--ok); }
+  .session-row.status-running .rail,
+  .session-row.status-healthy .rail { background: var(--ok); }
   .session-row.status-error .rail,
   .session-row.status-degraded .rail { background: var(--err); }
   .session-row.status-waiting .rail { background: var(--warn); }
+  .session-row.status-archived .rail { background: var(--text-3); }
   .sr-id {
     font: 500 12px var(--mono);
     color: var(--text);
@@ -378,10 +405,12 @@
     display: inline-block;
   }
   .status-dot.active,
-  .status-dot.running { background: var(--ok); }
+  .status-dot.running,
+  .status-dot.healthy { background: var(--ok); }
   .status-dot.ended,
   .status-dot.complete,
-  .status-dot.pending { background: var(--text-3); }
+  .status-dot.pending,
+  .status-dot.archived { background: var(--text-3); }
   .status-dot.error,
   .status-dot.degraded { background: var(--err); }
   .status-dot.waiting { background: var(--warn); }
@@ -1101,8 +1130,10 @@
     </div>
     <div class="spacer"></div>
     <div class="seg" id="viewSeg">
-      <button class="active" data-view="sessions">Sessions</button>
-      <button data-view="consult">Consult</button>
+      <button class="active" data-view="relevant">Relevant</button>
+      <button data-view="sessions">Sessions</button>
+      <button data-view="consult">Consults</button>
+      <button data-view="archive">Archive</button>
     </div>
     <button class="auto-toggle" id="autoToggle" type="button">
       <span class="live-dot"></span>
@@ -1131,6 +1162,7 @@
           <span class="mono" style="color: var(--text-3); font-size: 11px">⌘K</span>
         </label>
         <div class="chip-row" id="sidebarChips"></div>
+        <div class="chip-row scope-row" id="scopeChips"></div>
       </div>
       <div class="session-list" id="sidebarList"></div>
     </aside>
@@ -1272,7 +1304,12 @@ const ACCENTS = {
   '300': 'oklch(0.72 0.15 300)',
 };
 const state = {
-  view: 'sessions',
+  view: 'relevant',
+  selectedActivityKind: 'session',
+  activityFilter: 'current',
+  archiveFilter: 'all',
+  scopeFilter: 'current',
+  pinnedActivityIds: new Set(),
   tab: 'summary',
   autoRefresh: true,
   isLoading: true,
@@ -1297,7 +1334,9 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
-boot().catch(renderFatal);
+if (!window.__ACA_DEBUG_UI_TEST__) {
+  boot().catch(renderFatal);
+}
 
 async function boot() {
   applyStoredPrefs();
@@ -1311,9 +1350,9 @@ function bindStaticUi() {
   $$('#viewSeg button').forEach((button) => {
     button.addEventListener('click', async () => {
       setView(button.dataset.view);
-      if (state.view === 'consult' && state.selectedConsultId) {
+      if (state.selectedActivityKind === 'consult' && state.selectedConsultId) {
         await loadConsult(state.selectedConsultId);
-      } else if (state.view === 'sessions' && state.selectedSessionId) {
+      } else if (state.selectedSessionId) {
         await loadSession(state.selectedSessionId);
       }
     });
@@ -1393,15 +1432,19 @@ function setView(view) {
   $$('#viewSeg button').forEach((button) => {
     button.classList.toggle('active', button.dataset.view === view);
   });
+  state.search = '';
   if (view === 'sessions') {
-    state.search = '';
     state.sessionFilter = state.sessionFilter || 'all';
-  } else {
-    state.search = '';
+  } else if (view === 'consult') {
     state.consultFilter = state.consultFilter || 'all';
     syncSelectedConsult();
+  } else if (view === 'archive') {
+    state.archiveFilter = state.archiveFilter || 'all';
+  } else {
+    state.activityFilter = state.activityFilter || 'current';
   }
   $('#sidebarSearch').value = '';
+  syncSelectedActivity();
   renderSidebar();
   renderDetail();
 }
@@ -1421,14 +1464,15 @@ async function loadAll() {
 
     syncSelectedSession();
     syncSelectedConsult();
+    syncSelectedActivity();
 
     renderChrome();
     renderSidebar();
 
-    if (state.view === 'sessions' && state.selectedSessionId) {
-      await loadSession(state.selectedSessionId, false);
-    } else if (state.view === 'consult' && state.selectedConsultId) {
+    if (state.selectedActivityKind === 'consult' && state.selectedConsultId) {
       await loadConsult(state.selectedConsultId, false);
+    } else if (state.selectedSessionId) {
+      await loadSession(state.selectedSessionId, false);
     } else {
       renderDetail();
     }
@@ -1477,6 +1521,227 @@ function renderErrorState(error) {
   $('#manifestView').textContent = '{}';
 }
 
+const MINUTE_MS = 60 * 1000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+const ACTIVE_STALE_MS = 30 * MINUTE_MS;
+const ERROR_WINDOW_MS = DAY_MS;
+const CURRENT_WORKSPACE_WINDOW_MS = 7 * DAY_MS;
+const CONSULT_RECENT_WINDOW_MS = 7 * DAY_MS;
+const BROAD_WORKSPACE_ROOTS = new Set(['/home', '/home/blake', '/Users', '/tmp', '/', '']);
+
+function ageMs(value, nowMs = Date.now()) {
+  const timestamp = Date.parse(value || '');
+  return Number.isFinite(timestamp) ? Math.max(0, nowMs - timestamp) : Number.POSITIVE_INFINITY;
+}
+
+function rowTimeMs(row) {
+  const timestamp = Date.parse(row.lastActivityAt || row.startedAt || '');
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function workspaceKeyForSession(session) {
+  const root = String(session.workspaceRoot || '').trim();
+  if (root) return root;
+  const workspaceId = String(session.workspaceId || '').trim();
+  return workspaceId || 'unknown workspace';
+}
+
+function newestUsefulWorkspaceKey(sessions) {
+  const useful = sessions.find((session) => !isZeroTurnSession(session) || session.hasErrors);
+  return useful ? workspaceKeyForSession(useful) : 'unknown workspace';
+}
+
+function workspaceScopeLabel(workspaceKey) {
+  if (!workspaceKey || workspaceKey === 'unknown workspace') return 'unknown workspace';
+  return workspaceKey;
+}
+
+function isBroadWorkspaceKey(workspaceKey) {
+  return BROAD_WORKSPACE_ROOTS.has(String(workspaceKey || '').replace(/\/+$/, ''));
+}
+
+function isZeroTurnSession(session) {
+  return Number(session.turnCount || 0) === 0;
+}
+
+function isStaleActiveSession(session, nowMs = Date.now()) {
+  if (session.status !== 'active') return false;
+  const last = Date.parse(session.lastActivityAt || session.startedAt || '');
+  return Number.isFinite(last) && nowMs - last > ACTIVE_STALE_MS;
+}
+
+function sessionStatus(session, nowMs, visibleReason = '') {
+  if (session.hasErrors) return 'error';
+  if (session.status === 'active' && !isStaleActiveSession(session, nowMs)) return 'active';
+  if (session.status === 'active' && isStaleActiveSession(session, nowMs) && visibleReason === 'latest') return 'healthy';
+  if (session.status === 'active' && isStaleActiveSession(session, nowMs)) return 'archived';
+  return 'healthy';
+}
+
+function consultStatus(consult) {
+  if (consult.status === 'running') return 'active';
+  if (consult.status === 'degraded' || consult.degraded) return 'degraded';
+  if (consult.status === 'complete') return 'healthy';
+  return 'active';
+}
+
+function sessionVisibleReason(session, context) {
+  const id = session.sessionId;
+  const workspaceKey = workspaceKeyForSession(session);
+  if (id === context.latestSessionId) return 'latest';
+  if (context.pinnedIds.has(`session:${id}`) || context.pinnedIds.has(id)) return 'pinned';
+  if (session.hasErrors && ageMs(session.latestErrorAt || session.lastActivityAt, context.nowMs) <= ERROR_WINDOW_MS) return 'recent error';
+  if (session.status === 'active' && !isStaleActiveSession(session, context.nowMs)) return 'active';
+  if (workspaceKey === context.currentWorkspaceKey && !isZeroTurnSession(session) && ageMs(session.lastActivityAt, context.nowMs) <= CURRENT_WORKSPACE_WINDOW_MS) return 'current workspace';
+  return '';
+}
+
+function consultVisibleReason(consult, context) {
+  const id = consult.suffix;
+  if (id === context.latestConsultId) return 'latest';
+  if (context.pinnedIds.has(`consult:${id}`) || context.pinnedIds.has(id)) return 'pinned';
+  if (consult.status === 'running') return 'running';
+  if (context.filter === 'attention' && (consult.status === 'degraded' || consult.degraded) && ageMs(consult.updatedAt || consult.startedAt, context.nowMs) <= ERROR_WINDOW_MS) return 'needs attention';
+  if (context.filter === 'recent' && ageMs(consult.updatedAt || consult.startedAt, context.nowMs) <= CONSULT_RECENT_WINDOW_MS) return 'recent useful';
+  return '';
+}
+
+function sessionArchiveReason(session, nowMs) {
+  if (isStaleActiveSession(session, nowMs)) return 'stale active';
+  if (isZeroTurnSession(session)) return 'zero-turn';
+  if (session.hasErrors) return 'historical error';
+  return 'archived';
+}
+
+function sessionRowTitle(session) {
+  if (session.hasErrors && session.latestErrorCode) return `${session.latestErrorCode} - historical`;
+  return `CLI session - ${session.latestOutcome || session.status || 'unknown'}`;
+}
+
+function consultRowTitle(consult) {
+  return `Consult run - ${consult.status || 'pending'}`;
+}
+
+function buildSessionRow(session, context, visibleReason, archived = false) {
+  const workspaceKey = workspaceKeyForSession(session);
+  const status = archived ? 'archived' : sessionStatus(session, context.nowMs, visibleReason);
+  return {
+    id: `session:${session.sessionId}`,
+    kind: 'session',
+    title: sessionRowTitle(session),
+    subtitle: `${session.sessionId} - ${workspaceScopeLabel(workspaceKey)} - ${formatTime(session.lastActivityAt || session.startedAt)}`,
+    status,
+    workspaceKey,
+    startedAt: session.startedAt || null,
+    lastActivityAt: session.lastActivityAt || session.endedAt || session.startedAt || null,
+    visibleReason,
+    sourceId: session.sessionId,
+    turnCount: Number(session.turnCount || 0),
+    model: formatModelName(session.model),
+    errorCode: session.latestErrorCode || '',
+    raw: session,
+  };
+}
+
+function buildConsultRow(consult, context, visibleReason, archived = false) {
+  const status = archived ? 'archived' : consultStatus(consult);
+  const witnessNames = Object.keys(consult.witnesses || {});
+  return {
+    id: `consult:${consult.suffix}`,
+    kind: 'consult',
+    title: consultRowTitle(consult),
+    subtitle: `${consult.suffix} - consult artifacts - ${formatTime(consult.updatedAt || consult.startedAt)}`,
+    status,
+    workspaceKey: 'consult artifacts',
+    startedAt: consult.startedAt || null,
+    lastActivityAt: consult.updatedAt || consult.startedAt || null,
+    visibleReason,
+    sourceId: consult.suffix,
+    witnessNames,
+    raw: consult,
+  };
+}
+
+function scopeAllowsRow(row, context) {
+  if (context.scope === 'all') return true;
+  if (row.kind !== 'session') return true;
+  const isCurrent = row.workspaceKey === context.currentWorkspaceKey;
+  if (context.scope === 'current') return isCurrent;
+  if (context.scope === 'other') return !isCurrent;
+  return true;
+}
+
+function filterAllowsRow(row, filter) {
+  if (filter === 'attention') return row.status === 'error' || row.status === 'degraded';
+  if (filter === 'recent') return row.visibleReason === 'latest' || row.visibleReason === 'recent useful' || row.visibleReason === 'current workspace' || row.visibleReason === 'running';
+  if (filter === 'pinned') return row.visibleReason === 'pinned';
+  return true;
+}
+
+function archiveFilterAllowsRow(row, filter) {
+  if (filter === 'sessions') return row.kind === 'session';
+  if (filter === 'consults') return row.kind === 'consult';
+  if (filter === 'errors') return row.status === 'error' || row.status === 'degraded' || row.visibleReason === 'historical error';
+  if (filter === 'zero-turn') return row.visibleReason === 'zero-turn';
+  if (filter === 'stale-active') return row.visibleReason === 'stale active';
+  return true;
+}
+
+function buildActivityRows({ sessions, consults, nowMs = Date.now(), scope = 'current', filter = 'current', pinnedIds = new Set() }) {
+  const latestSessionId = sessions[0] && sessions[0].sessionId;
+  const latestConsultId = consults[0] && consults[0].suffix;
+  const currentWorkspaceKey = newestUsefulWorkspaceKey(sessions);
+  const context = { nowMs, scope, filter, pinnedIds, latestSessionId, latestConsultId, currentWorkspaceKey };
+  const archiveMode = String(filter).startsWith('archive:');
+  const archiveFilter = archiveMode ? String(filter).slice('archive:'.length) : 'all';
+  const rows = [];
+
+  for (const session of sessions) {
+    if (archiveMode) {
+      rows.push(buildSessionRow(session, context, sessionArchiveReason(session, nowMs), true));
+      continue;
+    }
+    const visibleReason = sessionVisibleReason(session, context);
+    if (visibleReason) rows.push(buildSessionRow(session, context, visibleReason));
+  }
+
+  for (const consult of consults) {
+    if (archiveMode) {
+      rows.push(buildConsultRow(consult, context, 'archived', true));
+      continue;
+    }
+    const visibleReason = consultVisibleReason(consult, context);
+    if (visibleReason) rows.push(buildConsultRow(consult, context, visibleReason));
+  }
+
+  return rows
+    .filter((row) => scopeAllowsRow(row, context))
+    .filter((row) => archiveMode ? archiveFilterAllowsRow(row, archiveFilter) : filterAllowsRow(row, filter))
+    .sort((a, b) => rowTimeMs(b) - rowTimeMs(a));
+}
+
+function filterActivityRows(rows, search) {
+  const query = String(search || '').trim().toLowerCase();
+  if (!query) return rows;
+  return rows.filter((row) => rowMatchesSearch(row, query));
+}
+
+function rowMatchesSearch(row, query) {
+  const text = [
+    row.id,
+    row.sourceId,
+    row.title,
+    row.subtitle,
+    row.status,
+    row.workspaceKey,
+    row.visibleReason,
+    row.model,
+    row.errorCode,
+    ...(row.witnessNames || []),
+  ].join(' ').toLowerCase();
+  return text.includes(String(query || '').toLowerCase());
+}
+
 function filteredConsults() {
   return state.consults.filter((consult) => {
     const text = [
@@ -1520,6 +1785,35 @@ function syncSelectedSession() {
     state.autoFollowLatestSession = true;
     state.userPinnedSessionId = null;
   }
+}
+
+function syncSelectedActivity() {
+  if (state.view === 'consult') {
+    syncSelectedConsult();
+    state.selectedActivityKind = 'consult';
+    return;
+  }
+  if (state.view === 'sessions') {
+    syncSelectedSession();
+    state.selectedActivityKind = 'session';
+    return;
+  }
+  const filter = state.view === 'archive' ? `archive:${state.archiveFilter}` : state.activityFilter;
+  const rows = filterActivityRows(buildActivityRows({
+    sessions: state.sessions,
+    consults: state.consults,
+    nowMs: Date.now(),
+    scope: state.scopeFilter,
+    filter,
+    pinnedIds: state.pinnedActivityIds,
+  }), state.search);
+  if (!rows.length) return;
+  const stillVisible = rows.some((row) => row.kind === state.selectedActivityKind && row.sourceId === selectedSourceIdForKind(row.kind));
+  if (stillVisible) return;
+  const first = rows[0];
+  state.selectedActivityKind = first.kind;
+  if (first.kind === 'consult') state.selectedConsultId = first.sourceId;
+  else state.selectedSessionId = first.sourceId;
 }
 
 async function loadSession(sessionId, rerenderSidebar = true) {
@@ -1585,11 +1879,102 @@ function renderKpiCard(label, valueHtml, subtext, series, colorVar) {
 }
 
 function renderSidebar() {
-  if (state.view === 'sessions') {
+  if (state.view === 'relevant') {
+    renderActivitySidebar(false);
+  } else if (state.view === 'archive') {
+    renderActivitySidebar(true);
+  } else if (state.view === 'sessions') {
     renderSessionSidebar();
   } else {
     renderConsultSidebar();
   }
+}
+
+function renderScopeChips() {
+  $('#scopeChips').innerHTML = renderChipRow([
+    ['current', 'Current workspace'],
+    ['other', 'Other workspaces'],
+    ['all', 'All workspaces'],
+  ], state.scopeFilter);
+  $$('#scopeChips .chip[data-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.scopeFilter = button.dataset.filter;
+      renderSidebar();
+    });
+  });
+}
+
+function renderActivitySidebar(archiveMode) {
+  const currentWorkspaceKey = newestUsefulWorkspaceKey(state.sessions);
+  const filter = archiveMode ? `archive:${state.archiveFilter}` : state.activityFilter;
+  const rows = filterActivityRows(buildActivityRows({
+    sessions: state.sessions,
+    consults: state.consults,
+    nowMs: Date.now(),
+    scope: state.scopeFilter,
+    filter,
+    pinnedIds: state.pinnedActivityIds,
+  }), state.search);
+
+  $('#sidebarTitle').textContent = archiveMode ? 'Archive' : 'Relevant Activity';
+  $('#sidebarCounter').textContent = `${rows.length} shown`;
+  $('#sidebarSearch').placeholder = archiveMode ? 'Search archive...' : 'Search relevant activity...';
+  $('#sidebarChips').innerHTML = archiveMode
+    ? renderChipRow([
+      ['all', 'All'],
+      ['sessions', 'Sessions'],
+      ['consults', 'Consults'],
+      ['errors', 'Errors'],
+      ['zero-turn', 'Zero-turn'],
+      ['stale-active', 'Stale active'],
+    ], state.archiveFilter)
+    : renderChipRow([
+      ['current', 'Current'],
+      ['attention', 'Needs attention'],
+      ['recent', 'Recent useful'],
+      ['pinned', 'Pinned'],
+    ], state.activityFilter);
+  bindChipClicks(archiveMode ? 'archive' : 'activity');
+  renderScopeChips();
+
+  if (isBroadWorkspaceKey(currentWorkspaceKey) && !archiveMode) {
+    $('#sidebarCounter').textContent = `${rows.length} shown · broad scope`;
+  }
+
+  if (!rows.length) {
+    $('#sidebarList').innerHTML = archiveMode
+      ? '<div class="empty-state">Archive has no rows for the selected filters.</div>'
+      : '<div class="empty-state">No relevant ACA activity in the current scope.</div>';
+    return;
+  }
+
+  $('#sidebarList').innerHTML = rows.map(renderActivityRow).join('');
+  bindSidebarRows();
+}
+
+function renderActivityRow(row) {
+  return `
+    <div class="session-row status-${escapeHtml(row.status)} ${row.sourceId === selectedSourceIdForKind(row.kind) ? 'selected' : ''}" data-kind="${escapeHtml(row.kind)}" data-id="${escapeHtml(row.sourceId)}">
+      <div class="rail"></div>
+      <div>
+        <div class="sr-title">${escapeHtml(row.title)}</div>
+        <div class="sr-sub">${escapeHtml(row.subtitle)}</div>
+        <div class="sr-meta">
+          <span class="status-dot ${escapeHtml(row.status)}"></span>
+          <span>${escapeHtml(row.status)}</span>
+          <span>·</span>
+          <span>${escapeHtml(row.visibleReason)}</span>
+        </div>
+      </div>
+      <div class="sr-right">
+        <div class="sr-time">${escapeHtml(formatTime(row.lastActivityAt || row.startedAt))}</div>
+        <div class="sr-reason">${escapeHtml(row.kind)}</div>
+      </div>
+    </div>`;
+}
+
+function selectedSourceIdForKind(kind) {
+  return kind === 'consult' ? state.selectedConsultId : state.selectedSessionId;
 }
 
 function renderSessionSidebar() {
@@ -1610,6 +1995,7 @@ function renderSessionSidebar() {
     return true;
   });
 
+  $('#scopeChips').innerHTML = '';
   $('#sidebarTitle').textContent = 'Sessions';
   $('#sidebarCounter').textContent = `${state.sessions.length} total`;
   $('#sidebarSearch').placeholder = 'Filter sessions…';
@@ -1666,6 +2052,7 @@ function renderSessionSidebar() {
 function renderConsultSidebar() {
   const consults = filteredConsults();
 
+  $('#scopeChips').innerHTML = '';
   $('#sidebarTitle').textContent = 'Consult Runs';
   $('#sidebarCounter').textContent = `${state.consults.length} total`;
   $('#sidebarSearch').placeholder = 'Filter consult runs…';
@@ -1715,9 +2102,13 @@ function bindChipClicks(kind) {
   $$('#sidebarChips .chip[data-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       if (kind === 'session') state.sessionFilter = button.dataset.filter;
-      else {
+      else if (kind === 'consult') {
         state.consultFilter = button.dataset.filter;
         syncSelectedConsult();
+      } else if (kind === 'archive') {
+        state.archiveFilter = button.dataset.filter;
+      } else {
+        state.activityFilter = button.dataset.filter;
       }
       renderSidebar();
       if (kind === 'consult') renderDetail();
@@ -1728,13 +2119,14 @@ function bindChipClicks(kind) {
 function bindSidebarRows() {
   $$('#sidebarList .session-row').forEach((row) => {
     row.addEventListener('click', () => {
+      state.selectedActivityKind = row.dataset.kind;
       if (row.dataset.kind === 'session') {
-        setView('sessions');
         state.autoFollowLatestSession = false;
         state.userPinnedSessionId = row.dataset.id;
+        state.pinnedActivityIds.add(`session:${row.dataset.id}`);
         loadSession(row.dataset.id).catch(renderFatal);
       } else {
-        setView('consult');
+        state.pinnedActivityIds.add(`consult:${row.dataset.id}`);
         loadConsult(row.dataset.id).catch(renderFatal);
       }
     });
@@ -1742,10 +2134,10 @@ function bindSidebarRows() {
 }
 
 function renderDetail() {
-  if (state.view === 'sessions') {
-    renderSessionDetail();
-  } else {
+  if (state.view === 'consult' || state.selectedActivityKind === 'consult') {
     renderConsultDetail();
+  } else {
+    renderSessionDetail();
   }
 }
 
@@ -1760,7 +2152,7 @@ function renderSessionDetail() {
     return;
   }
 
-  $('#crumbBase').textContent = 'sessions';
+  $('#crumbBase').textContent = state.view === 'relevant' ? 'relevant' : state.view;
   $('#crumbId').textContent = session.sessionId || 'session';
   $('#titleId').textContent = session.sessionId || 'Session';
   $('#workspacePath').textContent = `workspace · ${session.workspaceRoot || session.workspaceId || '—'}`;
@@ -1797,7 +2189,7 @@ function renderConsultDetail() {
     return;
   }
 
-  $('#crumbBase').textContent = 'consult';
+  $('#crumbBase').textContent = state.view === 'relevant' ? 'relevant' : state.view;
   $('#crumbId').textContent = detail.suffix || 'consult';
   $('#titleId').textContent = `consult ${detail.suffix || ''}`.trim();
   $('#workspacePath').textContent = `artifacts · ${(detail.resultPath || 'local tmp directory')}`;
