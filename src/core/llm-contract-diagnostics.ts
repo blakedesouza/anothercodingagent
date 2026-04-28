@@ -73,7 +73,10 @@ export function hasStrongCompletionEvidence(evidence: CompletionEvidence): boole
 
 function isEmptyFinal(input: LlmContractDiagnosticInput): boolean {
     const text = `${input.lowLevelCode} ${input.lowLevelMessage}`.toLowerCase();
-    return text.includes('llm.malformed') || text.includes('empty response') || text.includes('empty final');
+    return text.includes('llm.malformed')
+        || text.includes('turn.output_validation_failed')
+        || text.includes('empty response')
+        || text.includes('empty final');
 }
 
 function evidenceBucket(evidence: CompletionEvidence): LlmDiagnosticBucket {

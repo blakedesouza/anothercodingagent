@@ -3,10 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+    buildCompletionEvidence,
     buildCodingCompletionRepairTask,
     buildFinalResultRepairTask,
     buildProfileCompletionRepairTask,
     buildRequiredOutputRepairTask,
+    buildSalvagedCompletionSummary,
     countFilesystemMutations,
     countHardRejectedToolCalls,
     validateContradictoryFinalResult,
@@ -168,6 +170,45 @@ describe('validateRequiredOutputPaths', () => {
             ['read_file', 'edit_file', 'exec_command'],
             items,
         )).toBeNull();
+    });
+
+    it('builds completion evidence from successful filesystem mutations and required outputs', () => {
+        const items = [{
+            kind: 'tool_result' as const,
+            id: 'itm_write' as const,
+            seq: 1,
+            toolCallId: 'call_1' as const,
+            toolName: 'write_file',
+            output: {
+                status: 'success' as const,
+                data: 'wrote file',
+                truncated: false,
+                bytesReturned: 10,
+                bytesOmitted: 0,
+                retryable: false,
+                timedOut: false,
+                mutationState: 'filesystem' as const,
+            },
+            timestamp: '2026-04-28T00:00:00.000Z',
+        }];
+
+        expect(buildCompletionEvidence(items, [], ['out.md'])).toEqual({
+            changedFiles: [],
+            testsPassed: false,
+            changedTests: false,
+            requiredOutputsSatisfied: true,
+            filesystemMutations: 1,
+        });
+    });
+
+    it('builds salvaged completion summary from evidence only', () => {
+        expect(buildSalvagedCompletionSummary({
+            changedFiles: ['src/runtime.js'],
+            testsPassed: true,
+            changedTests: false,
+            requiredOutputsSatisfied: false,
+            filesystemMutations: 1,
+        })).toBe('ACA salvaged the completion after malformed final output. Work evidence: 1 source file changed, validation passed, 1 filesystem mutation tool result.');
     });
 
     it('does not apply coding mutation validation to advisory tasks', () => {

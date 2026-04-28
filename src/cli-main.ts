@@ -18,10 +18,12 @@ import { mkdirSync } from 'node:fs';
 import { SessionManager } from './core/session-manager.js';
 import { Repl } from './cli/repl.js';
 import {
+    buildCompletionEvidence,
     buildFinalResultRepairTask,
     buildCodingCompletionRepairTask,
     buildProfileCompletionRepairTask,
     buildRequiredOutputRepairTask,
+    buildSalvagedCompletionSummary,
     countHardRejectedToolCalls,
     validateContradictoryFinalResult,
     validateFinalResultText,
@@ -29,6 +31,11 @@ import {
     validateProfileCompletion,
     validateRequiredOutputPaths,
 } from './cli/invoke-output-validation.js';
+import {
+    classifyLlmContractFailure,
+    hasStrongCompletionEvidence,
+    type LlmContractDiagnostic,
+} from './core/llm-contract-diagnostics.js';
 import { TurnEngine } from './core/turn-engine.js';
 import type { TurnEngineConfig } from './core/turn-engine.js';
 import { buildSystemMessagesForTier } from './core/prompt-assembly.js';
@@ -173,6 +180,25 @@ function getVersion(): string {
     const pkgPath = join(__dirname, '..', 'package.json');
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string };
     return pkg.version;
+}
+
+function withLlmDiagnosticSafety(safety: InvokeSafety, diagnostic: LlmContractDiagnostic): InvokeSafety {
+    return {
+        ...safety,
+        classification: diagnostic.classification,
+        diagnostic_bucket: diagnostic.diagnosticBucket,
+        salvage_candidate: diagnostic.salvageCandidate,
+        salvaged: diagnostic.salvaged,
+        retry_attempts: diagnostic.retryAttempts,
+        repair_attempts: diagnostic.repairAttempts,
+        completion_evidence: {
+            changed_files: diagnostic.completionEvidence.changedFiles,
+            tests_passed: diagnostic.completionEvidence.testsPassed,
+            changed_tests: diagnostic.completionEvidence.changedTests,
+            required_outputs_satisfied: diagnostic.completionEvidence.requiredOutputsSatisfied,
+            filesystem_mutations: diagnostic.completionEvidence.filesystemMutations,
+        },
+    };
 }
 
 const program = new Command();
@@ -2416,6 +2442,17 @@ program
             guardrails: [...guardrails].sort(),
             ...(budgetExceededAfterCompletion ? { budget_exceeded: true } : {}),
         };
+        const currentMissingRequiredOutputs = validateRequiredOutputPaths(cwd, request.constraints?.required_output_paths);
+        const completionEvidence = buildCompletionEvidence(
+            conversationItems,
+            currentMissingRequiredOutputs,
+            request.constraints?.required_output_paths,
+        );
+        const usage = {
+            input_tokens: totalInputTokens,
+            output_tokens: totalOutputTokens,
+            cost_usd: 0,
+        };
 
         // Check for non-success outcomes before building response.
         // Success outcomes: assistant_final, awaiting_user, approval_required.
@@ -2432,12 +2469,25 @@ program
             // tool_error and budget_exceeded are non-retryable (same request = same failure).
             // aborted (LLM transient errors) and max_steps (could succeed with more steps) are retryable.
             const retryable = outcome !== 'budget_exceeded' && outcome !== 'tool_error';
+            const diagnostic = classifyLlmContractFailure({
+                lowLevelCode: errorCode,
+                lowLevelMessage: errorMsg,
+                requestContractPassed: true,
+                historyContractPassed: true,
+                parserRecoveredKnownShape: true,
+                retryAttempts: safety.steps,
+                repairAttempts: Math.max(0, turnResults.length - 1),
+                completionEvidence,
+            });
+            const diagnosticSafety = withLlmDiagnosticSafety(safety, diagnostic);
+            if (diagnostic.classification === 'salvaged_success' && hasStrongCompletionEvidence(completionEvidence)) {
+                process.stdout.write(JSON.stringify(
+                    buildSuccessResponse(buildSalvagedCompletionSummary(completionEvidence), usage, diagnosticSafety),
+                ) + '\n');
+                process.exit(EXIT_SUCCESS);
+            }
             process.stdout.write(JSON.stringify(
-                buildErrorResponse(errorCode, errorMsg, retryable, safety, {
-                    input_tokens: totalInputTokens,
-                    output_tokens: totalOutputTokens,
-                    cost_usd: 0,
-                }),
+                buildErrorResponse(errorCode, errorMsg, retryable, diagnosticSafety, usage),
             ) + '\n');
             process.exit(EXIT_RUNTIME);
         }
@@ -2469,21 +2519,36 @@ program
             ?? validateContradictoryFinalResult(
                 conversationItems,
                 resultText,
-                validateRequiredOutputPaths(cwd, request.constraints?.required_output_paths),
+                currentMissingRequiredOutputs,
                 request.constraints?.required_output_paths,
             );
         if (finalResultIssue) {
+            const strongCompletionEvidence = hasStrongCompletionEvidence(completionEvidence);
+            const diagnostic = classifyLlmContractFailure({
+                lowLevelCode: finalResultIssue.code,
+                lowLevelMessage: finalResultIssue.message,
+                requestContractPassed: true,
+                historyContractPassed: true,
+                parserRecoveredKnownShape: true,
+                retryAttempts: safety.steps,
+                repairAttempts: Math.max(0, turnResults.length - 1),
+                completionEvidence,
+                finalValidationGap: !strongCompletionEvidence,
+            });
+            const diagnosticSafety = withLlmDiagnosticSafety(safety, diagnostic);
+            if (strongCompletionEvidence) {
+                process.stdout.write(JSON.stringify(
+                    buildSuccessResponse(buildSalvagedCompletionSummary(completionEvidence), usage, diagnosticSafety),
+                ) + '\n');
+                process.exit(EXIT_SUCCESS);
+            }
             process.stdout.write(JSON.stringify(
                 buildErrorResponse(
                     finalResultIssue.code,
                     finalResultIssue.message,
                     true,
-                    safety,
-                    {
-                        input_tokens: totalInputTokens,
-                        output_tokens: totalOutputTokens,
-                        cost_usd: 0,
-                    },
+                    diagnosticSafety,
+                    usage,
                 ),
             ) + '\n');
             process.exit(EXIT_RUNTIME);

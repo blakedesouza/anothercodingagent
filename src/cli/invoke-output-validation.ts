@@ -1,4 +1,8 @@
 import { existsSync, statSync } from 'node:fs';
+import {
+    summarizeCompletionEvidence,
+    type CompletionEvidence,
+} from '../core/llm-contract-diagnostics.js';
 import { isAbsolutePath, isPathWithin, resolvePathWithInputStyle } from '../core/path-comparison.js';
 import { parseEmulatedToolCalls } from '../providers/tool-emulation.js';
 import type { ConversationItem } from '../types/conversation.js';
@@ -183,6 +187,24 @@ export function countFilesystemMutations(items: readonly ConversationItem[]): nu
             || CODE_MUTATION_TOOLS.has(item.toolName)
         ),
     ).length;
+}
+
+export function buildCompletionEvidence(
+    items: readonly ConversationItem[],
+    missingRequiredPaths: readonly string[] = [],
+    requiredOutputPaths: readonly string[] = [],
+): CompletionEvidence {
+    return {
+        changedFiles: [],
+        testsPassed: false,
+        changedTests: false,
+        requiredOutputsSatisfied: requiredOutputPaths.length > 0 && missingRequiredPaths.length === 0,
+        filesystemMutations: countFilesystemMutations(items),
+    };
+}
+
+export function buildSalvagedCompletionSummary(evidence: CompletionEvidence): string {
+    return `ACA salvaged the completion after malformed final output. ${summarizeCompletionEvidence(evidence)}`;
 }
 
 export function validateCodingCompletion(

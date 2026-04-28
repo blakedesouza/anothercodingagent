@@ -84,6 +84,30 @@ describe('llm contract diagnostics', () => {
         });
     });
 
+    it('classifies invalid final output with required-output evidence as salvaged success', () => {
+        expect(classifyLlmContractFailure({
+            lowLevelCode: 'turn.output_validation_failed',
+            lowLevelMessage: 'final response leaked raw tool-call-shaped text instead of a plain-language completion',
+            requestContractPassed: true,
+            historyContractPassed: true,
+            parserRecoveredKnownShape: true,
+            retryAttempts: 1,
+            repairAttempts: 0,
+            completionEvidence: {
+                changedFiles: [],
+                testsPassed: false,
+                changedTests: false,
+                requiredOutputsSatisfied: true,
+                filesystemMutations: 1,
+            },
+        })).toMatchObject({
+            classification: 'salvaged_success',
+            diagnosticBucket: 'post_required_output_empty_final',
+            salvaged: true,
+            salvageCandidate: true,
+        });
+    });
+
     it('classifies invalid request evidence as an ACA contract failure', () => {
         expect(classifyLlmContractFailure({
             lowLevelCode: 'llm.invalid_request',
