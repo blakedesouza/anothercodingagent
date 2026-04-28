@@ -1,13 +1,12 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
+import {
+    classifyLlmContractFailure,
+    type LlmContractClassification,
+    type LlmDiagnosticBucket,
+} from '../core/llm-contract-diagnostics.js';
 
-export type WorkflowFailureClassification =
-    | 'server_error_before_mutation'
-    | 'server_error_after_mutation'
-    | 'post_mutation_malformed_salvage_candidate'
-    | 'malformed_after_tool_results'
-    | 'contradictory_final_after_mutation'
-    | 'unknown_workflow_failure';
+export type WorkflowFailureClassification = LlmContractClassification;
 
 export interface WorkflowFailure {
     model: string;
@@ -16,7 +15,9 @@ export interface WorkflowFailure {
     testsPassed: boolean;
     errorCodes: string[];
     classification: WorkflowFailureClassification;
+    diagnosticBucket: LlmDiagnosticBucket;
     salvageCandidate: boolean;
+    salvaged: boolean;
     changedFiles: string[];
     acceptedToolCalls: number | null;
     resultPreview: string;
@@ -61,37 +62,45 @@ const CONTRADICTORY_FINAL_AFTER_MUTATION =
 function classifyWorkflowFailure(input: {
     success: boolean;
     testsPassed: boolean;
+    changedTests: boolean;
     errorCodes: readonly string[];
     changedFiles: readonly string[];
     acceptedToolCalls: number | null;
     resultPreview: string;
-}): { classification: WorkflowFailureClassification; salvageCandidate: boolean } {
-    const hasServerError = input.errorCodes.includes('llm.server_error');
-    const hasMalformed = input.errorCodes.includes('llm.malformed')
-        || input.errorCodes.includes('llm.malformed_response');
-    const changedFiles = input.changedFiles.length > 0;
-    const acceptedToolCalls = input.acceptedToolCalls ?? 0;
-
-    if (hasServerError && changedFiles) {
-        return { classification: 'server_error_after_mutation', salvageCandidate: true };
-    }
-    if (hasServerError) {
-        return { classification: 'server_error_before_mutation', salvageCandidate: false };
-    }
-    if (hasMalformed && changedFiles && input.testsPassed) {
-        return { classification: 'post_mutation_malformed_salvage_candidate', salvageCandidate: true };
-    }
-    if (hasMalformed && acceptedToolCalls > 0) {
-        return { classification: 'malformed_after_tool_results', salvageCandidate: false };
-    }
-    if (
-        input.success
-        && changedFiles
-        && CONTRADICTORY_FINAL_AFTER_MUTATION.test(input.resultPreview)
-    ) {
-        return { classification: 'contradictory_final_after_mutation', salvageCandidate: true };
-    }
-    return { classification: 'unknown_workflow_failure', salvageCandidate: false };
+}): {
+    classification: WorkflowFailureClassification;
+    diagnosticBucket: LlmDiagnosticBucket;
+    salvageCandidate: boolean;
+    salvaged: boolean;
+} {
+    const lowLevelCode = input.errorCodes[0] ?? (
+        input.success ? 'turn.output_validation_failed' : 'unknown_workflow_failure'
+    );
+    const diagnostic = classifyLlmContractFailure({
+        lowLevelCode,
+        lowLevelMessage: input.resultPreview,
+        requestContractPassed: true,
+        historyContractPassed: true,
+        parserRecoveredKnownShape: true,
+        retryAttempts: 0,
+        repairAttempts: 0,
+        completionEvidence: {
+            changedFiles: [...input.changedFiles],
+            testsPassed: input.testsPassed,
+            changedTests: input.changedTests,
+            requiredOutputsSatisfied: false,
+            filesystemMutations: input.changedFiles.length > 0
+                ? Math.max(input.changedFiles.length, input.acceptedToolCalls ?? 0)
+                : 0,
+        },
+        finalValidationGap: input.success && CONTRADICTORY_FINAL_AFTER_MUTATION.test(input.resultPreview),
+    });
+    return {
+        classification: diagnostic.classification,
+        diagnosticBucket: diagnostic.diagnosticBucket,
+        salvageCandidate: diagnostic.salvageCandidate,
+        salvaged: diagnostic.salvaged,
+    };
 }
 
 export function extractWorkflowFailures(results: unknown): WorkflowFailure[] {
@@ -102,8 +111,10 @@ export function extractWorkflowFailures(results: unknown): WorkflowFailure[] {
             success: false,
             testsPassed: false,
             errorCodes: ['tool_call_conformance.malformed_results'],
-            classification: 'unknown_workflow_failure',
+            classification: 'unknown_needs_artifact',
+            diagnosticBucket: 'unknown_needs_artifact',
             salvageCandidate: false,
+            salvaged: false,
             changedFiles: [],
             acceptedToolCalls: null,
             resultPreview: '',
@@ -115,6 +126,7 @@ export function extractWorkflowFailures(results: unknown): WorkflowFailure[] {
         .map(entry => {
             const success = booleanValue(entry.success);
             const testsPassed = booleanValue(entry.testsPassed);
+            const changedTests = booleanValue(entry.changedTests);
             const codes = errorCodes(entry.errorCodes);
             const changedFiles = stringArrayValue(entry.changedFiles);
             const acceptedToolCalls = numberValue(entry.acceptedToolCalls);
@@ -122,6 +134,7 @@ export function extractWorkflowFailures(results: unknown): WorkflowFailure[] {
             const classification = classifyWorkflowFailure({
                 success,
                 testsPassed,
+                changedTests,
                 errorCodes: codes,
                 changedFiles,
                 acceptedToolCalls,
@@ -134,7 +147,9 @@ export function extractWorkflowFailures(results: unknown): WorkflowFailure[] {
                 testsPassed,
                 errorCodes: codes,
                 classification: classification.classification,
+                diagnosticBucket: classification.diagnosticBucket,
                 salvageCandidate: classification.salvageCandidate,
+                salvaged: classification.salvaged,
                 changedFiles,
                 acceptedToolCalls,
                 resultPreview: preview,

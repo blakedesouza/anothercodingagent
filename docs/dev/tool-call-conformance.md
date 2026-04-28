@@ -51,16 +51,16 @@ Live failures are not automatically code bugs. First classify whether:
 
 ## Live Failure Classifications
 
-`npm run probe:tool-calls -- --live` writes additive classification fields into live workflow case results:
+`npm run probe:tool-calls -- --live` writes universal malformed-contract classification fields into live workflow case results:
 
-- `server_error_before_mutation`: provider/server failure before any file changes.
-- `server_error_after_mutation`: provider/server failure after file changes; inspect diff before rerun.
-- `post_mutation_malformed_salvage_candidate`: tests passed and files changed, but final LLM response malformed.
-- `malformed_after_tool_results`: malformed response after accepted tool calls, without a verified patch.
-- `contradictory_final_after_mutation`: final text claims failure despite successful mutation evidence.
-- `unknown_workflow_failure`: not enough evidence for a known bucket.
+- `salvaged_success`: work is proven complete even though the final model response was empty or malformed.
+- `provider_model_nonconformance`: ACA request/history/parser checks passed, but the provider/model returned unusable output.
+- `aca_contract_failure`: ACA sent an invalid request, schema, or tool-result history.
+- `aca_parser_gap`: provider output contained a recoverable shape ACA did not normalize.
+- `aca_final_validation_gap`: final validation accepted or rejected output without enough evidence.
+- `unknown_needs_artifact`: not enough evidence for ACA or provider/model blame.
 
-`salvageCandidate: true` means the artifact may contain a useful patch or completed output even when the invoke result failed.
+`diagnosticBucket` keeps the lower-level bucket, and `salvageCandidate: true` means the artifact may contain a useful patch or completed output even when the invoke result failed.
 
 For non-interactive turns, retryable provider failures are retried within the active model before ACA falls back to the next model. Empty assistant responses are retried as `llm.malformed`. Live probes remain opt-in because retries can spend provider quota and make slow transient failures slower.
 

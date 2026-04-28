@@ -28,8 +28,10 @@ describe('extractWorkflowFailures', () => {
             success: false,
             testsPassed: true,
             errorCodes: ['llm.malformed'],
-            classification: 'unknown_workflow_failure',
+            classification: 'provider_model_nonconformance',
+            diagnosticBucket: 'provider_empty_final',
             salvageCandidate: false,
+            salvaged: false,
             changedFiles: [],
             acceptedToolCalls: null,
             resultPreview: '',
@@ -43,8 +45,10 @@ describe('extractWorkflowFailures', () => {
             success: false,
             testsPassed: false,
             errorCodes: ['tool_call_conformance.malformed_results'],
-            classification: 'unknown_workflow_failure',
+            classification: 'unknown_needs_artifact',
+            diagnosticBucket: 'unknown_needs_artifact',
             salvageCandidate: false,
+            salvaged: false,
             changedFiles: [],
             acceptedToolCalls: null,
             resultPreview: '',
@@ -63,8 +67,10 @@ describe('extractWorkflowFailures', () => {
             acceptedToolCalls: 4,
             result: '',
         }])).toEqual([expect.objectContaining({
-            classification: 'server_error_before_mutation',
+            classification: 'unknown_needs_artifact',
+            diagnosticBucket: 'unknown_needs_artifact',
             salvageCandidate: false,
+            salvaged: false,
             changedFiles: [],
             acceptedToolCalls: 4,
             resultPreview: '',
@@ -83,8 +89,10 @@ describe('extractWorkflowFailures', () => {
             acceptedToolCalls: 7,
             result: '',
         }])[0]).toMatchObject({
-            classification: 'server_error_after_mutation',
+            classification: 'unknown_needs_artifact',
+            diagnosticBucket: 'unknown_needs_artifact',
             salvageCandidate: true,
+            salvaged: false,
             changedFiles: ['src/runtime.js'],
             acceptedToolCalls: 7,
         });
@@ -102,8 +110,50 @@ describe('extractWorkflowFailures', () => {
             acceptedToolCalls: 9,
             result: '',
         }])[0]).toMatchObject({
-            classification: 'post_mutation_malformed_salvage_candidate',
+            classification: 'salvaged_success',
+            diagnosticBucket: 'post_mutation_empty_final',
             salvageCandidate: true,
+            salvaged: true,
+        });
+    });
+
+    it('promotes test-passing post-mutation malformed cases to salvaged success', () => {
+        expect(extractWorkflowFailures([{
+            model: 'moonshotai/kimi-k2.6',
+            taskId: 'resume-workspace-fix',
+            overallPass: false,
+            success: false,
+            testsPassed: true,
+            changedTests: false,
+            errorCodes: ['llm.malformed'],
+            changedFiles: ['src/runtime.js'],
+            acceptedToolCalls: 7,
+            result: '',
+        }])[0]).toMatchObject({
+            classification: 'salvaged_success',
+            diagnosticBucket: 'post_mutation_empty_final',
+            salvageCandidate: true,
+            salvaged: true,
+        });
+    });
+
+    it('keeps mutation-only malformed cases as provider/model nonconformance candidates', () => {
+        expect(extractWorkflowFailures([{
+            model: 'moonshotai/kimi-k2.6',
+            taskId: 'runtime-half-fix',
+            overallPass: false,
+            success: false,
+            testsPassed: false,
+            changedTests: false,
+            errorCodes: ['llm.malformed'],
+            changedFiles: ['src/runtime.js'],
+            acceptedToolCalls: 5,
+            result: '',
+        }])[0]).toMatchObject({
+            classification: 'provider_model_nonconformance',
+            diagnosticBucket: 'provider_empty_final',
+            salvageCandidate: true,
+            salvaged: false,
         });
     });
 
@@ -119,8 +169,10 @@ describe('extractWorkflowFailures', () => {
             acceptedToolCalls: 3,
             result: '',
         }])[0]).toMatchObject({
-            classification: 'malformed_after_tool_results',
+            classification: 'provider_model_nonconformance',
+            diagnosticBucket: 'provider_empty_final',
             salvageCandidate: false,
+            salvaged: false,
         });
     });
 
@@ -136,8 +188,10 @@ describe('extractWorkflowFailures', () => {
             acceptedToolCalls: 8,
             result: 'The tool returned an error, so I could not complete the request.',
         }])[0]).toMatchObject({
-            classification: 'contradictory_final_after_mutation',
+            classification: 'aca_final_validation_gap',
+            diagnosticBucket: 'final_validation_gap',
             salvageCandidate: true,
+            salvaged: false,
         });
     });
 
@@ -153,8 +207,10 @@ describe('extractWorkflowFailures', () => {
             acceptedToolCalls: null,
             result: 'Nope',
         }])[0]).toMatchObject({
-            classification: 'unknown_workflow_failure',
+            classification: 'unknown_needs_artifact',
+            diagnosticBucket: 'unknown_needs_artifact',
             salvageCandidate: false,
+            salvaged: false,
         });
     });
 });
