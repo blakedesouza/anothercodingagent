@@ -34,4 +34,35 @@ describe('ACA debug UI static contracts', () => {
         expect(serverSource).toContain('name="token"');
         expect(serverSource).toContain('Open dashboard');
     });
+
+    it('normalizes session model display instead of exposing raw config objects', () => {
+        expect(serverSource).toContain('function modelDisplayName(modelConfig)');
+        expect(serverSource).toContain('modelDisplayName(manifest?.configSnapshot?.model)');
+        expect(serverSource).toContain('modelConfig: manifest?.configSnapshot?.model || null');
+        expect(appHtml).toContain('function formatModelName(value)');
+        expect(appHtml).not.toContain("summaryRow('Model', sessionInfo.model || 'unknown')");
+    });
+
+    it('auto-refresh follows the newest session until the user pins a session', () => {
+        expect(appHtml).toContain('autoFollowLatestSession: true');
+        expect(appHtml).toContain('userPinnedSessionId: null');
+        expect(appHtml).toContain('function syncSelectedSession()');
+        expect(appHtml).toContain('state.autoFollowLatestSession = false');
+        expect(appHtml).toContain('state.userPinnedSessionId = row.dataset.id');
+    });
+
+    it('labels selected historical errors separately from current latest health', () => {
+        expect(serverSource).toContain('latestErrorAt');
+        expect(serverSource).toContain('latestOutcome');
+        expect(appHtml).toContain('function renderSessionFreshnessBanner(session)');
+        expect(appHtml).toContain('Historical error');
+        expect(appHtml).toContain('Latest session is healthy');
+        expect(appHtml).toContain("last 24h · historical");
+    });
+
+    it('separates session age from last turn duration in quick stats', () => {
+        expect(appHtml).toContain("quickStat('Session Age'");
+        expect(appHtml).toContain("quickStat('Last Turn'");
+        expect(appHtml).not.toContain("quickStat('Duration', durationBetween(session.startedAt, session.endedAt))");
+    });
 });

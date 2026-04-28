@@ -444,10 +444,10 @@
     border: 1px solid color-mix(in oklab, var(--err) 35%, transparent);
   }
   .quick-stats {
-    display: flex;
-    gap: 22px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    gap: 12px 22px;
     margin-top: 2px;
-    flex-wrap: wrap;
   }
   .qstat {
     display: grid;
@@ -820,6 +820,19 @@
     padding-top: 16px;
     border-top: 1px solid color-mix(in oklab, var(--err) 30%, transparent);
   }
+  .notice {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    color: var(--text-1);
+    font-size: 12px;
+  }
+  .notice.ok { border-color: color-mix(in oklab, var(--ok) 45%, var(--line)); }
+  .notice.warn { border-color: color-mix(in oklab, var(--warn) 45%, var(--line)); }
   .tweaks {
     position: fixed;
     right: 16px;
@@ -1268,6 +1281,8 @@ const state = {
   sessions: [],
   consults: [],
   selectedSessionId: null,
+  userPinnedSessionId: null,
+  autoFollowLatestSession: true,
   selectedConsultId: null,
   sessionDetail: null,
   sessionEvents: [],
@@ -1404,9 +1419,7 @@ async function loadAll() {
     state.sessions = Array.isArray(sessionsPayload.sessions) ? sessionsPayload.sessions : [];
     state.consults = Array.isArray(consultsPayload.consults) ? consultsPayload.consults : [];
 
-    if (!state.selectedSessionId && state.sessions.length) {
-      state.selectedSessionId = state.sessions[0].sessionId;
-    }
+    syncSelectedSession();
     syncSelectedConsult();
 
     renderChrome();
@@ -1494,6 +1507,21 @@ function syncSelectedConsult() {
   }
 }
 
+function syncSelectedSession() {
+  const latest = state.sessions[0];
+  if (!latest) {
+    state.selectedSessionId = null;
+    state.sessionDetail = null;
+    return;
+  }
+  const selectedStillExists = state.sessions.some((session) => session.sessionId === state.selectedSessionId);
+  if (state.autoFollowLatestSession || !selectedStillExists) {
+    state.selectedSessionId = latest.sessionId;
+    state.autoFollowLatestSession = true;
+    state.userPinnedSessionId = null;
+  }
+}
+
 async function loadSession(sessionId, rerenderSidebar = true) {
   state.selectedSessionId = sessionId;
   const [detail, eventsPayload, conversationPayload] = await Promise.all([
@@ -1531,6 +1559,10 @@ function renderKpis(overview) {
   const toolErrorSeries = (last.daily && last.daily.toolErrors) || [];
   const recentErrorSeries = (last.daily && last.daily.recentErrors) || [];
   const recentErrorCount = Array.isArray(overview.recentErrors) ? overview.recentErrors.length : 0;
+  const latestSession = Array.isArray(overview.recentSessions) ? overview.recentSessions[0] : null;
+  const recentErrorSubtext = recentErrorCount
+    ? latestSession && latestSession.hasErrors ? 'last 24h · latest has errors' : 'last 24h · historical'
+    : 'last 24h · all clear';
   const ratio = last.tokensIn > 0 ? `${Math.round((Number(last.tokensOut || 0) / Number(last.tokensIn || 1)) * 100)}% ratio` : 'no output yet';
   const avgCost = Number(last.sessionCount || 0) > 0 ? formatMoney(Number(last.totalCostUsd || 0) / Number(last.sessionCount || 1)) : '$0.0000';
   return [
@@ -1538,7 +1570,7 @@ function renderKpis(overview) {
     renderKpiCard('7d Cost', `${formatMoney(last.totalCostUsd || 0)}<span class="unit">USD</span>`, `avg ${avgCost}/session`, costSeries, '--info'),
     renderKpiCard('7d Tokens', `${formatCompact(last.tokensIn || 0)}<span class="unit">in</span>`, `${formatCompact(last.tokensOut || 0)} out · ${ratio}`, tokenSeries, '--text-2'),
     renderKpiCard('Tool Errors', `${formatPercent(last.toolErrorRate || 0)}<span class="unit">%</span>`, `${formatCompact(last.toolErrors || 0)} / ${formatCompact(last.toolCalls || 0)} calls`, toolErrorSeries, '--ok'),
-    renderKpiCard('Recent Errors', formatCompact(recentErrorCount), recentErrorCount ? 'last 24h · investigate' : 'last 24h · all clear', recentErrorSeries, recentErrorCount ? '--err' : '--ok'),
+    renderKpiCard('Recent Errors', formatCompact(recentErrorCount), recentErrorSubtext, recentErrorSeries, recentErrorCount ? '--err' : '--ok'),
   ].join('');
 }
 
@@ -1566,7 +1598,7 @@ function renderSessionSidebar() {
       session.sessionId,
       session.workspaceId,
       session.workspaceRoot,
-      session.model,
+      formatModelName(session.model),
       session.status,
       session.startedAt,
       session.endedAt,
@@ -1581,13 +1613,26 @@ function renderSessionSidebar() {
   $('#sidebarTitle').textContent = 'Sessions';
   $('#sidebarCounter').textContent = `${state.sessions.length} total`;
   $('#sidebarSearch').placeholder = 'Filter sessions…';
+  const followLatest = state.view === 'sessions' && !state.autoFollowLatestSession
+    ? '<button class="chip" id="followLatest" type="button">Follow latest</button>'
+    : '';
   $('#sidebarChips').innerHTML = renderChipRow([
     ['all', 'All'],
     ['active', 'Active'],
     ['ended', 'Ended'],
     ['errors', 'Errors'],
-  ], state.sessionFilter);
+  ], state.sessionFilter) + followLatest;
   bindChipClicks('session');
+  const followLatestButton = $('#followLatest');
+  if (followLatestButton) {
+    followLatestButton.addEventListener('click', async () => {
+      state.autoFollowLatestSession = true;
+      state.userPinnedSessionId = null;
+      syncSelectedSession();
+      renderSidebar();
+      if (state.selectedSessionId) await loadSession(state.selectedSessionId, false);
+    });
+  }
 
   if (!sessions.length) {
     $('#sidebarList').innerHTML = '<div class="empty-state">No sessions matched the current filters.</div>';
@@ -1667,7 +1712,7 @@ function renderChipRow(items, active) {
 }
 
 function bindChipClicks(kind) {
-  $$('#sidebarChips .chip').forEach((button) => {
+  $$('#sidebarChips .chip[data-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       if (kind === 'session') state.sessionFilter = button.dataset.filter;
       else {
@@ -1685,6 +1730,8 @@ function bindSidebarRows() {
     row.addEventListener('click', () => {
       if (row.dataset.kind === 'session') {
         setView('sessions');
+        state.autoFollowLatestSession = false;
+        state.userPinnedSessionId = row.dataset.id;
         loadSession(row.dataset.id).catch(renderFatal);
       } else {
         setView('consult');
@@ -1721,7 +1768,10 @@ function renderSessionDetail() {
   $('#statusBadge').innerHTML = `<span class="status-dot ${escapeHtml(session.hasErrors ? 'error' : session.status || 'ended')}"></span><span>${escapeHtml(session.hasErrors ? 'error' : session.status || 'unknown')}</span>`;
   $('#quickStats').innerHTML = [
     quickStat('Started', formatDateTime(session.startedAt)),
-    quickStat('Duration', durationBetween(session.startedAt, session.endedAt)),
+    session.status === 'active'
+      ? quickStat('Session Age', durationBetween(session.startedAt, session.endedAt))
+      : quickStat('Session Span', durationBetween(session.startedAt, session.endedAt)),
+    quickStat('Last Turn', formatDurationMs(session.lastTurnDurationMs) || '—'),
     quickStat('Turns', formatCompact(session.turnCount || detail.turns?.length || 0)),
     quickStat('Tokens', `${formatCompact(session.tokensIn || sum(detail.turns, 'tokensIn'))} / ${formatCompact(session.tokensOut || sum(detail.turns, 'tokensOut'))}`),
     quickStat('Cost', formatMoney(session.totalCostUsd || sum(detail.turns, 'costUsd'))),
@@ -1729,7 +1779,7 @@ function renderSessionDetail() {
 
   $('#eventsCount').textContent = String(state.sessionEvents.length);
   $('#conversationCount').textContent = String(state.sessionConversation.length);
-  $('#turns').innerHTML = renderTurns(detail.turns || []);
+  $('#turns').innerHTML = renderSessionFreshnessBanner(session) + renderTurns(detail.turns || []);
   $('#toolBars').innerHTML = renderToolBars((state.overview && state.overview.last7Days && state.overview.last7Days.topTools) || []);
   $('#sessionErrors').innerHTML = renderSessionErrors(detail.errors || [], state.sessionEvents, session);
   $('#events').innerHTML = renderEvents(state.sessionEvents);
@@ -1859,6 +1909,25 @@ function renderToolBars(tools) {
     </div>`;
 }
 
+function renderSessionFreshnessBanner(session) {
+  if (!session) return '';
+  const latestSession = state.sessions[0];
+  const selectedIsLatest = latestSession && latestSession.sessionId === session.sessionId;
+  if (session.hasErrors && !selectedIsLatest) {
+    const latestHealthy = latestSession && !latestSession.hasErrors;
+    const errorCode = session.latestErrorCode ? ` with ${escapeHtml(session.latestErrorCode)}` : '';
+    return `
+      <div class="notice ${latestHealthy ? 'ok' : 'warn'}">
+        <b>Historical error</b>
+        <span>This selected session failed earlier${errorCode}. ${latestHealthy ? 'Latest session is healthy.' : 'Latest session also needs attention.'}</span>
+      </div>`;
+  }
+  if (!session.hasErrors && selectedIsLatest) {
+    return '<div class="notice ok"><b>Latest session is healthy</b><span>No errors indexed for the selected latest run.</span></div>';
+  }
+  return '';
+}
+
 function renderSessionErrors(errors, events, session) {
   if (!errors.length) return '';
   const diagnosticEvents = Array.isArray(events) ? events : [];
@@ -1873,7 +1942,7 @@ function renderSessionErrors(errors, events, session) {
             <b>${escapeHtml(error.code || 'error')}</b>
             <div>${escapeHtml(error.message || '')}</div>
             <div class="summary-kv" style="margin-top:10px">
-              ${summaryRow('Model', sessionInfo.model || 'unknown')}
+              ${summaryRow('Model', formatModelName(sessionInfo.model))}
               ${summaryRow('Session', sessionInfo.sessionId || 'unknown')}
               ${summaryRow('Workspace', sessionInfo.workspaceRoot || sessionInfo.workspaceId || 'unknown')}
               ${summaryRow('Event', error.eventId || 'not indexed')}
@@ -2135,6 +2204,13 @@ function formatCompact(value) {
 
 function formatPercent(value) {
   return (Number(value || 0) * 100).toFixed(1);
+}
+
+function formatModelName(value) {
+  if (!value) return 'unknown';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return value.default || value.model || value.id || 'unknown';
+  return String(value);
 }
 
 function formatUsage(usage) {

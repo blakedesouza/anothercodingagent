@@ -722,6 +722,7 @@ function diskSessionInfo(sessionId) {
 
 function enrichSession(session, manifest = readManifest(session.sessionId)) {
   const metrics = sessionAggregate(session.sessionId);
+  const diagnostics = sessionLatestDiagnostics(session.sessionId);
   const errorCount = Number(metrics?.errorCount || 0);
   return {
     ...session,
@@ -735,7 +736,9 @@ function enrichSession(session, manifest = readManifest(session.sessionId)) {
     errorCount,
     hasErrors: errorCount > 0,
     workspaceRoot: manifest?.configSnapshot?.workspaceRoot || null,
-    model: manifest?.configSnapshot?.model || null,
+    model: modelDisplayName(manifest?.configSnapshot?.model),
+    modelConfig: manifest?.configSnapshot?.model || null,
+    ...diagnostics,
     ephemeral: manifest?.ephemeral === true,
     disk: diskSessionInfo(session.sessionId),
   };
@@ -754,6 +757,33 @@ function sessionAggregate(sessionId) {
      WHERE session_id = ?`,
     [sessionId],
   );
+}
+
+function sessionLatestDiagnostics(sessionId) {
+  const latestError = dbQueryOne(
+    `SELECT timestamp, payload
+     FROM events
+     WHERE session_id = ? AND event_type = 'error'
+     ORDER BY timestamp DESC
+     LIMIT 1`,
+    [sessionId],
+  );
+  const latestTurnEnd = dbQueryOne(
+    `SELECT timestamp, payload
+     FROM events
+     WHERE session_id = ? AND event_type = 'turn.ended'
+     ORDER BY timestamp DESC
+     LIMIT 1`,
+    [sessionId],
+  );
+  const errorPayload = latestError ? safeJson(latestError.payload) : null;
+  const turnPayload = latestTurnEnd ? safeJson(latestTurnEnd.payload) : null;
+  return {
+    latestErrorAt: latestError?.timestamp || null,
+    latestErrorCode: errorPayload?.code || null,
+    latestOutcome: turnPayload?.outcome || null,
+    lastTurnDurationMs: turnPayload?.duration_ms || null,
+  };
 }
 
 function buildDailySeriesFromRecords(records, fieldName, days) {
@@ -815,6 +845,15 @@ function safeJson(text) {
 
 function numberOrZero(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function modelDisplayName(modelConfig) {
+  if (!modelConfig) return null;
+  if (typeof modelConfig === 'string') return modelConfig;
+  if (typeof modelConfig === 'object') {
+    return modelConfig.default || modelConfig.model || modelConfig.id || null;
+  }
+  return String(modelConfig);
 }
 
 function clampInt(raw, min, max, fallback) {
