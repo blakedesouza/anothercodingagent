@@ -21,6 +21,7 @@
     "verify": "npm run typecheck && npm run lint && npm test && npm run build",
     "bakeoff:workflow": "node --import tsx scripts/live-workflow-bakeoff.ts",
     "probe:native-tools": "node --import tsx scripts/native-tool-probe.ts",
+    "probe:malformed": "node --import tsx scripts/malformed-contract-probe.ts",
     "probe:tool-calls": "node --import tsx scripts/tool-call-conformance.ts",
     "lint": "eslint src/ test/"
   },

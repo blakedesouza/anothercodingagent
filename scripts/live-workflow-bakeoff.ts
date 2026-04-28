@@ -77,7 +77,10 @@ interface CaseResult {
     validationStderr: string;
     overallPass: boolean;
     classification: string | null;
+    diagnosticBucket: string | null;
     salvageCandidate: boolean;
+    salvaged: boolean;
+    artifactPath: string | null;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -1828,13 +1831,24 @@ async function runCase(
         validationStderr: validation.stderr.trim(),
         overallPass: Boolean(success && testsPassed && !changedTests),
         classification: null,
+        diagnosticBucket: null,
         salvageCandidate: false,
+        salvaged: false,
+        artifactPath: null,
     };
+    const caseFile = join(outDir, `${sanitizeName(model)}--${sanitizeName(task.id)}.json`);
     const [failure] = extractWorkflowFailures([result]);
     result.classification = failure?.classification ?? null;
+    result.diagnosticBucket = failure?.diagnosticBucket ?? null;
     result.salvageCandidate = failure?.salvageCandidate ?? false;
+    result.salvaged = failure?.salvaged ?? false;
+    result.artifactPath = caseFile;
+    result.overallPass = Boolean(
+        (success || result.salvaged)
+        && testsPassed
+        && !changedTests
+    );
 
-    const caseFile = join(outDir, `${sanitizeName(model)}--${sanitizeName(task.id)}.json`);
     await fs.writeFile(caseFile, JSON.stringify(result, null, 2) + '\n', 'utf8');
     await fs.rm(caseRoot, { recursive: true, force: true });
 
@@ -1873,7 +1887,9 @@ function buildSummary(models: string[], results: CaseResult[]): Record<string, u
         totalRejectedToolCalls: 0,
         totalElapsedMs: 0,
         classifications: {} as Record<string, number>,
+        diagnosticBuckets: {} as Record<string, number>,
         salvageCandidates: 0,
+        salvaged: 0,
     }])) as Record<string, {
         cases: number;
         pass: number;
@@ -1884,7 +1900,9 @@ function buildSummary(models: string[], results: CaseResult[]): Record<string, u
         totalRejectedToolCalls: number;
         totalElapsedMs: number;
         classifications: Record<string, number>;
+        diagnosticBuckets: Record<string, number>;
         salvageCandidates: number;
+        salvaged: number;
     }>;
 
     for (const result of results) {
@@ -1901,7 +1919,12 @@ function buildSummary(models: string[], results: CaseResult[]): Record<string, u
             bucket.classifications[result.classification] =
                 (bucket.classifications[result.classification] ?? 0) + 1;
         }
+        if (result.diagnosticBucket) {
+            bucket.diagnosticBuckets[result.diagnosticBucket] =
+                (bucket.diagnosticBuckets[result.diagnosticBucket] ?? 0) + 1;
+        }
         if (result.salvageCandidate) bucket.salvageCandidates += 1;
+        if (result.salvaged) bucket.salvaged += 1;
     }
 
     return summary;
