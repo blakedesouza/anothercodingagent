@@ -510,6 +510,25 @@ describe('StatusLine', () => {
         status.stop();
     });
 
+    it('clamps elapsed time at zero if the clock moves backwards', () => {
+        vi.useFakeTimers();
+        let nowMs = 1000;
+        const { output, err, reset } = makeOutput({});
+        const status = new StatusLine({ output, now: () => nowMs });
+
+        status.start();
+        reset();
+
+        nowMs = 750;
+        vi.advanceTimersByTime(250);
+
+        const out = err();
+        expect(out).toContain('0.0s');
+        expect(out).not.toContain('-');
+
+        status.stop();
+    });
+
     it('non-TTY: single static line with timestamp, no \\r', () => {
         const { output, err } = makeOutput({ stderrTTY: false, stderrColor: 0 });
         const nowMs = new Date(2026, 3, 3, 9, 15, 0).getTime();

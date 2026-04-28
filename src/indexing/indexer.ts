@@ -386,6 +386,7 @@ export class Indexer {
     private _indexing = false;
     private _ready = false;
     private _buildPromise: Promise<IndexResult> | null = null;
+    private _cancelRequested = false;
 
     constructor(
         rootDir: string,
@@ -444,11 +445,20 @@ export class Indexer {
             };
         }
 
+        this._cancelRequested = false;
         this._buildPromise = this.doBuildIndex();
         try {
             return await this._buildPromise;
         } finally {
             this._buildPromise = null;
+        }
+    }
+
+    async cancelBackgroundWork(): Promise<void> {
+        this._cancelRequested = true;
+        const build = this._buildPromise;
+        if (build) {
+            await build.catch(() => undefined);
         }
     }
 
@@ -489,6 +499,10 @@ export class Indexer {
             this.progress?.(0, files.length);
 
             for (let i = 0; i < files.length; i++) {
+                if (this._cancelRequested) {
+                    result.warnings.push('Indexing cancelled');
+                    break;
+                }
                 const relPath = files[i];
                 const fileResult = await this.indexFile(relPath);
                 if (fileResult.status === 'indexed') {
@@ -504,6 +518,10 @@ export class Indexer {
             const stats = this.store.getStats();
             result.chunksCreated = stats.chunkCount;
             result.symbolsExtracted = stats.symbolCount;
+
+            if (this._cancelRequested) {
+                return result;
+            }
 
             this.store.setMetadata('lastFullBuild', new Date().toISOString());
             this.store.setMetadata('fileCount', String(stats.fileCount));
@@ -536,6 +554,16 @@ export class Indexer {
      * Compares content hashes against what's stored.
      */
     async incrementalUpdate(filePaths?: string[]): Promise<IndexResult> {
+        if (this._cancelRequested) {
+            return {
+                filesIndexed: 0,
+                filesSkipped: 0,
+                chunksCreated: 0,
+                symbolsExtracted: 0,
+                embeddingFailures: 0,
+                warnings: ['Indexing cancelled'],
+            };
+        }
         if (this._indexing) {
             return {
                 filesIndexed: 0,

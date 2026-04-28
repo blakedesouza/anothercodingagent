@@ -45,25 +45,29 @@ function makeConfig(overrides: Partial<TurnEngineConfig> = {}): TurnEngineConfig
     };
 }
 
+function mockCapabilities(): ModelCapabilities {
+    return {
+        maxContext: 128_000,
+        maxOutput: 4096,
+        supportsTools: 'native',
+        supportsVision: false,
+        supportsStreaming: true,
+        supportsPrefill: false,
+        supportsEmbedding: false,
+        embeddingModels: [],
+        toolReliability: 'native',
+        costPerMillion: { input: 3, output: 15 },
+        specialFeatures: [],
+        bytesPerToken: 3,
+    };
+}
+
 /** Create a mock provider that yields predetermined stream events for each call. */
 function createMockProvider(responseQueue: StreamEvent[][]): ProviderDriver {
     let callIndex = 0;
     return {
         capabilities(): ModelCapabilities {
-            return {
-                maxContext: 128_000,
-                maxOutput: 4096,
-                supportsTools: 'native',
-                supportsVision: false,
-                supportsStreaming: true,
-                supportsPrefill: false,
-                supportsEmbedding: false,
-                embeddingModels: [],
-                toolReliability: 'native',
-                costPerMillion: { input: 3, output: 15 },
-                specialFeatures: [],
-                bytesPerToken: 3,
-            };
+            return mockCapabilities();
         },
         async *stream(_request: ModelRequest): AsyncIterable<StreamEvent> {
             const events = responseQueue[callIndex++];
@@ -262,8 +266,51 @@ describe('TurnEngine', () => {
         expect(isMessage(msg1) && msg1.role).toBe('assistant');
     });
 
-    it('empty response does not count as assistant_final', async () => {
+    it('hides tools for trivial conversational input', async () => {
+        const requests: ModelRequest[] = [];
+        const provider: ProviderDriver = {
+            capabilities: () => mockCapabilities(),
+            async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
+                requests.push(request);
+                yield* textResponse('Hello!');
+            },
+            validate() {
+                return { ok: true as const, value: undefined };
+            },
+        };
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(makeConfig(), 'hi', []);
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(requests[0].tools).toBeUndefined();
+    });
+
+    it('keeps tools for coding requests', async () => {
+        const requests: ModelRequest[] = [];
+        const provider: ProviderDriver = {
+            capabilities: () => mockCapabilities(),
+            async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
+                requests.push(request);
+                yield* textResponse('I can inspect the file.');
+            },
+            validate() {
+                return { ok: true as const, value: undefined };
+            },
+        };
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(makeConfig(), 'please inspect src/app.ts', []);
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(requests[0].tools?.map(tool => tool.name)).toContain('echo');
+    });
+
+    it('repeated empty response does not count as assistant_final', async () => {
         const provider = createMockProvider([
+            emptyResponse(),
             emptyResponse(),
         ]);
         registerEchoTool(registry);
@@ -280,6 +327,103 @@ describe('TurnEngine', () => {
         expect(result.items).toHaveLength(1);
         const msg0 = result.items[0];
         expect(isMessage(msg0) && msg0.role).toBe('user');
+    });
+
+    it('interactive empty assistant response retries before succeeding', async () => {
+        const provider = createMockProvider([
+            emptyResponse(10, 17),
+            textResponse('Recovered from empty response'),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+        const deltas: string[] = [];
+
+        const result = await engine.executeTurn(
+            makeConfig({ onTextDelta: text => deltas.push(text) }),
+            'Hi',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(result.lastError).toBeUndefined();
+        expect(deltas).toEqual(['Recovered from empty response']);
+        const assistant = result.items.filter(isMessage).find(item => item.role === 'assistant');
+        expect(assistant?.parts).toEqual([{ type: 'text', text: 'Recovered from empty response' }]);
+    });
+
+    it('empty assistant retry adds an explicit recovery instruction', async () => {
+        const requests: ModelRequest[] = [];
+        let call = 0;
+        const provider: ProviderDriver = {
+            capabilities: () => mockCapabilities(),
+            async *stream(request: ModelRequest): AsyncIterable<StreamEvent> {
+                requests.push(request);
+                call++;
+                if (call === 1) {
+                    yield* emptyResponse(10, 17);
+                    return;
+                }
+                yield* textResponse('Recovered after recovery prompt');
+            },
+            validate() {
+                return { ok: true as const, value: undefined };
+            },
+        };
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(makeConfig(), 'Hi', []);
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(requests).toHaveLength(2);
+        expect(requests[1].messages.at(-1)?.role).toBe('user');
+        expect(String(requests[1].messages.at(-1)?.content)).toContain('Your previous assistant response was empty');
+        expect(requests[1].tools?.length).toBe(requests[0].tools?.length);
+    });
+
+    it('interactive provider malformed_response retries before succeeding when no text was streamed', async () => {
+        const provider = createMockProvider([
+            errorResponse('llm.malformed_response'),
+            textResponse('Recovered from malformed stream'),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+        const deltas: string[] = [];
+
+        const result = await engine.executeTurn(
+            makeConfig({ onTextDelta: text => deltas.push(text) }),
+            'Hi',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('assistant_final');
+        expect(result.lastError).toBeUndefined();
+        expect(deltas).toEqual(['Recovered from malformed stream']);
+        const assistant = result.items.filter(isMessage).find(item => item.role === 'assistant');
+        expect(assistant?.parts).toEqual([{ type: 'text', text: 'Recovered from malformed stream' }]);
+    });
+
+    it('interactive provider error after streamed text does not retry duplicate terminal output', async () => {
+        const provider = createMockProvider([
+            [
+                { type: 'text_delta', text: 'partial text' },
+                { type: 'error', error: { code: 'llm.server_error', message: 'stream broke' } },
+            ],
+            textResponse('should not print'),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+        const deltas: string[] = [];
+
+        const result = await engine.executeTurn(
+            makeConfig({ onTextDelta: text => deltas.push(text) }),
+            'Hi',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('aborted');
+        expect(result.lastError).toEqual({ code: 'llm.server_error', message: 'stream broke' });
+        expect(deltas).toEqual(['partial text']);
     });
 
     it('non-interactive provider server_error retries before succeeding', async () => {

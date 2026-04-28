@@ -70,6 +70,7 @@ export class StatusLine {
     private readonly caps: TerminalCapabilities;
     private readonly chalk: InstanceType<typeof Chalk>;
     private readonly getNow: () => number;
+    private readonly getTimestampNow: () => number;
     private startMs = 0;
     private interval: ReturnType<typeof setInterval> | null = null;
     private currentMessage = 'Thinking';
@@ -79,7 +80,8 @@ export class StatusLine {
         this.output = options.output;
         this.caps = options.output.getCapabilities();
         this.chalk = new Chalk({ level: colorDepthToChalkLevel(this.caps.stderr.colorDepth) });
-        this.getNow = options.now ?? (() => Date.now());
+        this.getNow = options.now ?? (() => performance.now());
+        this.getTimestampNow = options.now ?? (() => Date.now());
     }
 
     /** Start showing the status line. */
@@ -94,7 +96,7 @@ export class StatusLine {
         this.active = true;
 
         if (!this.caps.stderr.isTTY) {
-            this.output.stderr(`${timestampPrefix(this.startMs)}${this.currentMessage}...\n`);
+            this.output.stderr(`${timestampPrefix(this.getTimestampNow())}${this.currentMessage}...\n`);
             return;
         }
 
@@ -115,7 +117,7 @@ export class StatusLine {
     }
 
     private renderTTY(): void {
-        const elapsedMs = this.getNow() - this.startMs;
+        const elapsedMs = Math.max(0, this.getNow() - this.startMs);
         const elapsed = (elapsedMs / 1000).toFixed(1);
         this.output.stderr(`\r${this.chalk.dim(`${this.currentMessage}... (${elapsed}s)`)}`);
     }

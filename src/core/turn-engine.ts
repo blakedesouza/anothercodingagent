@@ -73,6 +73,11 @@ const FALLBACK_TRIGGER_CODES = new Set([
     'llm.malformed_response',
 ]);
 
+const EMPTY_ASSISTANT_RECOVERY_PROMPT =
+    'Your previous assistant response was empty. Retry the same task now. ' +
+    'If a tool is needed, make an actual tool call. If the task is complete or conversational, return visible final content. ' +
+    'Follow all earlier system instructions and response format/schema. Do not return only hidden reasoning or thinking.';
+
 function shouldRetryLlmStep(
     _code: string,
     attempts: number,
@@ -83,6 +88,25 @@ function shouldRetryLlmStep(
 
 function sleep(ms: number): Promise<void> {
     return ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
+function withEmptyAssistantRecoveryPrompt(request: ModelRequest): ModelRequest {
+    return {
+        ...request,
+        messages: [
+            ...request.messages,
+            { role: 'user', content: EMPTY_ASSISTANT_RECOVERY_PROMPT },
+        ],
+    };
+}
+
+function isTriviallyConversationalInput(input: string): boolean {
+    const normalized = input
+        .trim()
+        .toLowerCase()
+        .replace(/[.!?]+$/g, '')
+        .trim();
+    return /^(hi|hello|hey|yo|sup|thanks|thank you|ok|okay|cool|nice|who are you|what can you do|help)$/.test(normalized);
 }
 
 // --- Confusion limit constants ---
@@ -622,7 +646,8 @@ export class TurnEngine extends EventEmitter {
                 : Math.max(0, toolCallLimit - totalAcceptedToolCalls);
             const toolResultByteBudgetExhausted = toolResultByteLimit !== undefined
                 && totalToolResultBytes >= toolResultByteLimit;
-            const availableTools = remainingToolCalls === 0 || toolResultByteBudgetExhausted
+            const conversationalToolsHidden = stepNumber === 1 && isTriviallyConversationalInput(userInput);
+            const availableTools = conversationalToolsHidden || remainingToolCalls === 0 || toolResultByteBudgetExhausted
                 ? []
                 : this.getAvailableTools(config.allowedTools);
 
@@ -703,6 +728,8 @@ export class TurnEngine extends EventEmitter {
             }
             let guardrail: string | undefined = toolResultByteBudgetExhausted
                 ? 'tool_result_byte_budget_exhausted_tools_hidden'
+                : conversationalToolsHidden
+                    ? 'conversational_input_tools_hidden'
                 : undefined;
 
             if (inputTokenLimit !== undefined && estimatedInputTokens > inputTokenLimit && request.tools) {
@@ -793,7 +820,10 @@ export class TurnEngine extends EventEmitter {
                     break;
                 }
 
-                if (attemptError?.type === 'error' && !config.interactive) {
+                const canRetryAttempt =
+                    !config.interactive || attemptTextDeltas.length === 0;
+
+                if (attemptError?.type === 'error' && canRetryAttempt) {
                     const policy = getRetryPolicy(attemptError.error.code);
                     if (shouldRetryLlmStep(attemptError.error.code, llmAttempts, policy)) {
                         const delay = computeBackoff(llmAttempts, policy);
@@ -808,9 +838,10 @@ export class TurnEngine extends EventEmitter {
                     && normalizedAttempt.textParts.length === 0
                     && normalizedAttempt.toolCallParts.length === 0;
 
-                if (emptyAssistantAttempt && !config.interactive) {
+                if (emptyAssistantAttempt) {
                     const policy = getRetryPolicy('llm.malformed');
                     if (shouldRetryLlmStep('llm.malformed', llmAttempts, policy)) {
+                        request = withEmptyAssistantRecoveryPrompt(request);
                         const delay = computeBackoff(llmAttempts, policy);
                         await sleep(delay);
                         continue;

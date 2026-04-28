@@ -482,6 +482,52 @@ describe('M6 review: buildIndex concurrency guard', () => {
     });
 });
 
+describe('background indexing cancellation', () => {
+    let tmpDir: string;
+    let store: IndexStore;
+
+    beforeEach(() => {
+        tmpDir = makeTmpDir();
+        for (let i = 0; i < 5; i++) {
+            writeFileSync(join(tmpDir, `file-${i}.ts`), `export const value${i} = ${i};\n`);
+        }
+        store = new IndexStore(join(tmpDir, 'test-index.db'));
+        store.open();
+    });
+    afterEach(() => { store.close(); rmSync(tmpDir, { recursive: true, force: true }); });
+
+    it('waits for active background embedding work before cleanup continues', async () => {
+        let releaseCurrentEmbed!: () => void;
+        let resolveFirstEmbed!: () => void;
+        const firstEmbedStarted = new Promise<void>((resolve) => { resolveFirstEmbed = resolve; });
+        const embedding = {
+            available: true,
+            embedCalls: 0,
+            async embed() {
+                embedding.embedCalls++;
+                if (embedding.embedCalls === 1) resolveFirstEmbed();
+                await new Promise<void>((release) => { releaseCurrentEmbed = release; });
+                return new Float32Array(384);
+            },
+        };
+        const indexer = new Indexer(tmpDir, store, embedding as never);
+        const build = indexer.buildIndexBackground();
+
+        await firstEmbedStarted;
+        let cancelSettled = false;
+        const cancel = indexer.cancelBackgroundWork().then(() => { cancelSettled = true; });
+        await Promise.resolve();
+        expect(cancelSettled).toBe(false);
+
+        releaseCurrentEmbed();
+        await cancel;
+        const result = await build;
+
+        expect(embedding.embedCalls).toBe(1);
+        expect(result.warnings).toContain('Indexing cancelled');
+    });
+});
+
 describe('M6 review: incrementalUpdate sets ready flag', () => {
     let tmpDir: string;
     let store: IndexStore;

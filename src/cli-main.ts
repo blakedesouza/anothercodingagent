@@ -1272,6 +1272,7 @@ program
             try { bgWriter.shutdown(); } catch { /* best-effort */ }
             await lspManager?.dispose().catch(() => {});
             await browserManager?.dispose().catch(() => {});
+            await indexer?.cancelBackgroundWork().catch(() => {});
             await embeddingModel?.dispose().catch(() => {});
             try { indexStore?.close(); } catch { /* best-effort */ }
             try { sqliteStore.close(); } catch { /* best-effort */ }
