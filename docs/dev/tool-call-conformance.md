@@ -64,6 +64,33 @@ Live failures are not automatically code bugs. First classify whether:
 
 For non-interactive turns, retryable provider failures are retried within the active model before ACA falls back to the next model. Empty assistant responses are retried as `llm.malformed`. Live probes remain opt-in because retries can spend provider quota and make slow transient failures slower.
 
+## Malformed Contract Diagnostics
+
+ACA wraps low-level `llm.malformed` errors in a higher-level classification before presenting them in reports or the debug UI.
+
+Classifications:
+
+- `salvaged_success`: work is proven complete even though the model final response was empty or malformed.
+- `provider_model_nonconformance`: ACA request/history/parser/retry checks passed, but the provider/model still returned unusable output.
+- `aca_contract_failure`: ACA sent an invalid request, schema, or tool-result history.
+- `aca_parser_gap`: provider output contained a recoverable shape ACA did not normalize.
+- `aca_final_validation_gap`: final validation accepted or rejected output without enough evidence.
+- `unknown_needs_artifact`: evidence is insufficient.
+
+Run local malformed-contract checks:
+
+```bash
+npm run probe:malformed
+```
+
+Run optional live checks:
+
+```bash
+npm run probe:malformed -- --live --models zai-org/glm-5.1,moonshotai/kimi-k2.6,deepseek/deepseek-v4-pro --suite basic
+```
+
+Live checks write JSON artifacts under `/tmp` by default and are not part of `npm run verify`.
+
 ## Failure Classes
 
 - `schema_hygiene`: tool schema is hard for models or strict providers to call.
