@@ -68,6 +68,11 @@ interface CaseResult {
     invokeExitCode: number;
     validationExitCode: number;
     parseError: string | null;
+    invokeStdoutPreview: string;
+    invokeStderrPreview: string;
+    invokeTimedOut: boolean;
+    responseStatus: string | null;
+    responseSafety: InvokeResponse['safety'] | null;
     result: string;
     errorCodes: string[];
     changedFiles: string[];
@@ -1822,6 +1827,11 @@ async function runCase(
         invokeExitCode: invoke.code,
         validationExitCode: validation.code,
         parseError,
+        invokeStdoutPreview: invoke.stdout.slice(0, 4000),
+        invokeStderrPreview: invoke.stderr.slice(0, 4000),
+        invokeTimedOut: invoke.code === 124,
+        responseStatus: response?.status ?? null,
+        responseSafety: response?.safety ?? null,
         result: typeof response?.result === 'string' ? response.result.trim() : '',
         errorCodes: Array.isArray(response?.errors) ? response.errors.map(error => error.code) : [],
         changedFiles,

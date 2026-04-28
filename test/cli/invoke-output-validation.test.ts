@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
     buildCompletionEvidence,
     buildCodingCompletionRepairTask,
+    buildFinalOnlyCompletionRepairTask,
     buildFinalResultRepairTask,
     buildProfileCompletionRepairTask,
     buildRequiredOutputRepairTask,
@@ -201,6 +202,83 @@ describe('validateRequiredOutputPaths', () => {
         });
     });
 
+    it('treats successful test-command output after mutation as validation evidence', () => {
+        const items = [
+            {
+                kind: 'tool_result' as const,
+                id: 'itm_write' as const,
+                seq: 1,
+                toolCallId: 'call_1' as const,
+                toolName: 'edit_file',
+                output: {
+                    status: 'success' as const,
+                    data: JSON.stringify({ applied: 1, rejects: [] }),
+                    truncated: false,
+                    bytesReturned: 10,
+                    bytesOmitted: 0,
+                    retryable: false,
+                    timedOut: false,
+                    mutationState: 'filesystem' as const,
+                },
+                timestamp: '2026-04-28T00:00:00.000Z',
+            },
+            {
+                kind: 'tool_result' as const,
+                id: 'itm_test' as const,
+                seq: 2,
+                toolCallId: 'call_2' as const,
+                toolName: 'exec_command',
+                output: {
+                    status: 'success' as const,
+                    data: JSON.stringify({
+                        exit_code: 0,
+                        stdout: '# tests 3\n# pass 3\n# fail 0\n',
+                        stderr: '',
+                    }),
+                    truncated: false,
+                    bytesReturned: 48,
+                    bytesOmitted: 0,
+                    retryable: false,
+                    timedOut: false,
+                    mutationState: 'indeterminate' as const,
+                },
+                timestamp: '2026-04-28T00:00:01.000Z',
+            },
+        ];
+
+        expect(buildCompletionEvidence(items)).toMatchObject({
+            testsPassed: true,
+            filesystemMutations: 1,
+        });
+    });
+
+    it('does not treat zero-test command output as validation evidence', () => {
+        const items = [{
+            kind: 'tool_result' as const,
+            id: 'itm_test' as const,
+            seq: 1,
+            toolCallId: 'call_1' as const,
+            toolName: 'exec_command',
+            output: {
+                status: 'success' as const,
+                data: JSON.stringify({
+                    exit_code: 0,
+                    stdout: '# tests 0\n# pass 0\n# fail 0\n',
+                    stderr: '',
+                }),
+                truncated: false,
+                bytesReturned: 48,
+                bytesOmitted: 0,
+                retryable: false,
+                timedOut: false,
+                mutationState: 'indeterminate' as const,
+            },
+            timestamp: '2026-04-28T00:00:01.000Z',
+        }];
+
+        expect(buildCompletionEvidence(items).testsPassed).toBe(false);
+    });
+
     it('builds salvaged completion summary from evidence only', () => {
         expect(buildSalvagedCompletionSummary({
             changedFiles: ['src/runtime.js'],
@@ -209,6 +287,21 @@ describe('validateRequiredOutputPaths', () => {
             requiredOutputsSatisfied: false,
             filesystemMutations: 1,
         })).toBe('ACA salvaged the completion after malformed final output. Work evidence: 1 source file changed, validation passed, 1 filesystem mutation tool result.');
+    });
+
+    it('builds final-only completion repair from evidence', () => {
+        const task = buildFinalOnlyCompletionRepairTask({
+            changedFiles: ['src/runtime.js'],
+            testsPassed: true,
+            changedTests: false,
+            requiredOutputsSatisfied: false,
+            filesystemMutations: 2,
+        });
+
+        expect(task).toContain('Do not call tools');
+        expect(task).toContain('src/runtime.js');
+        expect(task).toContain('validation passed');
+        expect(task).toContain('brief final summary');
     });
 
     it('does not apply coding mutation validation to advisory tasks', () => {

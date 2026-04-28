@@ -21,6 +21,9 @@ export interface WorkflowFailure {
     changedFiles: string[];
     acceptedToolCalls: number | null;
     resultPreview: string;
+    parseError?: string;
+    invokeExitCode?: number;
+    invokeTimedOut?: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -50,10 +53,25 @@ function resultPreview(value: unknown): string {
     return value.replace(/\s+/g, ' ').trim().slice(0, 240);
 }
 
+function optionalString(value: unknown): string | undefined {
+    return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
 function errorCodes(value: unknown): string[] {
     return Array.isArray(value)
         ? value.filter((item): item is string => typeof item === 'string')
         : [];
+}
+
+function artifactPreview(entry: Record<string, unknown>): string {
+    const direct = resultPreview(entry.result);
+    if (direct) return direct;
+    const parts = [
+        optionalString(entry.parseError),
+        resultPreview(entry.invokeStdoutPreview),
+        resultPreview(entry.invokeStderrPreview),
+    ].filter((part): part is string => typeof part === 'string' && part.length > 0);
+    return parts.join(' ').slice(0, 240);
 }
 
 const CONTRADICTORY_FINAL_AFTER_MUTATION =
@@ -130,7 +148,10 @@ export function extractWorkflowFailures(results: unknown): WorkflowFailure[] {
             const codes = errorCodes(entry.errorCodes);
             const changedFiles = stringArrayValue(entry.changedFiles);
             const acceptedToolCalls = numberValue(entry.acceptedToolCalls);
-            const preview = resultPreview(entry.result);
+            const preview = artifactPreview(entry);
+            const parseError = optionalString(entry.parseError);
+            const invokeExitCode = numberValue(entry.invokeExitCode);
+            const invokeTimedOut = booleanValue(entry.invokeTimedOut);
             const classification = classifyWorkflowFailure({
                 success,
                 testsPassed,
@@ -153,6 +174,9 @@ export function extractWorkflowFailures(results: unknown): WorkflowFailure[] {
                 changedFiles,
                 acceptedToolCalls,
                 resultPreview: preview,
+                ...(parseError ? { parseError } : {}),
+                ...(invokeExitCode !== null ? { invokeExitCode } : {}),
+                ...(invokeTimedOut ? { invokeTimedOut } : {}),
             };
         });
 }

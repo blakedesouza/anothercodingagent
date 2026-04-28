@@ -68,7 +68,9 @@ function sourceChanged(files: readonly string[]): boolean {
 
 export function hasStrongCompletionEvidence(evidence: CompletionEvidence): boolean {
     if (evidence.requiredOutputsSatisfied) return true;
-    return evidence.testsPassed && !evidence.changedTests && sourceChanged(evidence.changedFiles);
+    return evidence.testsPassed
+        && !evidence.changedTests
+        && (sourceChanged(evidence.changedFiles) || evidence.filesystemMutations > 0);
 }
 
 function isEmptyFinal(input: LlmContractDiagnosticInput): boolean {

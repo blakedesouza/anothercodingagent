@@ -16,6 +16,16 @@ describe('llm contract diagnostics', () => {
         })).toBe(true);
     });
 
+    it('treats passing tests plus filesystem mutation as strong completion evidence', () => {
+        expect(hasStrongCompletionEvidence({
+            changedFiles: [],
+            testsPassed: true,
+            changedTests: false,
+            requiredOutputsSatisfied: false,
+            filesystemMutations: 1,
+        })).toBe(true);
+    });
+
     it('does not treat test-only edits as strong completion evidence', () => {
         expect(hasStrongCompletionEvidence({
             changedFiles: ['test/runtime.test.js'],

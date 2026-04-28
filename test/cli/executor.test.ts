@@ -628,6 +628,40 @@ describe('Executor Mode', () => {
             expect(resp.safety?.classification).toBe('salvaged_success');
             expect(resp.safety?.salvaged).toBe(true);
         });
+
+        it('can report repaired final-only metadata without marking the response as salvaged', () => {
+            const resp = buildSuccessResponse('All tests pass. Fixed src/runtime.js.', {
+                input_tokens: 10,
+                output_tokens: 5,
+                cost_usd: 0,
+            }, {
+                outcome: 'assistant_final',
+                steps: 3,
+                accepted_tool_calls: 2,
+                rejected_tool_calls: 0,
+                accepted_tool_calls_by_name: { edit_file: 1, exec_command: 1 },
+                tool_result_bytes: 256,
+                guardrails: [],
+                classification: 'salvaged_success',
+                diagnostic_bucket: 'post_mutation_empty_final',
+                salvage_candidate: true,
+                salvaged: false,
+                repair_attempts: 1,
+                completion_evidence: {
+                    changed_files: ['src/runtime.js'],
+                    tests_passed: true,
+                    changed_tests: false,
+                    required_outputs_satisfied: false,
+                    filesystem_mutations: 1,
+                },
+            });
+
+            expect(resp.status).toBe('success');
+            expect(resp.result).toContain('src/runtime.js');
+            expect(resp.safety?.classification).toBe('salvaged_success');
+            expect(resp.safety?.salvaged).toBe(false);
+            expect(resp.safety?.repair_attempts).toBe(1);
+        });
     });
 
     // ---- Exit code constants ----

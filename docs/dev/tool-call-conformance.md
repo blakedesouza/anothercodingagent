@@ -62,6 +62,8 @@ Live failures are not automatically code bugs. First classify whether:
 
 `diagnosticBucket` keeps the lower-level bucket, and `salvageCandidate: true` means the artifact may contain a useful patch or completed output even when the invoke result failed.
 
+When `aca invoke` has strong completion evidence, it treats a malformed final as a first-class salvage path instead of a raw failure. Strong evidence can come from satisfied required output paths, or from filesystem mutation plus an in-turn validation command that exited successfully and produced recognizable passing test output. ACA then tries one final-summary-only repair turn with tools disabled. If that repair produces valid text, invoke returns the repaired summary. If the repair also fails, invoke returns an evidence-only `salvaged_success` summary.
+
 For non-interactive turns, retryable provider failures are retried within the active model before ACA falls back to the next model. Empty assistant responses are retried as `llm.malformed`. Live probes remain opt-in because retries can spend provider quota and make slow transient failures slower.
 
 ## Malformed Contract Diagnostics
@@ -90,6 +92,18 @@ npm run probe:malformed -- --live --models zai-org/glm-5.1,moonshotai/kimi-k2.6,
 ```
 
 Live checks write JSON artifacts under `/tmp` by default and are not part of `npm run verify`.
+
+Live workflow artifacts preserve timeout and parse context for harder cases:
+
+- `invokeExitCode`
+- `invokeTimedOut`
+- `parseError`
+- `invokeStdoutPreview`
+- `invokeStderrPreview`
+- `responseStatus`
+- `responseSafety`
+
+These fields are meant to turn `unknown_needs_artifact` into a concrete next diagnosis instead of a dead-end label.
 
 ## Failure Classes
 

@@ -189,6 +189,33 @@ export function countFilesystemMutations(items: readonly ConversationItem[]): nu
     ).length;
 }
 
+function parseToolJson(data: string): Record<string, unknown> | null {
+    try {
+        const parsed = JSON.parse(data) as unknown;
+        return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+            ? parsed as Record<string, unknown>
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+const VALIDATION_OUTPUT_PATTERN =
+    /(?:#\s*pass\s+[1-9]\d*\b|tests?\s+[1-9]\d*\s+passed\b|\b[1-9]\d*\s+passing\b|test files?\s+.+passed\b|all\s+[1-9]\d*\s+tests?\s+pass(?:ed)?\b)/i;
+
+function hasSuccessfulValidationCommand(items: readonly ConversationItem[]): boolean {
+    return items.some((item) => {
+        if (item.kind !== 'tool_result' || item.toolName !== 'exec_command' || item.output.status !== 'success') {
+            return false;
+        }
+        const data = parseToolJson(item.output.data);
+        if (!data || data.exit_code !== 0) return false;
+        const stdout = typeof data.stdout === 'string' ? data.stdout : '';
+        const stderr = typeof data.stderr === 'string' ? data.stderr : '';
+        return VALIDATION_OUTPUT_PATTERN.test(`${stdout}\n${stderr}`);
+    });
+}
+
 export function buildCompletionEvidence(
     items: readonly ConversationItem[],
     missingRequiredPaths: readonly string[] = [],
@@ -196,7 +223,7 @@ export function buildCompletionEvidence(
 ): CompletionEvidence {
     return {
         changedFiles: [],
-        testsPassed: false,
+        testsPassed: hasSuccessfulValidationCommand(items),
         changedTests: false,
         requiredOutputsSatisfied: requiredOutputPaths.length > 0 && missingRequiredPaths.length === 0,
         filesystemMutations: countFilesystemMutations(items),
@@ -205,6 +232,20 @@ export function buildCompletionEvidence(
 
 export function buildSalvagedCompletionSummary(evidence: CompletionEvidence): string {
     return `ACA salvaged the completion after malformed final output. ${summarizeCompletionEvidence(evidence)}`;
+}
+
+export function buildFinalOnlyCompletionRepairTask(evidence: CompletionEvidence): string {
+    const changedFiles = evidence.changedFiles.length > 0
+        ? `Changed files: ${evidence.changedFiles.join(', ')}.`
+        : 'No changed files were recorded.';
+    return [
+        'The task work appears complete, but your previous final response was empty or malformed.',
+        summarizeCompletionEvidence(evidence),
+        changedFiles,
+        'Do not call tools, edit files, run commands, or continue implementation.',
+        'Reply with only a brief final summary of the completed outcome.',
+        'If validation passed, say that validation passed.',
+    ].join(' ');
 }
 
 export function validateCodingCompletion(

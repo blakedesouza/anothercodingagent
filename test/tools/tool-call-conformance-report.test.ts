@@ -213,4 +213,30 @@ describe('extractWorkflowFailures', () => {
             salvaged: false,
         });
     });
+
+    it('preserves timeout parse artifact context', () => {
+        expect(extractWorkflowFailures([{
+            model: 'deepseek/deepseek-v4-pro',
+            taskId: 'resume-handle-fix',
+            overallPass: false,
+            success: false,
+            testsPassed: true,
+            changedTests: false,
+            errorCodes: [],
+            changedFiles: ['src/session-io.js'],
+            acceptedToolCalls: null,
+            invokeExitCode: 124,
+            invokeTimedOut: true,
+            parseError: 'Unexpected end of JSON input',
+            invokeStdoutPreview: '{"contract_version":"1.0.0"',
+        }])[0]).toMatchObject({
+            classification: 'unknown_needs_artifact',
+            diagnosticBucket: 'unknown_needs_artifact',
+            salvageCandidate: true,
+            parseError: 'Unexpected end of JSON input',
+            invokeExitCode: 124,
+            invokeTimedOut: true,
+            resultPreview: expect.stringContaining('Unexpected end of JSON input'),
+        });
+    });
 });

@@ -19,6 +19,7 @@ import { SessionManager } from './core/session-manager.js';
 import { Repl } from './cli/repl.js';
 import {
     buildCompletionEvidence,
+    buildFinalOnlyCompletionRepairTask,
     buildFinalResultRepairTask,
     buildCodingCompletionRepairTask,
     buildProfileCompletionRepairTask,
@@ -34,6 +35,7 @@ import {
 import {
     classifyLlmContractFailure,
     hasStrongCompletionEvidence,
+    type CompletionEvidence,
     type LlmContractDiagnostic,
 } from './core/llm-contract-diagnostics.js';
 import { TurnEngine } from './core/turn-engine.js';
@@ -201,6 +203,14 @@ function withLlmDiagnosticSafety(safety: InvokeSafety, diagnostic: LlmContractDi
     };
 }
 
+function withRepairedFinalDiagnosticSafety(safety: InvokeSafety, diagnostic: LlmContractDiagnostic): InvokeSafety {
+    return {
+        ...withLlmDiagnosticSafety(safety, diagnostic),
+        salvaged: false,
+        repair_attempts: Math.max(safety.repair_attempts ?? 0, diagnostic.repairAttempts + 1),
+    };
+}
+
 const program = new Command();
 // Commander v13 will otherwise let root options like `--model` swallow
 // identically named subcommand options that appear after the subcommand token.
@@ -217,6 +227,25 @@ const EXIT_ONESHOT_STARTUP = 4;
 
 // --- Session ID pattern for resume disambiguation ---
 const SESSION_ID_RE = /^ses_[0-9A-HJKMNP-TV-Z]{26}$/i;
+const INVOKE_ERROR_OUTCOMES = new Set([
+    'aborted', 'tool_error', 'budget_exceeded',
+    'max_steps', 'max_tool_calls', 'cancelled', 'max_consecutive_tools',
+]);
+
+type InvokeTurnConfigBase = Omit<
+    TurnEngineConfig,
+    'projectSnapshot' | 'workingSet' | 'durableTaskState' | 'capabilities' | 'systemMessages'
+>;
+
+function buildFinalOnlyTurnConfig(baseTurnConfig: InvokeTurnConfigBase): InvokeTurnConfigBase {
+    return {
+        ...baseTurnConfig,
+        allowedTools: [],
+        maxSteps: 1,
+        maxToolCalls: undefined,
+        maxToolCallsByName: {},
+    };
+}
 
 // --- TurnOutcome → exit code mapping ---
 function outcomeToExitCode(outcome: string): number {
@@ -2126,10 +2155,7 @@ program
             undefined, // metricsAccumulator — ephemeral executor mode
         );
 
-        const baseTurnConfig: Omit<
-            TurnEngineConfig,
-            'projectSnapshot' | 'workingSet' | 'durableTaskState' | 'capabilities' | 'systemMessages'
-        > = {
+        const baseTurnConfig: InvokeTurnConfigBase = {
             sessionId: projection.manifest.sessionId,
             model: effectiveModel,
             provider: activeProvider.providerConfig.name,
@@ -2165,14 +2191,12 @@ program
         const invokeStartedAt = Date.now();
         const turnResults: Awaited<ReturnType<typeof engine.executeTurn>>[] = [];
         let conversationItems: ConversationItem[] = [];
+        let repairedFinalDiagnostic: LlmContractDiagnostic | null = null;
 
         const runInvokeTurn = async (
             task: string,
             existingItems: ConversationItem[],
-            configOverride: Omit<
-                TurnEngineConfig,
-                'projectSnapshot' | 'workingSet' | 'durableTaskState' | 'capabilities' | 'systemMessages'
-            > = baseTurnConfig,
+            configOverride: InvokeTurnConfigBase = baseTurnConfig,
         ): Promise<Awaited<ReturnType<typeof engine.executeTurn>>> => {
             const remainingDeadlineMs = deadlineMs === undefined
                 ? undefined
@@ -2220,10 +2244,7 @@ program
         const runInvokeTurnWithRpRetry = async (
             task: string,
             existingItems: ConversationItem[],
-            configOverride: Omit<
-                TurnEngineConfig,
-                'projectSnapshot' | 'workingSet' | 'durableTaskState' | 'capabilities' | 'systemMessages'
-            > = baseTurnConfig,
+            configOverride: InvokeTurnConfigBase = baseTurnConfig,
         ): Promise<{
             finalResult: Awaited<ReturnType<typeof engine.executeTurn>>;
             allResults: Array<Awaited<ReturnType<typeof engine.executeTurn>>>;
@@ -2254,6 +2275,50 @@ program
         };
 
         let turnResult: Awaited<ReturnType<typeof engine.executeTurn>>;
+        const buildCurrentCompletionEvidence = (): CompletionEvidence => {
+            const missingRequiredOutputs = validateRequiredOutputPaths(cwd, request.constraints?.required_output_paths);
+            return buildCompletionEvidence(
+                conversationItems,
+                missingRequiredOutputs,
+                request.constraints?.required_output_paths,
+            );
+        };
+        const tryFinalOnlyCompletionRepair = async (
+            evidence: CompletionEvidence,
+            diagnostic: LlmContractDiagnostic,
+        ): Promise<boolean> => {
+            if (!hasStrongCompletionEvidence(evidence)) return false;
+            try {
+                const finalOnlyRepairRun = await runInvokeTurnWithRpRetry(
+                    buildFinalOnlyCompletionRepairTask(evidence),
+                    conversationItems,
+                    buildFinalOnlyTurnConfig(baseTurnConfig),
+                );
+                turnResult = finalOnlyRepairRun.finalResult;
+                turnResults.push(...finalOnlyRepairRun.allResults);
+                conversationItems = finalOnlyRepairRun.allItems;
+                const repairedText = extractAssistantText(finalOnlyRepairRun.finalResult.items).trim();
+                const missingRequiredOutputs = validateRequiredOutputPaths(cwd, request.constraints?.required_output_paths);
+                const finalIssue = validateFinalResultText(repairedText)
+                    ?? validateContradictoryFinalResult(
+                        conversationItems,
+                        repairedText,
+                        missingRequiredOutputs,
+                        request.constraints?.required_output_paths,
+                    );
+                if (
+                    finalOnlyRepairRun.finalResult.turn.outcome === 'assistant_final'
+                    && repairedText
+                    && finalIssue === null
+                ) {
+                    repairedFinalDiagnostic = diagnostic;
+                    return true;
+                }
+            } catch {
+                return false;
+            }
+            return false;
+        };
         try {
             const initialRun = await runInvokeTurnWithRpRetry(request.task, conversationItems);
             turnResult = initialRun.finalResult;
@@ -2394,6 +2459,51 @@ program
             process.exit(EXIT_RUNTIME);
         }
 
+        const preAccountingEvidence = buildCurrentCompletionEvidence();
+        const preAccountingOutcome = turnResult.turn.outcome;
+        if (preAccountingOutcome && INVOKE_ERROR_OUTCOMES.has(preAccountingOutcome)) {
+            const errorCode = turnResult.lastError?.code ?? `turn.${preAccountingOutcome}`;
+            const errorMsg = turnResult.lastError?.message ?? `Turn ended with outcome: ${preAccountingOutcome}`;
+            const diagnostic = classifyLlmContractFailure({
+                lowLevelCode: errorCode,
+                lowLevelMessage: errorMsg,
+                requestContractPassed: true,
+                historyContractPassed: true,
+                parserRecoveredKnownShape: true,
+                retryAttempts: turnResults.reduce((sum, result) => sum + result.steps.length, 0),
+                repairAttempts: Math.max(0, turnResults.length - 1),
+                completionEvidence: preAccountingEvidence,
+            });
+            if (diagnostic.classification === 'salvaged_success') {
+                await tryFinalOnlyCompletionRepair(preAccountingEvidence, diagnostic);
+            }
+        } else {
+            const preAccountingFinalText = extractAssistantText(turnResult.items);
+            const missingRequiredOutputs = validateRequiredOutputPaths(cwd, request.constraints?.required_output_paths);
+            const finalIssue = validateFinalResultText(preAccountingFinalText)
+                ?? validateContradictoryFinalResult(
+                    conversationItems,
+                    preAccountingFinalText,
+                    missingRequiredOutputs,
+                    request.constraints?.required_output_paths,
+                );
+            if (finalIssue && hasStrongCompletionEvidence(preAccountingEvidence)) {
+                const diagnostic = classifyLlmContractFailure({
+                    lowLevelCode: finalIssue.code,
+                    lowLevelMessage: finalIssue.message,
+                    requestContractPassed: true,
+                    historyContractPassed: true,
+                    parserRecoveredKnownShape: true,
+                    retryAttempts: turnResults.reduce((sum, result) => sum + result.steps.length, 0),
+                    repairAttempts: Math.max(0, turnResults.length - 1),
+                    completionEvidence: preAccountingEvidence,
+                });
+                if (diagnostic.classification === 'salvaged_success') {
+                    await tryFinalOnlyCompletionRepair(preAccountingEvidence, diagnostic);
+                }
+            }
+        }
+
         // Accumulate usage/safety before checking the final outcome so guardrail
         // errors like max_tool_calls still report the safety envelope that fired.
         const guardrails = new Set<string>();
@@ -2459,11 +2569,7 @@ program
         // Error outcomes: aborted, tool_error, budget_exceeded, max_steps,
         // max_tool_calls, cancelled, max_consecutive_tools.
         const outcome = turnResult.turn.outcome;
-        const ERROR_OUTCOMES = new Set([
-            'aborted', 'tool_error', 'budget_exceeded',
-            'max_steps', 'max_tool_calls', 'cancelled', 'max_consecutive_tools',
-        ]);
-        if (outcome && ERROR_OUTCOMES.has(outcome)) {
+        if (outcome && INVOKE_ERROR_OUTCOMES.has(outcome)) {
             const errorCode = turnResult.lastError?.code ?? `turn.${outcome}`;
             const errorMsg = turnResult.lastError?.message ?? `Turn ended with outcome: ${outcome}`;
             // tool_error and budget_exceeded are non-retryable (same request = same failure).
@@ -2492,6 +2598,9 @@ program
             process.exit(EXIT_RUNTIME);
         }
 
+        const successSafety = repairedFinalDiagnostic
+            ? withRepairedFinalDiagnosticSafety(safety, repairedFinalDiagnostic)
+            : safety;
         const hardRejectedToolCalls = countHardRejectedToolCalls(turnResult.items);
         const failOnRejectedToolCalls = request.constraints?.fail_on_rejected_tool_calls === true
             || contextProfile === 'rp-researcher';
@@ -2612,7 +2721,7 @@ program
             input_tokens: totalInputTokens,
             output_tokens: totalOutputTokens,
             cost_usd: 0, // Cost calculation deferred to provider-specific logic
-        }, safety);
+        }, successSafety);
         process.stdout.write(JSON.stringify(response) + '\n');
         process.exit(EXIT_SUCCESS);
     });
