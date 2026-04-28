@@ -538,6 +538,35 @@ describe('Executor Mode', () => {
             expect(resp.safety?.accepted_tool_calls_by_name).toEqual({ read_file: 1 });
             expect(resp.usage?.input_tokens).toBe(100);
         });
+
+        it('can include llm diagnostic metadata in safety stats', () => {
+            const resp = buildErrorResponse('llm.malformed', 'Model returned an empty response', true, {
+                outcome: 'aborted',
+                steps: 2,
+                accepted_tool_calls: 3,
+                rejected_tool_calls: 0,
+                accepted_tool_calls_by_name: { edit_file: 1, exec_command: 2 },
+                tool_result_bytes: 512,
+                guardrails: [],
+                classification: 'provider_model_nonconformance',
+                diagnostic_bucket: 'provider_empty_final',
+                salvage_candidate: true,
+                salvaged: false,
+                retry_attempts: 2,
+                repair_attempts: 1,
+                completion_evidence: {
+                    changed_files: ['src/runtime.js'],
+                    tests_passed: false,
+                    changed_tests: false,
+                    required_outputs_satisfied: false,
+                    filesystem_mutations: 1,
+                },
+            });
+
+            expect(resp.safety?.classification).toBe('provider_model_nonconformance');
+            expect(resp.safety?.diagnostic_bucket).toBe('provider_empty_final');
+            expect(resp.safety?.completion_evidence?.changed_files).toEqual(['src/runtime.js']);
+        });
     });
 
     describe('buildSuccessResponse', () => {
@@ -565,6 +594,39 @@ describe('Executor Mode', () => {
             expect(resp.usage?.cost_usd).toBe(0.01);
             expect(resp.safety?.accepted_tool_calls_by_name).toEqual({ read_file: 1 });
             expect(resp.errors).toBeUndefined();
+        });
+
+        it('can include salvaged success diagnostic metadata', () => {
+            const resp = buildSuccessResponse('Work evidence: 1 source file changed, validation passed, 1 filesystem mutation tool result.', {
+                input_tokens: 10,
+                output_tokens: 5,
+                cost_usd: 0,
+            }, {
+                outcome: 'aborted',
+                steps: 2,
+                accepted_tool_calls: 2,
+                rejected_tool_calls: 0,
+                accepted_tool_calls_by_name: { edit_file: 1, exec_command: 1 },
+                tool_result_bytes: 256,
+                guardrails: [],
+                classification: 'salvaged_success',
+                diagnostic_bucket: 'post_mutation_empty_final',
+                salvage_candidate: true,
+                salvaged: true,
+                retry_attempts: 2,
+                repair_attempts: 1,
+                completion_evidence: {
+                    changed_files: ['src/runtime.js'],
+                    tests_passed: true,
+                    changed_tests: false,
+                    required_outputs_satisfied: false,
+                    filesystem_mutations: 1,
+                },
+            });
+
+            expect(resp.status).toBe('success');
+            expect(resp.safety?.classification).toBe('salvaged_success');
+            expect(resp.safety?.salvaged).toBe(true);
         });
     });
 

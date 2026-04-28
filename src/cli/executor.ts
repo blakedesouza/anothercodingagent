@@ -9,6 +9,10 @@
 import type { ModelResponseFormat, RequestMessage } from '../types/provider.js';
 import { statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
+import type {
+    LlmContractClassification,
+    LlmDiagnosticBucket,
+} from '../core/llm-contract-diagnostics.js';
 import { buildMethodCatalog, type MethodCatalog } from './method-catalog.js';
 
 export const CONTRACT_VERSION = '1.0.0';
@@ -113,6 +117,20 @@ export interface InvokeSafety {
     guardrails: string[];
     /** True if token budget was exceeded but task still completed successfully. */
     budget_exceeded?: boolean;
+    classification?: LlmContractClassification;
+    diagnostic_bucket?: LlmDiagnosticBucket;
+    salvage_candidate?: boolean;
+    salvaged?: boolean;
+    artifact_path?: string;
+    retry_attempts?: number;
+    repair_attempts?: number;
+    completion_evidence?: {
+        changed_files: string[];
+        tests_passed: boolean;
+        changed_tests: boolean;
+        required_outputs_satisfied: boolean;
+        filesystem_mutations: number;
+    };
 }
 
 export interface InvokeError {
