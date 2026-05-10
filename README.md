@@ -4,6 +4,8 @@
 
 ACA is built around a composable boundary: the human (or a host agent) makes judgment calls, and ACA agents do bounded work in their own context windows. It runs as a direct CLI, a structured `aca invoke` delegate, an MCP server, a bounded multi-model consultant, or an RP lore researcher.
 
+![ACA run evidence preview](docs/assets/aca-main-preview.png)
+
 > **Status: public WIP / experimental.** ACA is usable for local development and self-build experiments. The CLI contract, model profiles, and research workflows are still moving. Public API compatibility is not guaranteed.
 
 ---
