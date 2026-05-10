@@ -106,6 +106,10 @@ Features that took real work to get right:
 - npm
 - A NanoGPT API key (or Anthropic / OpenAI keys if you want those drivers)
 
+## Platform Support
+
+Windows is the currently verified local development path. The runtime keeps POSIX shell/session code paths for Linux and WSL, but WSL validation is currently wobbly on this maintainer machine because WSL is installed without a registered default distro. Treat Linux/WSL as intended-supported but not freshly verified until a working distro is restored and `npm run verify` passes there again.
+
 ## Install and Build
 
 ```bash
