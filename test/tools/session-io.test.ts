@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { tmpdir } from 'node:os';
 import { openSessionSpec, openSessionImpl } from '../../src/tools/open-session.js';
 import { sessionIoSpec, sessionIoImpl } from '../../src/tools/session-io.js';
 import { closeSessionSpec, closeSessionImpl } from '../../src/tools/close-session.js';
@@ -13,7 +14,8 @@ registry.register(closeSessionSpec, closeSessionImpl);
 const runner = new ToolRunner(registry);
 
 const SESSION = 'ses_io_test';
-const baseContext = { sessionId: SESSION, workspaceRoot: '/tmp' };
+const baseContext = { sessionId: SESSION, workspaceRoot: tmpdir() };
+const echoCommand = `${JSON.stringify(process.execPath)} -e ${JSON.stringify('process.stdin.pipe(process.stdout)')}`;
 
 let catHandle: string;
 
@@ -22,7 +24,7 @@ function parse(result: { data: string }): Record<string, unknown> {
 }
 
 beforeAll(async () => {
-    const openResult = await runner.execute('open_session', { command: 'cat' }, baseContext);
+    const openResult = await runner.execute('open_session', { command: echoCommand }, baseContext);
     expect(openResult.status).toBe('success');
     catHandle = parse(openResult).session_id as string;
 }, 10_000);
@@ -46,7 +48,7 @@ describe('session_io tool', () => {
         });
     });
 
-    describe('send stdin to cat → output returned', () => {
+    describe('send stdin to echo session → output returned', () => {
         it('echoes stdin back via stdout when wait=true', async () => {
             const result = await runner.execute(
                 'session_io',
@@ -82,7 +84,7 @@ describe('session_io tool', () => {
             // Open a dedicated session for signal testing.
             const sigResult = await runner.execute(
                 'open_session',
-                { command: 'cat' },
+                { command: echoCommand },
                 baseContext,
             );
             expect(sigResult.status).toBe('success');

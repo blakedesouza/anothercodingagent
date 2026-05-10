@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { platform } from 'node:os';
 import { ulid } from 'ulid';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
@@ -79,13 +80,16 @@ export const openSessionImpl: ToolImplementation = async (
 
     const handle = `psh_${ulid()}`;
 
-    // Spawn via /bin/sh. detached: true creates a new process group (pgid = child.pid),
-    // enabling tree-kill and clean cleanup.
-    const child = spawn('/bin/sh', ['-c', command], {
+    // Spawn via the platform shell. detached: true creates a separate process
+    // group/session where the OS supports it; process-registry handles platform
+    // specific cleanup.
+    const child = spawn(command, {
         cwd,
         env: env as NodeJS.ProcessEnv,
         stdio: ['pipe', 'pipe', 'pipe'],
-        detached: true,
+        detached: platform() !== 'win32',
+        shell: true,
+        windowsHide: platform() === 'win32',
     });
 
     // Build the ProcessRecord before attaching listeners so callbacks can reference it.

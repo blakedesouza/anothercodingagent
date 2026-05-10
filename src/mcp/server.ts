@@ -354,9 +354,9 @@ export function createMcpServer(
                     .describe('Deny specific tools even if otherwise available'),
                 max_steps: z.number().int().positive().optional()
                     .describe(`Maximum ACA agent loop steps (default: ${DEFAULT_MAX_STEPS})`),
-                max_tool_calls: z.number().int().positive().optional()
+                max_tool_calls: z.number().int().nonnegative().optional()
                     .describe('Maximum total tool calls ACA may accept for this task'),
-                max_tool_calls_by_name: z.record(z.string(), z.number().int().positive()).optional()
+                max_tool_calls_by_name: z.record(z.string(), z.number().int().nonnegative()).optional()
                     .describe('Per-tool accepted call caps, e.g. {"read_file": 1, "search_text": 1}'),
                 max_tool_result_bytes: z.number().int().positive().optional()
                     .describe('Maximum cumulative bytes returned in tool result data'),

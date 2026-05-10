@@ -766,6 +766,26 @@ describe('TurnEngine', () => {
         expect(secondRequest!.tools).toBeUndefined();
     });
 
+    it('configured maxToolCalls=0 rejects tool calls instead of treating the cap as unset', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([{ name: 'echo', args: { text: 'blocked' } }]),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({ interactive: false, isSubAgent: true, maxToolCalls: 0 }),
+            'Try a tool despite a zero tool budget',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('max_tool_calls');
+        const toolResults = result.items.filter(isToolResult);
+        expect(toolResults).toHaveLength(1);
+        expect(toolResults[0].output.status).toBe('error');
+        expect(toolResults[0].output.error?.code).toBe('tool.max_tool_calls');
+    });
+
     it('configured maxToolCalls stops when the model exceeds the cap', async () => {
         const provider = createMockProvider([
             toolCallResponse([
@@ -850,6 +870,32 @@ describe('TurnEngine', () => {
         expect(toolResults[1].output.status).toBe('error');
         expect(toolResults[1].output.error?.message).toContain('max_tool_calls_by_name.echo');
         expect(result.steps[0].safetyStats?.acceptedToolCallsByName).toEqual({ echo: 1 });
+    });
+
+    it('configured maxToolCallsByName=0 rejects that tool instead of treating the cap as unset', async () => {
+        const provider = createMockProvider([
+            toolCallResponse([{ name: 'echo', args: { text: 'blocked' } }]),
+        ]);
+        registerEchoTool(registry);
+        const { engine } = createEngine(provider, registry, dir);
+
+        const result = await engine.executeTurn(
+            makeConfig({
+                interactive: false,
+                isSubAgent: true,
+                maxToolCalls: 10,
+                maxToolCallsByName: { echo: 0 },
+            }),
+            'Try one echo call despite a zero per-tool budget',
+            [],
+        );
+
+        expect(result.turn.outcome).toBe('max_tool_calls');
+        const toolResults = result.items.filter(isToolResult);
+        expect(toolResults).toHaveLength(1);
+        expect(toolResults[0].output.status).toBe('error');
+        expect(toolResults[0].output.error?.message).toContain('max_tool_calls_by_name.echo');
+        expect(result.steps[0].safetyStats?.acceptedToolCallsByName).toEqual({});
     });
 
     it('configured maxToolResultBytes truncates stored tool output before the next LLM step', async () => {

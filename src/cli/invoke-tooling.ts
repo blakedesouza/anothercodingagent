@@ -22,6 +22,7 @@ import type { AuthorityGrant } from './executor.js';
 import type { PreauthRule } from '../config/schema.js';
 import type { ConversationItem } from '../types/conversation.js';
 import type { Indexer } from '../indexing/indexer.js';
+import type { IndexStore } from '../indexing/index-store.js';
 import { refreshIndexAfterTurn, type IndexRefreshStatus } from '../indexing/runtime-refresh.js';
 import { ensureSemanticIndexReadyForTurnRefresh } from '../indexing/runtime-semantic.js';
 import { createDelegationLaunchHandler } from '../delegation/agent-runtime.js';
@@ -59,6 +60,7 @@ export interface RegisterInvokeRuntimeToolsResult {
     agentRegistry: AgentRegistry;
     rootCallerContext: SpawnCallerContext;
     refreshSemanticIndexAfterTurn: (items: readonly ConversationItem[]) => Promise<IndexRefreshStatus>;
+    closeSemanticIndex: () => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -227,6 +229,7 @@ export async function registerInvokeRuntimeTools(
     const workspaceId = deriveWorkspaceId(cwd);
     const indexDbPath = join(homedir(), '.aca', 'indexes', workspaceId, 'index.db');
     let indexer: Indexer | undefined;
+    let indexStore: IndexStore | undefined;
     let backgroundThreshold = 0;
     let searchSemanticImpl: ToolImplementation | undefined;
     const getSearchSemanticImpl = async (): Promise<ToolImplementation> => {
@@ -244,7 +247,7 @@ export async function registerInvokeRuntimeTools(
             import('../tools/search-semantic.js'),
         ]);
 
-        const indexStore = new IndexStore(indexDbPath);
+        indexStore = new IndexStore(indexDbPath);
         indexStore.open();
 
         const embeddingModel = new EmbeddingModel();
@@ -396,5 +399,11 @@ export async function registerInvokeRuntimeTools(
         agentRegistry,
         rootCallerContext,
         refreshSemanticIndexAfterTurn: refreshSemanticIndexForTurn,
+        closeSemanticIndex: () => {
+            indexStore?.close();
+            indexStore = undefined;
+            indexer = undefined;
+            searchSemanticImpl = undefined;
+        },
     };
 }

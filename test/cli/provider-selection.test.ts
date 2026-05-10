@@ -38,6 +38,7 @@ function runAca(
         ...process.env,
         NODE_NO_WARNINGS: '1',
         HOME: TEST_HOME,
+        USERPROFILE: TEST_HOME,
         NANOGPT_API_KEY: '',
         OPENAI_API_KEY: '',
         ANTHROPIC_API_KEY: '',

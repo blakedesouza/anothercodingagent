@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { tmpdir } from 'node:os';
 import { analyzeCommand } from '../../src/tools/command-risk-analyzer.js';
 import { openSessionImpl } from '../../src/tools/open-session.js';
 import { sessionIoImpl } from '../../src/tools/session-io.js';
@@ -11,7 +12,7 @@ const WORKSPACE = '/home/user/testproject';
 const WINDOWS_WORKSPACE = 'C:\\Users\\test\\project';
 
 // Integration tests that spawn real processes need a real directory.
-const REAL_WORKSPACE = '/tmp';
+const REAL_WORKSPACE = tmpdir();
 
 const baseContext: ToolContext = {
     sessionId: 'ses_risk_test',
@@ -301,7 +302,8 @@ describe("open_session integration: bash -c 'rm -rf /' is forbidden", () => {
 describe('session_io integration: forbidden stdin is blocked', () => {
     it('denies rm -rf / sent as stdin before it reaches the shell', async () => {
         // Open a harmless session.
-        const openResult = await openSessionImpl({ command: 'cat' }, baseContext);
+        const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify('process.stdin.pipe(process.stdout)')}`;
+        const openResult = await openSessionImpl({ command }, baseContext);
         expect(openResult.status).toBe('success');
 
         const { session_id } = JSON.parse(openResult.data) as { session_id: string };

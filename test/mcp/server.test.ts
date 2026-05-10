@@ -270,6 +270,20 @@ describe('runAcaInvoke', () => {
         expect(parsed.constraints.fail_on_rejected_tool_calls).toBe(true);
     });
 
+    it('preserves zero tool-call caps in constraints', async () => {
+        const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
+            .mockResolvedValue(makeSuccessResult('done'));
+
+        await runAcaInvoke('task', {
+            maxToolCalls: 0,
+            maxToolCallsByName: { read_file: 0 },
+        }, spawnFn);
+
+        const parsed = JSON.parse(spawnFn.mock.calls[0][0]);
+        expect(parsed.constraints.max_tool_calls).toBe(0);
+        expect(parsed.constraints.max_tool_calls_by_name).toEqual({ read_file: 0 });
+    });
+
     it('uses default deadline when not specified', async () => {
         const spawnFn = vi.fn<(json: string, deadline: number) => Promise<AcaInvokeResult>>()
             .mockResolvedValue(makeSuccessResult('done'));

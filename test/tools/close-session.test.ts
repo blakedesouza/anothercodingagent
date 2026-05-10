@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { tmpdir } from 'node:os';
 import { openSessionSpec, openSessionImpl } from '../../src/tools/open-session.js';
 import { closeSessionSpec, closeSessionImpl } from '../../src/tools/close-session.js';
 import { ToolRegistry } from '../../src/tools/tool-registry.js';
@@ -11,7 +12,9 @@ registry.register(closeSessionSpec, closeSessionImpl);
 const runner = new ToolRunner(registry);
 
 const SESSION = 'ses_close_test';
-const baseContext = { sessionId: SESSION, workspaceRoot: '/tmp' };
+const baseContext = { sessionId: SESSION, workspaceRoot: tmpdir() };
+
+const keepAliveCommand = `${JSON.stringify(process.execPath)} -e ${JSON.stringify('setInterval(() => {}, 1000)')}`;
 
 function parse(result: { data: string }): Record<string, unknown> {
     return JSON.parse(result.data) as Record<string, unknown>;
@@ -26,12 +29,12 @@ describe('close_session tool', () => {
         });
     });
 
-    describe('close cat → process killed, final status returned', () => {
+    describe('close long-running session → process killed, final status returned', () => {
         it('kills the process and returns closed status', async () => {
-            // Open a cat session.
+            // Open a long-running session.
             const openResult = await runner.execute(
                 'open_session',
-                { command: 'cat' },
+                { command: keepAliveCommand },
                 baseContext,
             );
             expect(openResult.status).toBe('success');
@@ -63,7 +66,7 @@ describe('close_session tool', () => {
         it('sends SIGKILL when signal=SIGKILL', async () => {
             const openResult = await runner.execute(
                 'open_session',
-                { command: 'cat' },
+                { command: keepAliveCommand },
                 baseContext,
             );
             expect(openResult.status).toBe('success');

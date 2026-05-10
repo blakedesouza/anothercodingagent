@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { tmpdir } from 'node:os';
 import { openSessionSpec, openSessionImpl } from '../../src/tools/open-session.js';
 import { closeSessionImpl } from '../../src/tools/close-session.js';
 import { closeSessionSpec } from '../../src/tools/close-session.js';
@@ -11,9 +12,10 @@ registry.register(closeSessionSpec, closeSessionImpl);
 const runner = new ToolRunner(registry);
 
 const SESSION = 'ses_open_test';
-const baseContext = { sessionId: SESSION, workspaceRoot: '/tmp' };
+const baseContext = { sessionId: SESSION, workspaceRoot: tmpdir() };
 
 const openedHandles: string[] = [];
+const keepAliveCommand = `${JSON.stringify(process.execPath)} -e ${JSON.stringify('setInterval(() => {}, 1000)')}`;
 
 function parse(result: { data: string }): Record<string, unknown> {
     return JSON.parse(result.data) as Record<string, unknown>;
@@ -39,11 +41,11 @@ describe('open_session tool', () => {
         });
     });
 
-    describe('start cat → session_id returned, process running', () => {
-        it('returns a session handle and the cat process is running', async () => {
+    describe('start long-running process → session_id returned, process running', () => {
+        it('returns a session handle and the process is running', async () => {
             const result = await runner.execute(
                 'open_session',
-                { command: 'cat' },
+                { command: keepAliveCommand },
                 baseContext,
             );
             expect(result.status).toBe('success');
@@ -62,7 +64,7 @@ describe('open_session tool', () => {
         it('returns initial_output as a string', async () => {
             const result = await runner.execute(
                 'open_session',
-                { command: 'cat' },
+                { command: keepAliveCommand },
                 baseContext,
             );
             expect(result.status).toBe('success');
@@ -75,7 +77,7 @@ describe('open_session tool', () => {
 
     describe('spawn failure', () => {
         it('returns tool.session_exited when command exits immediately', async () => {
-            // /bin/sh starts fine but exits within the initial 100ms wait (code 127).
+            // The platform shell starts fine but exits within the initial 100ms wait.
             // The close handler fires and resolves with tool.session_exited.
             const result = await runner.execute(
                 'open_session',

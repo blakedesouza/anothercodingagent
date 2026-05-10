@@ -326,11 +326,26 @@ function positiveIntegerLimit(value: number | undefined): number | undefined {
     return Math.floor(value);
 }
 
+function nonNegativeIntegerLimit(value: number | undefined): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
+    return Math.floor(value);
+}
+
 function positiveIntegerLimitMap(value: Record<string, number> | undefined): Map<string, number> {
     const limits = new Map<string, number>();
     if (!value) return limits;
     for (const [toolName, rawLimit] of Object.entries(value)) {
         const limit = positiveIntegerLimit(rawLimit);
+        if (limit !== undefined) limits.set(toolName, limit);
+    }
+    return limits;
+}
+
+function nonNegativeIntegerLimitMap(value: Record<string, number> | undefined): Map<string, number> {
+    const limits = new Map<string, number>();
+    if (!value) return limits;
+    for (const [toolName, rawLimit] of Object.entries(value)) {
+        const limit = nonNegativeIntegerLimit(rawLimit);
         if (limit !== undefined) limits.set(toolName, limit);
     }
     return limits;
@@ -568,8 +583,8 @@ export class TurnEngine extends EventEmitter {
         const stepLimit = resolveStepLimit(config);
         const consecutiveToolLimit = config.interactive ? 10 : Infinity;
         const tokenLimit = positiveIntegerLimit(config.maxTotalTokens);
-        const toolCallLimit = positiveIntegerLimit(config.maxToolCalls);
-        const toolCallLimitsByName = positiveIntegerLimitMap(config.maxToolCallsByName);
+        const toolCallLimit = nonNegativeIntegerLimit(config.maxToolCalls);
+        const toolCallLimitsByName = nonNegativeIntegerLimitMap(config.maxToolCallsByName);
         const toolResultByteLimit = positiveIntegerLimit(config.maxToolResultBytes);
         const inputTokenLimit = positiveIntegerLimit(config.maxInputTokens);
         const repeatedReadLimit = positiveIntegerLimit(config.maxRepeatedReadCalls);

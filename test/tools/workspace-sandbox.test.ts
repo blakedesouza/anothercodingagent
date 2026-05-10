@@ -119,7 +119,7 @@ describe('computeZones', () => {
     it('rejects extraTrustedRoots containing null bytes', () => {
         const ctx = makeContext({ extraTrustedRoots: ['/opt/evil\0/path', '/opt/extra'] });
         const zones = computeZones(ctx);
-        expect(zones).toHaveLength(4); // workspace + session + tmp + /opt/extra
+        expect(zones).not.toContain('/opt/evil\0/path');
         expect(zones).toContain('/opt/extra');
     });
 

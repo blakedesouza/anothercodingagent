@@ -123,6 +123,10 @@ function isIgnoredByGitignore(relPath: string, patterns: RegExp[]): boolean {
     return patterns.some(pat => pat.test(relPath));
 }
 
+function toToolRelativePath(path: string): string {
+    return path.replace(/\\/g, '/');
+}
+
 interface PathMatch {
     path: string;
     kind: 'file' | 'directory';
@@ -191,7 +195,7 @@ export const findPathsImpl: ToolImplementation = async (
             }
 
             const fullPath = join(dir, entry.name);
-            const relPath = relative(searchRoot, fullPath);
+            const relPath = toToolRelativePath(relative(searchRoot, fullPath));
 
             // Apply .gitignore exclusions
             if (isIgnoredByGitignore(relPath, gitignorePatterns)) continue;

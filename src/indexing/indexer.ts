@@ -83,6 +83,10 @@ const CONFIG_BASENAMES = new Set([
     'Cargo.toml',
 ]);
 
+function toIndexRelativePath(path: string): string {
+    return path.replace(/\\/g, '/');
+}
+
 // --- Types ---
 
 export interface IndexerConfig {
@@ -302,7 +306,7 @@ export function collectFiles(
             }
 
             const fullPath = join(dir, entry);
-            const relPath = relative(rootDir, fullPath);
+            const relPath = toIndexRelativePath(relative(rootDir, fullPath));
 
             let stats;
             try {
@@ -642,6 +646,7 @@ export class Indexer {
      * Index a single file. Returns status and count of embedding failures.
      */
     async indexFile(relPath: string): Promise<{ status: 'indexed' | 'skipped' | 'error'; embeddingFailures: number }> {
+        relPath = toIndexRelativePath(relPath);
         const fullPath = join(this.rootDir, relPath);
 
         if (!existsSync(fullPath)) {

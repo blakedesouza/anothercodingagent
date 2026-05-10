@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { findPathsSpec, findPathsImpl } from '../../src/tools/find-paths.js';
 import { ToolRegistry } from '../../src/tools/tool-registry.js';
@@ -79,7 +79,7 @@ describe('find_paths tool', () => {
             const matches = data.matches as PathMatch[];
 
             // Should find alpha.ts, beta.ts, sub/delta.ts but NOT gamma.js or epsilon.js
-            const names = matches.map(m => m.path.split('/').pop());
+            const names = matches.map(m => basename(m.path));
             expect(names).toContain('alpha.ts');
             expect(names).toContain('beta.ts');
             expect(names).toContain('delta.ts');
@@ -113,7 +113,7 @@ describe('find_paths tool', () => {
 
             const data = parseData(result);
             const matches = data.matches as PathMatch[];
-            expect(matches.map(m => m.path.split('/').pop())).toEqual(['alpha.ts']);
+            expect(matches.map(m => basename(m.path))).toEqual(['alpha.ts']);
         });
     });
 
@@ -156,7 +156,7 @@ describe('find_paths tool', () => {
 
             const data = parseData(result);
             const matches = data.matches as PathMatch[];
-            const names = matches.map(m => m.path.split('/').pop());
+            const names = matches.map(m => basename(m.path));
 
             // .js files should be excluded
             expect(names).not.toContain('gamma.js');

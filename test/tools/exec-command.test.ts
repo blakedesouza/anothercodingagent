@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { tmpdir } from 'node:os';
 import { execCommandSpec, execCommandImpl } from '../../src/tools/exec-command.js';
 import { ToolRegistry } from '../../src/tools/tool-registry.js';
 import { ToolRunner } from '../../src/tools/tool-runner.js';
@@ -9,11 +10,15 @@ const runner = new ToolRunner(registry);
 
 const baseContext = {
     sessionId: 'ses_exectest',
-    workspaceRoot: '/tmp',
+    workspaceRoot: tmpdir(),
 };
 
 function parse(result: { data: string }): Record<string, unknown> {
     return JSON.parse(result.data) as Record<string, unknown>;
+}
+
+function nodeCommand(script: string): string {
+    return `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`;
 }
 
 describe('exec_command tool', () => {
@@ -30,7 +35,7 @@ describe('exec_command tool', () => {
         it('captures stdout and exit code 0', async () => {
             const result = await runner.execute(
                 'exec_command',
-                { command: 'echo hello' },
+                { command: nodeCommand("console.log('hello')") },
                 baseContext,
             );
             expect(result.status).toBe('success');
@@ -46,7 +51,7 @@ describe('exec_command tool', () => {
         it('returns exit code 1 but status success (tool ran fine)', async () => {
             const result = await runner.execute(
                 'exec_command',
-                { command: 'false' },
+                { command: nodeCommand('process.exit(1)') },
                 baseContext,
             );
             expect(result.status).toBe('success');
@@ -59,7 +64,7 @@ describe('exec_command tool', () => {
         it('captures stderr separately from stdout', async () => {
             const result = await runner.execute(
                 'exec_command',
-                { command: 'echo out && echo err >&2' },
+                { command: nodeCommand("console.log('out'); console.error('err')") },
                 baseContext,
             );
             expect(result.status).toBe('success');
@@ -73,12 +78,12 @@ describe('exec_command tool', () => {
         it('runs in the specified working directory', async () => {
             const result = await runner.execute(
                 'exec_command',
-                { command: 'pwd', cwd: '/tmp' },
+                { command: nodeCommand('console.log(process.cwd())'), cwd: tmpdir() },
                 baseContext,
             );
             expect(result.status).toBe('success');
             const data = parse(result);
-            expect(String(data.stdout).trim()).toBe('/tmp');
+            expect(String(data.stdout).trim()).toBe(tmpdir());
         });
     });
 
@@ -86,7 +91,7 @@ describe('exec_command tool', () => {
         it('makes env vars available to the command', async () => {
             const result = await runner.execute(
                 'exec_command',
-                { command: 'echo $ACA_TEST_VAR', env: { ACA_TEST_VAR: 'hello_aca' } },
+                { command: nodeCommand("console.log(process.env.ACA_TEST_VAR ?? '')"), env: { ACA_TEST_VAR: 'hello_aca' } },
                 baseContext,
             );
             expect(result.status).toBe('success');
@@ -99,7 +104,7 @@ describe('exec_command tool', () => {
         it('kills the process and returns tool.timeout when timeout expires', async () => {
             const result = await runner.execute(
                 'exec_command',
-                { command: 'sleep 60', timeout: 200 },
+                { command: nodeCommand('setTimeout(() => {}, 60000)'), timeout: 200 },
                 baseContext,
             );
             expect(result.status).toBe('error');
@@ -114,7 +119,7 @@ describe('exec_command tool', () => {
             const result = await runner.execute(
                 'exec_command',
                 {
-                    command: "node -e \"process.stdout.write('X'.repeat(100000))\"",
+                    command: nodeCommand("process.stdout.write('X'.repeat(100000))"),
                 },
                 baseContext,
             );
@@ -140,7 +145,7 @@ describe('exec_command tool', () => {
         it('includes a non-negative duration_ms', async () => {
             const result = await runner.execute(
                 'exec_command',
-                { command: 'echo hi' },
+                { command: nodeCommand("console.log('hi')") },
                 baseContext,
             );
             expect(result.status).toBe('success');

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Command } from 'commander';
+import { resolve } from 'node:path';
 import {
     DEFAULT_RP_INVOKE_DEADLINE_MS,
     RP_AUTHORING_CONTRACT_SUMMARY_LINES,
@@ -27,14 +28,14 @@ describe('rp-research helpers', () => {
         const resolved = resolveRpProjectRoot('/tmp/rp-root', {
             ACA_RP_PROJECT_ROOT: '/tmp/ignored',
         });
-        expect(resolved).toBe('/tmp/rp-root');
+        expect(resolved).toBe(resolve('/tmp/rp-root'));
     });
 
     it('falls back to ACA_RP_PROJECT_ROOT when provided', () => {
         const resolved = resolveRpProjectRoot(undefined, {
             ACA_RP_PROJECT_ROOT: '/tmp/rp-env',
         });
-        expect(resolved).toBe('/tmp/rp-env');
+        expect(resolved).toBe(resolve('/tmp/rp-env'));
     });
 
     it('requires an explicit project root when no env override is configured', () => {

@@ -1,4 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
+import { platform } from 'node:os';
 
 const DEFAULT_IDLE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const DEFAULT_HARD_MAX_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -202,11 +204,19 @@ export function isPidRunning(pid: number): boolean {
 
 /**
  * Kill all processes in the process group identified by `pid`.
- * Requires the target process to have been spawned with detached: true so
- * its PGID equals its PID (making it the group leader).
- * Falls back to a direct kill if the group kill fails.
+ * On POSIX this requires detached children so their PGID equals their PID.
+ * On Windows taskkill handles the process tree by PID.
+ * Falls back to a direct kill on POSIX if the group kill fails.
  */
 export function killProcessTree(pid: number, signal: NodeJS.Signals = 'SIGTERM'): void {
+    if (platform() === 'win32') {
+        spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+            stdio: 'ignore',
+            windowsHide: true,
+        });
+        return;
+    }
+
     try {
         process.kill(-pid, signal);
     } catch {

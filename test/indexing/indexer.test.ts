@@ -449,7 +449,7 @@ describe('M6 review: symlink loop detection', () => {
         const files = collectFiles(tmpDir, config);
 
         // Should find app.ts but NOT recurse into loop
-        expect(files).toContain(join('src', 'app.ts'));
+        expect(files).toContain('src/app.ts');
         expect(files.length).toBeLessThan(10);
     });
 });

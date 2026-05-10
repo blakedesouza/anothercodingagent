@@ -7,13 +7,13 @@
  * Allowed zones:
  *   1. workspaceRoot (and descendants)
  *   2. ~/.aca/sessions/<sessionId>/
- *   3. /tmp/aca-<sessionId>/
+ *   3. OS temp/aca-<sessionId>/, plus /tmp/aca-<sessionId>/ on Windows
  *   4. User-configured extraTrustedRoots
  */
 
 import { realpath } from 'node:fs/promises';
 import { resolve, dirname, basename, isAbsolute, join, relative } from 'node:path';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, platform, tmpdir } from 'node:os';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolContext } from './tool-registry.js';
 
@@ -123,6 +123,12 @@ export function computeZones(context: ToolContext): string[] {
     if (SESSION_ID_RE.test(context.sessionId)) {
         zones.push(join(home, '.aca', 'sessions', context.sessionId));
         zones.push(join(tmpdir(), `aca-${context.sessionId}`));
+        if (platform() === 'win32') {
+            // Many model prompts and fixtures use POSIX-style /tmp paths. On
+            // Windows, Node resolves /tmp/... to C:\tmp\..., so include the same
+            // scoped ACA temp zone without broadening access to all of C:\tmp.
+            zones.push(`/tmp/aca-${context.sessionId}`);
+        }
     }
 
     if (context.extraTrustedRoots) {

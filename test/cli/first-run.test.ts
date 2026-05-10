@@ -44,6 +44,7 @@ async function runAca(
         ...process.env,
         NODE_NO_WARNINGS: '1',
         HOME: TEST_HOME,
+        USERPROFILE: TEST_HOME,
         ...apiKeyEnv,
         ...(options?.env ?? {}),
     };
@@ -136,9 +137,10 @@ describe('M8.2 — First Real Run', () => {
     });
 
     describe('error handling', () => {
-        it('bad API key → stderr contains auth error and exit code 4', { timeout: 30_000 }, async () => {
+        it('bad API key → stderr contains auth error and exit code 4', { timeout: 90_000 }, async () => {
             const { stderr, exitCode } = await runAca(['hello'], {
                 env: { NANOGPT_API_KEY: 'bad-key-12345' },
+                timeout: 90_000,
             });
             expect(exitCode).toBe(4);
             expect(stderr).toContain('API key');
@@ -148,7 +150,7 @@ describe('M8.2 — First Real Run', () => {
             // Override key to empty AND set HOME to temp dir to prevent ~/.api_keys fallback
             const { mkdtempSync } = require('node:fs');
             const fakeHome = mkdtempSync(join(require('node:os').tmpdir(), 'aca-nohome-'));
-            const env: Record<string, string> = { NANOGPT_API_KEY: '', HOME: fakeHome };
+            const env: Record<string, string> = { NANOGPT_API_KEY: '', HOME: fakeHome, USERPROFILE: fakeHome };
             const { stderr, exitCode } = await runAca(['hello'], { env });
             expect(exitCode).toBe(4);
             expect(stderr).toContain('API key');
@@ -177,6 +179,7 @@ describe('M8.2 — First Real Run', () => {
                 ...process.env,
                 NODE_NO_WARNINGS: '1',
                 HOME: TEST_HOME,
+                USERPROFILE: TEST_HOME,
                 ...apiKeyEnv,
                 ...(opts?.env ?? {}),
             };

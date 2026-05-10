@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
+import { platform } from 'node:os';
 import type { ToolOutput } from '../types/conversation.js';
 import type { ToolSpec, ToolImplementation, ToolContext } from './tool-registry.js';
+import { killProcessTree } from './process-registry.js';
 
 // 62 KiB combined budget for stdout+stderr content; leaves ~3.5 KiB for JSON overhead.
 const COMBINED_CAP = 62_000;
@@ -121,18 +123,16 @@ export const execCommandImpl: ToolImplementation = async (
 
     const env = envOverrides ? { ...process.env, ...envOverrides } : process.env;
 
-    // Shell interpretation via /bin/sh -c is intentional — this tool is a shell
-    // execution primitive. The security boundary is enforced upstream by the
-    // approval layer (src/permissions/approval.ts) before this function is
-    // reached. Callers must not pass command strings without prior approval.
-    // Shell metacharacters in `command` are interpreted as intended.
-    // detached: true places the child in its own process group (pgid = child.pid),
-    // enabling tree-kill via process.kill(-pgid, signal).
-    const child = spawn('/bin/sh', ['-c', command], {
+    // Shell interpretation is intentional — this tool is a shell execution
+    // primitive. The security boundary is enforced upstream by the approval
+    // layer (src/permissions/approval.ts) before this function is reached.
+    const child = spawn(command, {
         cwd,
         env: env as NodeJS.ProcessEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
-        detached: true,
+        detached: platform() !== 'win32',
+        shell: true,
+        windowsHide: platform() === 'win32',
     });
 
     const stdoutChunks: Buffer[] = [];
@@ -173,7 +173,7 @@ export const execCommandImpl: ToolImplementation = async (
             if (abortHandler) context.signal.removeEventListener('abort', abortHandler);
             try {
                 if (child.pid !== undefined) {
-                    process.kill(-child.pid, 'SIGKILL');
+                    killProcessTree(child.pid, 'SIGKILL');
                 }
             } catch {
                 child.kill('SIGKILL');

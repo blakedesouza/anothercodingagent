@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, readFile, stat, writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir, platform } from 'node:os';
 
 import { runInit, runTrust, runUntrust } from '../../src/cli/setup.js';
@@ -94,29 +94,32 @@ describe('CLI Setup Commands', () => {
             await runInit(testDir);
 
             const projectPath = '/home/user/my-project';
+            const resolvedProjectPath = resolve(projectPath);
             const result = await runTrust(projectPath, testDir);
 
             expect(result.success).toBe(true);
-            expect(result.message).toContain(`Trusted: ${projectPath}`);
+            expect(result.message).toContain(`Trusted: ${resolvedProjectPath}`);
 
             // Verify config updated
             const config = JSON.parse(await readFile(join(testDir, 'config.json'), 'utf-8'));
-            expect(config.trustedWorkspaces[projectPath]).toBe('trusted');
+            expect(config.trustedWorkspaces[resolvedProjectPath]).toBe('trusted');
         });
 
         it('aca untrust /path/to/project removes entry', async () => {
             // Init and trust first
             await runInit(testDir);
-            await runTrust('/home/user/my-project', testDir);
+            const projectPath = '/home/user/my-project';
+            const resolvedProjectPath = resolve(projectPath);
+            await runTrust(projectPath, testDir);
 
-            const result = await runUntrust('/home/user/my-project', testDir);
+            const result = await runUntrust(projectPath, testDir);
 
             expect(result.success).toBe(true);
-            expect(result.message).toContain('Untrusted: /home/user/my-project');
+            expect(result.message).toContain(`Untrusted: ${resolvedProjectPath}`);
 
             // Verify entry removed
             const config = JSON.parse(await readFile(join(testDir, 'config.json'), 'utf-8'));
-            expect(config.trustedWorkspaces['/home/user/my-project']).toBeUndefined();
+            expect(config.trustedWorkspaces[resolvedProjectPath]).toBeUndefined();
         });
 
         it('aca trust without path uses cwd', async () => {
@@ -134,12 +137,14 @@ describe('CLI Setup Commands', () => {
 
         it('trust creates config if it does not exist', async () => {
             // Don't run init — config.json doesn't exist
-            const result = await runTrust('/some/path', testDir);
+            const projectPath = '/some/path';
+            const resolvedProjectPath = resolve(projectPath);
+            const result = await runTrust(projectPath, testDir);
 
             expect(result.success).toBe(true);
 
             const config = JSON.parse(await readFile(join(testDir, 'config.json'), 'utf-8'));
-            expect(config.trustedWorkspaces['/some/path']).toBe('trusted');
+            expect(config.trustedWorkspaces[resolvedProjectPath]).toBe('trusted');
             expect(config.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         });
 
@@ -161,12 +166,14 @@ describe('CLI Setup Commands', () => {
                 defaultProvider: 'openai',
             }, null, 2) + '\n', 'utf-8');
 
-            await runTrust('/my/project', testDir);
+            const projectPath = '/my/project';
+            const resolvedProjectPath = resolve(projectPath);
+            await runTrust(projectPath, testDir);
 
             const config = JSON.parse(await readFile(join(testDir, 'config.json'), 'utf-8'));
             expect(config.model.default).toBe('gpt-4o');
             expect(config.defaultProvider).toBe('openai');
-            expect(config.trustedWorkspaces['/my/project']).toBe('trusted');
+            expect(config.trustedWorkspaces[resolvedProjectPath]).toBe('trusted');
         });
     });
 });

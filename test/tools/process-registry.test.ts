@@ -3,6 +3,10 @@ import { spawn } from 'node:child_process';
 import { ProcessRegistry, isPidRunning, killProcessTree } from '../../src/tools/process-registry.js';
 import type { ProcessRecord } from '../../src/tools/process-registry.js';
 
+const keepAliveArgs = ['-e', 'setInterval(() => {}, 1000)'];
+const exitArgs = ['-e', 'process.exit(0)'];
+const childOptions = { detached: process.platform !== 'win32', windowsHide: true };
+
 // Helper to build a minimal ProcessRecord for registry tests.
 function makeRecord(
     handle: string,
@@ -37,7 +41,7 @@ describe('ProcessRegistry', () => {
 
     describe('register and lookup', () => {
         it('registers a process and retrieves it by handle', () => {
-            const child = spawn('sleep', ['60'], { detached: true });
+            const child = spawn(process.execPath, keepAliveArgs, childOptions);
             const record = makeRecord('psh_1', SESSION, child.pid!, child);
             registry.register(SESSION, record);
 
@@ -61,8 +65,8 @@ describe('ProcessRegistry', () => {
 
     describe('listSession', () => {
         it('lists all processes for a session', () => {
-            const c1 = spawn('sleep', ['60'], { detached: true });
-            const c2 = spawn('sleep', ['60'], { detached: true });
+            const c1 = spawn(process.execPath, keepAliveArgs, childOptions);
+            const c2 = spawn(process.execPath, keepAliveArgs, childOptions);
             registry.register(SESSION, makeRecord('psh_a', SESSION, c1.pid!, c1));
             registry.register(SESSION, makeRecord('psh_b', SESSION, c2.pid!, c2));
 
@@ -85,7 +89,7 @@ describe('ProcessRegistry', () => {
 
     describe('remove', () => {
         it('removes a registered process', () => {
-            const child = spawn('sleep', ['60'], { detached: true });
+            const child = spawn(process.execPath, keepAliveArgs, childOptions);
             registry.register(SESSION, makeRecord('psh_rm', SESSION, child.pid!, child));
             expect(registry.remove(SESSION, 'psh_rm')).toBe(true);
             expect(registry.lookup(SESSION, 'psh_rm')).toBeUndefined();
@@ -102,7 +106,7 @@ describe('ProcessRegistry', () => {
     describe('reap — orphan detection', () => {
         it('removes a process whose PID no longer exists', async () => {
             // Start a process, wait for it to exit naturally, then check reap.
-            const child = spawn('/bin/sh', ['-c', 'exit 0'], { detached: true });
+            const child = spawn(process.execPath, exitArgs, childOptions);
             child.unref();
             const pid = child.pid!;
             const record = makeRecord('psh_orphan', SESSION, pid, child);
@@ -119,7 +123,7 @@ describe('ProcessRegistry', () => {
 
     describe('reap — already-exited record', () => {
         it('removes a record that is already marked as exited', () => {
-            const child = spawn('sleep', ['60'], { detached: true });
+            const child = spawn(process.execPath, keepAliveArgs, childOptions);
             const record = makeRecord('psh_exited', SESSION, child.pid!, child);
             record.exited = true;
             registry.register(SESSION, record);
@@ -137,7 +141,7 @@ describe('ProcessRegistry', () => {
         it('reaps a process whose lastActivity exceeds the idle TTL', async () => {
             // Use a very short TTL for the test registry.
             const shortRegistry = new ProcessRegistry(50 /* 50ms TTL */, 60_000);
-            const child = spawn('sleep', ['60'], { detached: true });
+            const child = spawn(process.execPath, keepAliveArgs, childOptions);
             const record = makeRecord('psh_idle', SESSION, child.pid!, child);
             shortRegistry.register(SESSION, record);
 
@@ -156,7 +160,7 @@ describe('ProcessRegistry', () => {
 
 describe('isPidRunning', () => {
     it('returns true for a running process', () => {
-        const child = spawn('sleep', ['60'], { detached: true });
+        const child = spawn(process.execPath, keepAliveArgs, childOptions);
         child.unref();
         expect(isPidRunning(child.pid!)).toBe(true);
         killProcessTree(child.pid!);
@@ -173,8 +177,8 @@ describe('isPidRunning', () => {
 });
 
 describe('killProcessTree', () => {
-    it('kills the process group of a spawned process', async () => {
-        const child = spawn('sleep', ['60'], { detached: true });
+    it('kills the spawned process tree', async () => {
+        const child = spawn(process.execPath, keepAliveArgs, childOptions);
         child.unref();
         const pid = child.pid!;
 

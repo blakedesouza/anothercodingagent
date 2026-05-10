@@ -91,6 +91,7 @@ export class Repl {
     private lastSigintTime = 0;
     private currentEngine: TurnEngine | null = null;
     private exitRequested = false;
+    private rlClosed = false;
 
     constructor(options: ReplOptions) {
         this.projection = options.projection;
@@ -131,15 +132,18 @@ export class Repl {
         });
 
         this.setupSigintHandler();
+        this.rl.on('close', () => {
+            this.rlClosed = true;
+        });
 
-        this.rl.prompt();
+        this.promptIfOpen();
 
         for await (const line of this.rl) {
             if (this.exitRequested) break;
 
             const trimmed = line.trim();
             if (trimmed === '') {
-                this.rl.prompt();
+                this.promptIfOpen();
                 continue;
             }
 
@@ -154,7 +158,7 @@ export class Repl {
                 } else {
                     this.writeStderr(`Unknown command: ${trimmed.split(/\s+/)[0]}\n`);
                 }
-                this.rl.prompt();
+                this.promptIfOpen();
                 continue;
             }
 
@@ -162,11 +166,16 @@ export class Repl {
             await this.executeTurn(trimmed);
 
             if (this.exitRequested) break;
-            this.rl.prompt();
+            this.promptIfOpen();
         }
 
         // Clean exit on EOF or exit command
         this.cleanup();
+    }
+
+    private promptIfOpen(): void {
+        if (!this.rl || this.rlClosed) return;
+        this.rl.prompt();
     }
 
     private async executeTurn(userInput: string): Promise<void> {

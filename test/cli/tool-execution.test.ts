@@ -59,6 +59,7 @@ async function runAca(
         ...process.env,
         NODE_NO_WARNINGS: '1',
         HOME: TEST_HOME,
+        USERPROFILE: TEST_HOME,
         ...apiKeyEnv,
         ...(options?.env ?? {}),
     };

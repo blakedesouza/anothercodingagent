@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const BUILD_INPUT_DIRS = ['src'];
 const BUILD_INPUT_FILES = ['package.json', 'tsup.config.ts', 'tsconfig.json'];
@@ -31,10 +31,27 @@ export function ensureBuiltCliFresh(root: string, distIndex: string): void {
     const newestInput = Math.max(...inputMtimes, 0);
 
     if (!distExists || newestInput > distMtime) {
-        execFileSync('npm', ['run', 'build'], {
-            cwd: root,
-            encoding: 'utf-8',
-            timeout: 60_000,
-        });
+        runNpmBuild(root);
     }
+}
+
+function runNpmBuild(root: string): void {
+    const options = {
+        cwd: root,
+        encoding: 'utf-8' as const,
+        timeout: 60_000,
+    };
+
+    if (process.platform !== 'win32') {
+        execFileSync('npm', ['run', 'build'], options);
+        return;
+    }
+
+    const npmCli = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    if (existsSync(npmCli)) {
+        execFileSync(process.execPath, [npmCli, 'run', 'build'], options);
+        return;
+    }
+
+    execFileSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd run build'], options);
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir, chmod } from 'node:fs/promises';
+import { platform } from 'node:os';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -742,6 +743,10 @@ describe('Secrets Loading', () => {
     });
 
     it('secrets.json with wrong permissions → refuse to load', async () => {
+        if (platform() === 'win32') {
+            return;
+        }
+
         const secretsDir = join(testDir, 'bad-secrets');
         await mkdir(secretsDir, { recursive: true });
         const secretsPath = join(secretsDir, 'secrets.json');
@@ -759,6 +764,10 @@ describe('Secrets Loading', () => {
     });
 
     it('bad-permission secrets.json still falls back to api_keys', async () => {
+        if (platform() === 'win32') {
+            return;
+        }
+
         const secretsDir = join(testDir, 'bad-secrets-with-api-keys');
         await mkdir(secretsDir, { recursive: true });
         const secretsPath = join(secretsDir, 'secrets.json');

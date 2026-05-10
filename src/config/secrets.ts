@@ -8,6 +8,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { platform } from 'node:os';
 
 export interface LoadedSecrets {
     [provider: string]: string;
@@ -25,6 +26,17 @@ const PROVIDER_ENV_VARS: Record<string, string> = {
     openai: 'OPENAI_API_KEY',
     tavily: 'TAVILY_API_KEY',
 };
+
+function hasSecureSecretPermissions(mode: number): boolean {
+    if (platform() === 'win32') {
+        // Windows ACLs do not round-trip through POSIX mode bits. setup.ts
+        // applies owner-only ACLs with icacls; loaders should not reject a file
+        // only because stat().mode cannot represent those ACLs as 0600.
+        return true;
+    }
+
+    return mode === 0o600;
+}
 
 /**
  * Load API keys from environment variables, ~/.aca/secrets.json, and ~/.api_keys.
@@ -58,7 +70,7 @@ export async function loadSecrets(
     try {
         const stats = await stat(filePath);
         const mode = stats.mode & 0o777;
-        if (mode !== 0o600) {
+        if (!hasSecureSecretPermissions(mode)) {
             warnings.push(
                 `secrets.json has permissions 0${mode.toString(8)}, expected 0600. Refusing to load.`,
             );

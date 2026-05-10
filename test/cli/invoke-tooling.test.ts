@@ -295,7 +295,7 @@ describe('registerInvokeRuntimeTools', () => {
             allowHttp: true,
         };
 
-        const { refreshSemanticIndexAfterTurn } = await registerInvokeRuntimeTools({
+        const { refreshSemanticIndexAfterTurn, closeSemanticIndex } = await registerInvokeRuntimeTools({
             cwd: workspaceRoot,
             model: 'qwen/qwen3-coder-next',
             toolRegistry,
@@ -329,6 +329,7 @@ describe('registerInvokeRuntimeTools', () => {
         ]);
 
         expect(status).toMatch(/updated|scheduled/);
+        closeSemanticIndex();
 
         const store = new IndexStore(join(indexDir, 'index.db'));
         expect(store.open()).toBe(true);
