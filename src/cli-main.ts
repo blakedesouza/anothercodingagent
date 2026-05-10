@@ -45,6 +45,7 @@ import {
     applyRuntimeTurnState,
     buildRuntimePromptContext,
 } from './core/runtime-turn-context.js';
+import { detectRuntimeShell } from './core/runtime-shell.js';
 import { summarizeHistoryBeforeTurn } from './core/pre-turn-summarization.js';
 import type { ConversationItem } from './types/conversation.js';
 import {
@@ -1079,6 +1080,7 @@ program
 
         // --- Register all tools ---
         const toolRegistry = new ToolRegistry();
+        const runtimeShell = detectRuntimeShell();
         toolRegistry.register(readFileSpec, readFileImpl);
         toolRegistry.register(writeFileSpec, writeFileImpl);
         toolRegistry.register(editFileSpec, editFileImpl);
@@ -1263,7 +1265,7 @@ program
                 model: effectiveModel,
                 autoConfirm: !options.confirm,
                 workspaceRoot,
-                shell: process.env.SHELL,
+                shell: runtimeShell,
                 rootToolRegistry: toolRegistry,
                 sessionManager,
                 scrubber,
@@ -1424,7 +1426,7 @@ program
                 historyItems: existingItems,
                 pendingUserInput: task!,
                 workspaceRoot,
-                shell: process.env.SHELL,
+                shell: runtimeShell,
                 manifest: projection.manifest,
                 writer: projection.writer,
                 sequenceGenerator: projection.sequenceGenerator,
@@ -1443,7 +1445,7 @@ program
                 autoConfirm: !options.confirm, // --no-confirm → confirm=false → autoConfirm=true
                 isSubAgent: false,
                 workspaceRoot,
-                shell: process.env.SHELL,
+                shell: runtimeShell,
                 projectSnapshot: promptContext.projectSnapshot,
                 workingSet: promptContext.workingSet,
                 durableTaskState: promptContext.durableTaskState,
@@ -2077,7 +2079,7 @@ program
                 scrubber,
                 sessionGrants: invokeSessionGrants,
                 resolvedConfig: config,
-                shell: process.env.SHELL,
+                shell: detectRuntimeShell(),
                 extraTrustedRoots: config.sandbox?.extraTrustedRoots,
             },
         });
@@ -2163,7 +2165,7 @@ program
             autoConfirm: true, // executor mode auto-approves (authority provides pre-auth)
             isSubAgent: true,  // executor is a callee — behaves like a sub-agent
             workspaceRoot: cwd,
-            shell: process.env.SHELL,
+            shell: detectRuntimeShell(),
             resolvedConfig: config,
             sessionGrants: invokeSessionGrants,
             allowedTools: effectiveAllowedTools,
@@ -2212,7 +2214,7 @@ program
                 model: effectiveModel,
                 tools: toolRegistry.list(),
                 workspaceRoot: cwd,
-                shell: process.env.SHELL,
+                shell: detectRuntimeShell(),
                 healthMap,
                 baseConfig: configOverride,
                 baseSystemMessages,

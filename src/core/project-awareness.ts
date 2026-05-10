@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
+import { homedir } from 'node:os';
 import { pathsReferToSameLocation } from './path-comparison.js';
 
 // --- Types ---
@@ -88,7 +89,7 @@ export function detectRoot(startDir: string): string | null {
 
     while (true) {
         // A usable git root is the strongest marker — return immediately.
-        if (isUsableGitRoot(dir)) {
+        if (!isUnsafeProjectRootCandidate(dir) && isUsableGitRoot(dir)) {
             return dir;
         }
 
@@ -141,6 +142,8 @@ export function detectGitState(root: string): GitState | null {
         // Check if inside a git work tree
         const insideWorkTree = gitExec(root, ['rev-parse', '--is-inside-work-tree']);
         if (insideWorkTree.trim() !== 'true') return null;
+        const topLevel = gitExec(root, ['rev-parse', '--show-toplevel']).trim();
+        if (!pathsReferToSameLocation(topLevel, root)) return null;
 
         // Current branch
         let branch: string;
@@ -251,6 +254,10 @@ function isUsableGitRoot(dir: string): boolean {
     } catch {
         return false;
     }
+}
+
+function isUnsafeProjectRootCandidate(dir: string): boolean {
+    return pathsReferToSameLocation(dir, homedir());
 }
 
 function gitExec(cwd: string, args: string[]): string {

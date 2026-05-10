@@ -34,7 +34,7 @@ How the agent is configured and where sensitive data lives. This block defines t
   **Edge cases:**
   - A field set in project config but not in user config: the project config value applies (subject to trust boundary filtering)
   - A field set in both project and user config: the user config value wins for security-sensitive fields; deep-merge applies for safe fields
-  - `--no-confirm` CLI flag: overrides the `permissions.nonInteractive` config field and sets all `confirm` decisions to `allow` (but not `deny` decisions, per Block 8)
+  - `--no-confirm` CLI flag: overrides the `permissions.nonInteractive` config field and sets ordinary `confirm` decisions to `allow` (but not `confirm_always`, high-risk shell commands, or `deny` decisions, per Block 8)
   - Missing config files: silently ignored. The agent runs with defaults if no config exists
   - Malformed config files: user config triggers a warning and falls back to defaults. Project config triggers a warning and is ignored entirely (fail-safe for untrusted input)
 

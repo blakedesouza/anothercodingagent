@@ -15,6 +15,7 @@ import type { MessageItem, ToolResultItem } from '../../src/types/conversation.j
 import type { ItemId, SessionId } from '../../src/types/ids.js';
 import { ProviderRegistry } from '../../src/providers/provider-registry.js';
 import { SessionGrantStore } from '../../src/permissions/session-grants.js';
+import { SecretScrubber } from '../../src/permissions/secret-scrubber.js';
 import { CONFIG_DEFAULTS } from '../../src/config/schema.js';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -1228,6 +1229,73 @@ describe('TurnEngine', () => {
         const toolResults = records.filter(r => r.recordType === 'tool_result');
         expect(toolResults).toHaveLength(1);
         expect(toolResults[0].output?.data).toBe('logged');
+    });
+
+    it('scrubs turn preview, stored tool args, tool events, and tool output without changing execution args', async () => {
+        const secret = 'foundation-review-secret-value';
+        const scrubber = new SecretScrubber([secret], { enabled: true });
+        let executedText = '';
+        const spec: ToolSpec = {
+            name: 'capture_secret',
+            description: 'Captures input for scrubbing tests',
+            inputSchema: {
+                type: 'object',
+                properties: { text: { type: 'string' } },
+                required: ['text'],
+            },
+            approvalClass: 'read-only',
+            idempotent: true,
+            timeoutCategory: 'file',
+        };
+        const impl: ToolImplementation = async (args) => {
+            executedText = String(args.text);
+            return {
+                status: 'success',
+                data: `Tool saw ${String(args.text)}`,
+                truncated: false,
+                bytesReturned: Buffer.byteLength(String(args.text)),
+                bytesOmitted: 0,
+                retryable: false,
+                timedOut: false,
+                mutationState: 'none',
+            };
+        };
+        registry.register(spec, impl);
+
+        const provider = createMockProvider([
+            toolCallResponse([{ name: 'capture_secret', args: { text: secret } }]),
+            textResponse('Done'),
+        ]);
+        const logPath = join(dir, 'conversation.jsonl');
+        writeFileSync(logPath, '');
+        const writer = new ConversationWriter(logPath);
+        const engine = new TurnEngine(provider, registry, writer, new SequenceGenerator(0), scrubber);
+        const turnStarts: Array<{ inputPreview: string }> = [];
+        const toolStarts: ToolStartedEvent[] = [];
+        const toolCompletions: ToolCompletedEvent[] = [];
+        engine.on('turn.started', event => turnStarts.push(event));
+        engine.on('tool.started', event => toolStarts.push(event));
+        engine.on('tool.completed', event => toolCompletions.push(event));
+
+        const result = await engine.executeTurn(
+            makeConfig(),
+            `Please use ${secret}`,
+            [],
+        );
+
+        expect(executedText).toBe(secret);
+        expect(turnStarts[0].inputPreview).not.toContain(secret);
+        expect(String(toolStarts[0].arguments.text)).not.toContain(secret);
+        expect(String(toolCompletions[0].arguments.text)).not.toContain(secret);
+        expect(toolCompletions[0].output.data).not.toContain(secret);
+        const assistantToolMessage = result.items
+            .filter(isMessage)
+            .find(item => item.role === 'assistant' && item.parts.some(part => part.type === 'tool_call'));
+        const storedToolCall = assistantToolMessage?.parts.find(part => part.type === 'tool_call');
+        expect(String(storedToolCall?.arguments.text)).not.toContain(secret);
+        const toolResult = result.items.filter(isToolResult)[0];
+        expect(toolResult.output.data).not.toContain(secret);
+        expect(readFileSync(logPath, 'utf-8')).not.toContain(secret);
     });
 
     // Test 14: Indeterminate mutation in autoConfirm mode → continues (no tool_error)

@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { unlinkSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { SessionId, TurnId } from '../types/ids.js';
+import { pathsReferToSameLocation } from '../core/path-comparison.js';
 
 const execFile = promisify(execFileCb);
 
@@ -119,9 +120,14 @@ export class CheckpointManager {
             throw new Error('git is not available on PATH. Checkpointing requires git.');
         }
 
-        // Check if workspace is a git repo
+        // Check if workspace itself is a git repo. `git -C child rev-parse`
+        // can succeed via an ancestor repo; checkpoints must stay scoped to
+        // the requested workspace root.
         try {
-            await this.git(['rev-parse', '--git-dir']);
+            const topLevel = (await this.git(['rev-parse', '--show-toplevel'])).trim();
+            if (!pathsReferToSameLocation(topLevel, this.workspaceRoot)) {
+                throw new Error(`workspace is inside ancestor git repo: ${topLevel}`);
+            }
         } catch {
             // Auto-init git repo
             await this.git(['init']);

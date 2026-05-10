@@ -61,7 +61,7 @@ The entry point and invocation modes. This block wires the user-facing CLI to th
   | Flag | Type | Config mapping | Purpose |
   |---|---|---|---|
   | `-m, --model <model>` | string | `model.default` | Model override for this session |
-  | `--no-confirm` | boolean | `permissions.nonInteractive` | Auto-approve `confirm` decisions (not `deny`, per Block 8) |
+  | `--no-confirm` | boolean | `permissions.nonInteractive` | Auto-approve ordinary `confirm` decisions (not `confirm_always`, high-risk shell commands, or `deny`, per Block 8) |
   | `-v, --verbose` | boolean | (runtime only) | Verbose event rendering on stderr |
   | `-q, --quiet` | boolean | (runtime only) | Suppress non-essential stderr output. Never suppresses approval prompts or fatal diagnostics |
   | `--json` | boolean | (runtime only) | Structured JSON output mode. Implies executor when combined with piped stdin |
@@ -204,7 +204,7 @@ The entry point and invocation modes. This block wires the user-facing CLI to th
 **Integration with other blocks:**
 
 - **Block 6 (Agent Loop):** The mode-specific loop calls `executeTurn(session, input)` for each turn and interprets the `TurnRecord.outcome` to decide whether to prompt for more input (interactive), exit (one-shot), or return a result (executor). The `interrupt(level)` method is called from the SIGINT handler. The `getPhase()` method feeds the verbose status display on stderr
-- **Block 8 (Permissions):** `--no-confirm` flag maps directly to `permissions.nonInteractive` in the resolved config. The interactive mode's approval prompt implements Block 8's `[y] approve [n] deny [a] always [e] edit` UX. One-shot mode without TTY and without `--no-confirm` fails on `approval_required` yields with `user_cancelled`
+- **Block 8 (Permissions):** `--no-confirm` flag maps directly to `permissions.nonInteractive` in the resolved config. The interactive mode's approval prompt implements Block 8's `[y] approve [n] deny [a] always [e] edit` UX. One-shot mode without TTY and without `--no-confirm` fails on `approval_required` yields with `user_cancelled`; `confirm_always` prompts still require explicit approval
 - **Block 9 (Configuration):** CLI flags feed into Block 9's config pipeline at the highest precedence level. The `--config` flag overrides the config file path. The `--model`, `--no-confirm`, `--max-steps`, and `--workspace` flags map to specific config fields. The `ResolvedConfig` frozen at session start is the product of Block 9's pipeline, consumed by the turn engine and all runtime components
 - **Pluggable Delegation:** `aca describe` and `aca invoke` implement the callee side of the universal capability contract. The JSON envelope shapes, version fields, and error types are defined in the Pluggable Delegation block. Block 10 provides the CLI transport binding
 - **Observability:** The startup sequence emits `session.started` events for both fresh and resumed sessions. The mode-specific loops emit events through the shared event sink. Verbose mode (`--verbose`) enables the human-readable event renderer on stderr. Quiet mode (`--quiet`) suppresses non-essential stderr output

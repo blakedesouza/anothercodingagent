@@ -348,8 +348,8 @@ function extractHostFromRemoteSpec(cmd: string, cmdName: string): string | undef
 
 /**
  * Patterns for detecting network commands in shell strings (best-effort).
- * Covers: curl, wget, ssh, scp, rsync, git clone, npm install, docker pull,
- * pip/pip3 install, cargo install.
+ * Covers: curl, wget, ssh, scp, rsync, git clone/fetch/push,
+ * npm install, docker pull, pip/pip3 install, cargo install, apt-get, brew.
  */
 const SHELL_NETWORK_PATTERNS: Array<{
     test: RegExp;
@@ -425,6 +425,22 @@ const SHELL_NETWORK_PATTERNS: Array<{
         },
     },
     {
+        test: /\bgit\s+fetch\b/,
+        facet: 'network_download',
+        extractDomain: (cmd) => {
+            const m = cmd.match(/https?:\/\/\S+/);
+            return m ? extractHostFromUrl(m[0]) : undefined;
+        },
+    },
+    {
+        test: /\bgit\s+push\b/,
+        facet: 'network_access',
+        extractDomain: (cmd) => {
+            const m = cmd.match(/https?:\/\/\S+/);
+            return m ? extractHostFromUrl(m[0]) : undefined;
+        },
+    },
+    {
         test: /\bnpm\s+(?:install|i)\b/,
         facet: 'package_install',
         extractDomain: () => undefined,
@@ -444,12 +460,22 @@ const SHELL_NETWORK_PATTERNS: Array<{
         facet: 'package_install',
         extractDomain: () => undefined,
     },
+    {
+        test: /\bapt-get\s+(?:install|update|upgrade)\b/,
+        facet: 'package_install',
+        extractDomain: () => undefined,
+    },
+    {
+        test: /\bbrew\s+(?:install|update|upgrade)\b/,
+        facet: 'package_install',
+        extractDomain: () => undefined,
+    },
 ];
 
 /**
  * Detect network commands in a shell command string.
- * Best-effort: catches curl, wget, ssh, scp, rsync, git clone,
- * npm install, docker pull, pip/pip3 install, cargo install.
+ * Best-effort: catches curl, wget, ssh, scp, rsync, git clone/fetch/push,
+ * npm install, docker pull, pip/pip3 install, cargo install, apt-get, brew.
  */
 export function detectShellNetworkCommand(command: string): ShellNetworkDetection {
     for (const { test, facet, extractDomain } of SHELL_NETWORK_PATTERNS) {

@@ -33,7 +33,7 @@ Safety boundaries that cut across all tools and delegation. The agent may operat
   | Tier | Behavior | Examples |
   |---|---|---|
   | `forbidden` | Hard deny. Never executed, even with `--no-confirm`. Not overridable by config | `rm -rf /`, `rm -rf ~`, writes to `/dev/sd*` or `/dev/nvme*`, `mkfs.*`, fork bombs (`:(){:|:&};:`), `dd if=* of=/dev/[sh]d*` |
-  | `high` | Requires explicit user confirmation. `--no-confirm` can override (user assumes full risk). Pre-authorization rules can auto-approve specific patterns | `curl ... \| bash`, `wget -O- \| sh`, `sudo *`, `git push --force`, `git reset --hard`, `git clean -fdx`, `chmod -R 777`, `chmod` on paths outside workspace, writes to `~/.ssh/*`, `~/.bashrc`, `~/.gitconfig`, `npm install -g`, `pip install` without `--prefix`, `docker run -v /:/host` |
+  | `high` | Requires explicit user confirmation. `--no-confirm` alone cannot override high-risk commands. User-config pre-authorization rules can auto-approve specific patterns | `curl ... \| bash`, `wget -O- \| sh`, `sudo *`, `git push --force`, `git reset --hard`, `git clean -fdx`, `chmod -R 777`, `chmod` on paths outside workspace, writes to `~/.ssh/*`, `~/.bashrc`, `~/.gitconfig`, `npm install -g`, `pip install` without `--prefix`, `docker run -v /:/host` |
   | `normal` | Standard `external-effect` approval class. Auto-approvable via pre-authorization rules | `npm test`, `git status`, `ls`, `cat`, `python script.py`, `cargo build` |
 
   **Risk facets (not just binary risk):** The analyzer tags each command with zero or more facets: `filesystem_delete`, `filesystem_recursive`, `network_download`, `pipe_to_shell`, `privilege_escalation`, `credential_touch`, `global_config_write`, `history_rewrite`, `package_install`. Facets are informational — they feed into the confirmation prompt to explain *why* the command is flagged, and into the event log for audit. The risk tier is derived from which facets are present and their combination.
@@ -53,23 +53,23 @@ Safety boundaries that cut across all tools and delegation. The agent may operat
 
 - **Approval escalation composes the four approval classes with policy layers and session grants.** The approval classes defined in the Tool Surface block are the foundation. This section defines how policy turns them into runtime decisions.
 
-  **Approval decision values:** `allow` (proceed without prompting), `confirm` (prompt user), `deny` (refuse, return error to model).
+  **Approval decision values:** `allow` (proceed without prompting), `confirm` (prompt user, auto-approvable by `--no-confirm`), `confirm_always` (prompt user, not auto-approvable by `--no-confirm`), `deny` (refuse, return error to model).
 
   **Resolution algorithm for each tool call:**
 
   1. **Profile check** — Is this tool in the agent's allowed tool set (profile intersection with any narrowing overrides)? If not, `deny` with reason "not permitted by agent profile"
   2. **Sandbox check** — For file-system tools, does the resolved path fall within an allowed zone? If not, `deny` with reason "outside workspace boundary"
-  3. **Risk analysis** — For `exec_command`/`open_session`/`session_io`, run the `CommandRiskAnalyzer`. If `forbidden`, `deny` immediately. If `high`, set minimum decision to `confirm` (cannot be auto-approved unless the user has a matching pre-authorization rule and `--no-confirm` is active)
+  3. **Risk analysis** — For `exec_command`/`open_session`/`session_io`, run the `CommandRiskAnalyzer`. If `forbidden`, `deny` immediately. If `high`, set minimum decision to `confirm` (cannot be auto-approved by `--no-confirm` alone; a matching user pre-authorization rule may still allow it)
   4. **Class-level policy** — Look up the tool's approval class in the merged config:
      - `read-only`: `allow` (always, unless sandbox check failed above)
-     - `workspace-write`: `confirm` by default. User config can set to `allow` for the class or per-tool. Delete and move operations escalate to `confirm` even if the class is set to `allow`, unless explicitly overridden per-tool
+     - `workspace-write`: `confirm` by default. User config can set to `allow` for the class or per-tool. Delete and move operations escalate to `confirm_always` even if the class is set to `allow`, unless explicitly overridden per-tool
      - `external-effect`: `confirm` by default. User config can set pre-authorization rules (pattern-matched) that resolve to `allow`. Without a matching rule, always `confirm`
      - `user-facing`: always interactive — `ask_user` and `confirm_action` are inherently user-facing and never auto-approved or denied
   5. **Pre-authorization match** — Check user-config pre-authorization rules (Block 9). Rules are scoped: tool name, optional command regex (for exec_command), optional cwd pattern, optional path glob (for file tools). If a rule matches and its decision is `allow`, the tool proceeds without prompting. Pre-authorization rules exist only in user config — project config cannot define them
   6. **Session grants** — Check runtime session grants issued earlier in this session (e.g., user chose "always approve this" in a confirmation prompt). Session grants are keyed by a fingerprint of the tool call pattern and scoped to the current session. They do not persist across sessions
   7. **Final decision** — If no rule resolved to `allow`, the decision is `confirm`. The confirmation prompt is presented to the root agent (or bubbled up from sub-agents)
 
-  **`--no-confirm` flag semantics:** This is a CLI invocation flag, not a config setting. It means "auto-approve `confirm` decisions without prompting." It does NOT override `deny` decisions (sandbox violations, forbidden commands, profile restrictions). It does NOT override `blocked` risk tier commands. In non-interactive mode (executor, one-shot without a TTY), if a tool requires confirmation and no `--no-confirm` flag is present and no pre-authorization rule matches, the tool returns `approval_required` (for sub-agents) or fails with `user_cancelled` (for root). The agent never silently skips a confirmation — it either confirms automatically or fails explicitly.
+  **`--no-confirm` flag semantics:** This is a CLI invocation flag, not a config setting. It means "auto-approve `confirm` decisions without prompting." It does NOT override `confirm_always` decisions (network confirmations and protected destructive operations), `deny` decisions (sandbox violations, forbidden commands, profile restrictions), or high-risk shell commands by itself. In non-interactive mode (executor, one-shot without a TTY), if a tool requires confirmation and no `--no-confirm` flag is present and no pre-authorization rule matches, the tool returns `approval_required` (for sub-agents) or fails with `user_cancelled` (for root). The agent never silently skips a confirmation — it either confirms automatically or fails explicitly.
 
   **Confirmation prompt UX (interactive mode):**
 

@@ -342,6 +342,23 @@ describe('CheckpointManager', () => {
         rmSync(bare, { recursive: true, force: true });
     });
 
+    it('auto-inits requested workspace when it is only inside an ancestor repo', async () => {
+        const parent = tmpDir();
+        try {
+            await initGitRepo(parent);
+            const child = join(parent, 'child-workspace');
+            mkdirSync(child, { recursive: true });
+            const freshMgr = new CheckpointManager(child, SESSION_ID);
+
+            await freshMgr.init();
+
+            const gitDir = await git(child, ['rev-parse', '--git-dir']);
+            expect(gitDir).toBe('.git');
+        } finally {
+            rmSync(parent, { recursive: true, force: true });
+        }
+    });
+
     it('undo with count > available checkpoints returns failure', async () => {
         writeFileSync(join(workDir, 'file.txt'), 'content');
         await mgr.createBeforeTurnCheckpoint(TURN1_ID, 1);

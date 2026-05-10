@@ -56,7 +56,7 @@ export interface SessionEndedPayload {
 
 export interface TurnStartedPayload {
     turn_id: string;
-    input_preview: string; // First 200 chars of user input
+    input_preview: string; // First 200 chars of scrubbed user input
 }
 
 export interface TurnEndedPayload {

@@ -24,6 +24,7 @@ import {
     applyRuntimeTurnState,
     buildRuntimePromptContext,
 } from '../core/runtime-turn-context.js';
+import { detectRuntimeShell } from '../core/runtime-shell.js';
 import { summarizeHistoryBeforeTurn } from '../core/pre-turn-summarization.js';
 import { TurnRenderer } from '../rendering/turn-renderer.js';
 import type { EventSink } from '../core/event-sink.js';
@@ -184,7 +185,7 @@ export class Repl {
             historyItems: this.items,
             pendingUserInput: userInput,
             workspaceRoot: this.workspaceRoot,
-            shell: process.env.SHELL,
+            shell: detectRuntimeShell(),
             manifest: this.projection.manifest,
             writer: this.projection.writer,
             sequenceGenerator: this.projection.sequenceGenerator,
@@ -238,7 +239,7 @@ export class Repl {
             autoConfirm: false,
             isSubAgent: false,
             workspaceRoot: this.workspaceRoot,
-            shell: process.env.SHELL,
+            shell: detectRuntimeShell(),
             projectSnapshot: promptContext.projectSnapshot,
             workingSet: promptContext.workingSet,
             durableTaskState: promptContext.durableTaskState,

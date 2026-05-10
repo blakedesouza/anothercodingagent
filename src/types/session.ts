@@ -1,6 +1,6 @@
 import type { SessionId, TurnId, StepId, WorkspaceId } from './ids.js';
 
-// --- Turn outcomes (9 values per Block 5) ---
+// --- Turn outcomes ---
 
 export type TurnOutcome =
     | 'assistant_final'

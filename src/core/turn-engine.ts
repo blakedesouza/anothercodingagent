@@ -613,17 +613,17 @@ export class TurnEngine extends EventEmitter {
             steps: [],
             startedAt: new Date().toISOString(),
         };
+        const persistedUserInput = this.scrubText(userInput);
         this.writer.writeTurn(turn);
         this.emit('turn.started', {
             turnId,
             turnNumber,
-            inputPreview: userInput.slice(0, 200),
+            inputPreview: persistedUserInput.slice(0, 200),
         } satisfies TurnStartedEvent);
 
         // --- Phase 2: AppendUserMessage ---
         this.transitionTo(Phase.AppendUserMessage);
         // Point 3: scrub secrets from user input before persisting to conversation.jsonl.
-        const persistedUserInput = this.scrubber ? this.scrubber.scrub(userInput) : userInput;
         const userMessage: MessageItem = {
             kind: 'message',
             id: generateId('item') as ItemId,
@@ -814,7 +814,7 @@ export class TurnEngine extends EventEmitter {
                     // not caught because the scrubber operates per-chunk. A streaming-safe
                     // sliding-window buffer is planned for M7.8.
                     const storedEvent = (event.type === 'text_delta' && this.scrubber)
-                        ? { ...event, text: this.scrubber.scrub(event.text) }
+                        ? { ...event, text: this.scrubText(event.text) }
                         : event;
                     attemptEvents.push(storedEvent);
                     if (storedEvent.type === 'text_delta') {
@@ -884,7 +884,7 @@ export class TurnEngine extends EventEmitter {
                 this.emit('runtime.error', {
                     turnNumber,
                     code: streamError.error.code,
-                    message: streamError.error.message,
+                    message: this.scrubText(streamError.error.message),
                     context: {
                         model: activeModel,
                         provider: activeProvider,
@@ -917,7 +917,7 @@ export class TurnEngine extends EventEmitter {
                         }
                     }
                 }
-                lastError = { code: streamError.error.code, message: streamError.error.message };
+                lastError = { code: streamError.error.code, message: this.scrubText(streamError.error.message) };
                 outcome = 'aborted';
                 break;
             }
@@ -931,7 +931,7 @@ export class TurnEngine extends EventEmitter {
             this.transitionTo(Phase.AppendAssistantMessage);
             const assistantParts: AssistantPart[] = [
                 ...textParts,
-                ...toolCallParts,
+                ...toolCallParts.map(part => this.scrubToolCallPart(part)),
             ];
 
             if (assistantParts.length > 0) {
@@ -1246,7 +1246,7 @@ export class TurnEngine extends EventEmitter {
                         this.emit('tool.started', {
                             toolCallId: part.toolCallId,
                             toolName: part.toolName,
-                            arguments: part.arguments,
+                            arguments: this.scrubStructured(part.arguments) as Record<string, unknown>,
                         } satisfies ToolStartedEvent);
                         const toolStartMs = Date.now();
                         output = await this.toolRunner.execute(
@@ -1258,11 +1258,12 @@ export class TurnEngine extends EventEmitter {
                             },
                         );
                         const durationMs = Date.now() - toolStartMs;
+                        output = this.scrubToolOutput(output);
                         renderPreview = await finalizeMutationPreview(pendingRenderPreview, output);
                         this.emit('tool.completed', {
                             toolCallId: part.toolCallId,
                             toolName: part.toolName,
-                            arguments: part.arguments,
+                            arguments: this.scrubStructured(part.arguments) as Record<string, unknown>,
                             output,
                             durationMs,
                             ...(renderPreview ? { renderPreview } : {}),
@@ -1281,22 +1282,10 @@ export class TurnEngine extends EventEmitter {
                             turnFilesChanged.add(filePath);
                         }
                     }
-                    // Point 1: scrub secrets from tool output before storing.
-                    // Covers both output.data and output.error.message (errors can contain
-                    // secrets, e.g., "Invalid API key sk-xxx: unauthorized").
-                    if (this.scrubber) {
-                        output = {
-                            ...output,
-                            data: this.scrubber.scrub(output.data),
-                            ...(output.error ? {
-                                error: {
-                                    ...output.error,
-                                    message: this.scrubber.scrub(output.error.message),
-                                },
-                            } : {}),
-                        };
-                    }
                 }
+                // Point 1: scrub secrets from tool output before storing.
+                // Covers both output.data and output.error.message.
+                output = this.scrubToolOutput(output);
 
                 const outputBytes = dataBytes(output.data);
                 const remainingToolResultBytes = toolResultByteLimit === undefined
@@ -1627,6 +1616,45 @@ export class TurnEngine extends EventEmitter {
         }
 
         return messages;
+    }
+
+    private scrubText(text: string): string {
+        return this.scrubber ? this.scrubber.scrub(text) : text;
+    }
+
+    private scrubStructured(value: unknown): unknown {
+        if (!this.scrubber) return value;
+        if (typeof value === 'string') return this.scrubber.scrub(value);
+        if (Array.isArray(value)) return value.map(item => this.scrubStructured(item));
+        if (value && typeof value === 'object') {
+            const scrubbed: Record<string, unknown> = {};
+            for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+                scrubbed[key] = this.scrubStructured(entry);
+            }
+            return scrubbed;
+        }
+        return value;
+    }
+
+    private scrubToolCallPart(part: ToolCallPart): ToolCallPart {
+        return {
+            ...part,
+            arguments: this.scrubStructured(part.arguments) as Record<string, unknown>,
+        };
+    }
+
+    private scrubToolOutput(output: ToolOutput): ToolOutput {
+        if (!this.scrubber) return output;
+        return {
+            ...output,
+            data: this.scrubber.scrub(output.data),
+            ...(output.error ? {
+                error: {
+                    ...output.error,
+                    message: this.scrubber.scrub(output.error.message),
+                },
+            } : {}),
+        };
     }
 
     private getAvailableTools(allowedTools?: string[] | null): RegisteredTool[] {

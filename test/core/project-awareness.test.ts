@@ -208,6 +208,13 @@ describe('Project Awareness', () => {
             expect(detectGitState(tempDir)).toBeNull();
         });
 
+        it('returns null for a child directory inside an ancestor repo', () => {
+            initGitRepo(tempDir);
+            const child = join(tempDir, 'not-the-repo-root');
+            mkdirSync(child, { recursive: true });
+            expect(detectGitState(child)).toBeNull();
+        });
+
         it('detects clean repo state', () => {
             initGitRepo(tempDir);
             // Need at least one commit for status to work

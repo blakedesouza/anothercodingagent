@@ -466,6 +466,18 @@ describe('detectShellNetworkCommand', () => {
         expect(result.domain).toBe('github.com');
     });
 
+    it('detects git fetch', () => {
+        const result = detectShellNetworkCommand('git fetch origin main');
+        expect(result.detected).toBe(true);
+        expect(result.facet).toBe('network_download');
+    });
+
+    it('detects git push', () => {
+        const result = detectShellNetworkCommand('git push origin main');
+        expect(result.detected).toBe(true);
+        expect(result.facet).toBe('network_access');
+    });
+
     it('detects npm install', () => {
         const result = detectShellNetworkCommand('npm install package');
         expect(result.detected).toBe(true);
@@ -474,6 +486,18 @@ describe('detectShellNetworkCommand', () => {
 
     it('detects npm i (shorthand)', () => {
         const result = detectShellNetworkCommand('npm i lodash');
+        expect(result.detected).toBe(true);
+        expect(result.facet).toBe('package_install');
+    });
+
+    it('detects apt-get install', () => {
+        const result = detectShellNetworkCommand('sudo apt-get install ripgrep');
+        expect(result.detected).toBe(true);
+        expect(result.facet).toBe('package_install');
+    });
+
+    it('detects brew install', () => {
+        const result = detectShellNetworkCommand('brew install ripgrep');
         expect(result.detected).toBe(true);
         expect(result.facet).toBe('package_install');
     });
@@ -540,6 +564,16 @@ describe('evaluateShellNetworkAccess', () => {
         expect(result).not.toBeNull();
         expect(result!.decision).toBe('deny');
         expect(result!.facet).toBe('network_download');
+    });
+
+    it('git push + approved-only → confirm', () => {
+        const result = evaluateShellNetworkAccess(
+            'git push origin main',
+            makePolicy({ mode: 'approved-only' }),
+        );
+        expect(result).not.toBeNull();
+        expect(result!.decision).toBe('confirm');
+        expect(result!.facet).toBe('network_access');
     });
 
     it('npm install + mode=off → denied, facet package_install', () => {
