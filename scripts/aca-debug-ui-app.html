@@ -185,7 +185,7 @@
   }
   .kpi-strip {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     border-bottom: 1px solid var(--line);
     background: var(--panel);
   }
@@ -1089,7 +1089,10 @@
     .quick-stats { gap: 14px; }
   }
   @media (max-width: 760px) {
-    html, body { overflow: auto; }
+    html, body {
+      height: auto;
+      overflow: auto;
+    }
     .shell {
       height: auto;
       min-height: 100vh;
@@ -1109,8 +1112,10 @@
     .sidebar {
       border-right: 0;
       border-bottom: 1px solid var(--line);
-      max-height: 42vh;
+      max-height: none;
+      overflow: visible;
     }
+    .session-list { overflow: visible; }
     .detail {
       min-height: 58vh;
       overflow: visible;
@@ -1125,7 +1130,11 @@
     .turn-cost { text-align: left; }
     .detail-head,
     .tab-bar,
-    .detail-body { padding-left: 16px; padding-right: 16px; }
+    .detail-body {
+      overflow: visible;
+      padding-left: 16px;
+      padding-right: 16px;
+    }
   }
 </style>
 </head>
@@ -1343,6 +1352,7 @@ const state = {
   isLoading: true,
   loadError: null,
   overview: null,
+  nanoGptUsage: null,
   sessions: [],
   consults: [],
   selectedSessionId: null,
@@ -1481,12 +1491,17 @@ async function loadAll() {
   state.isLoading = true;
   state.loadError = null;
   try {
-    const [overview, sessionsPayload, consultsPayload] = await Promise.all([
+    const [overview, sessionsPayload, consultsPayload, nanoGptUsage] = await Promise.all([
       api('/api/overview'),
       api('/api/sessions?limit=120'),
       api('/api/consults?limit=120'),
+      api('/api/nanogpt/usage').catch((error) => ({
+        status: 'error',
+        message: error instanceof Error ? error.message : String(error),
+      })),
     ]);
     state.overview = overview;
+    state.nanoGptUsage = nanoGptUsage;
     state.sessions = Array.isArray(sessionsPayload.sessions) ? sessionsPayload.sessions : [];
     state.consults = Array.isArray(consultsPayload.consults) ? consultsPayload.consults : [];
 
@@ -1946,11 +1961,11 @@ function renderChrome() {
   const overview = state.overview || {};
   $('#envEndpoint').textContent = `${overview.host || location.hostname}:${overview.port || location.port || '4777'}`;
   $('#envDb').textContent = overview.dbPath || 'observability.db';
-  $('#kpiStrip').innerHTML = renderKpis(overview);
+  $('#kpiStrip').innerHTML = renderKpis(overview, state.nanoGptUsage);
   updateAutoToggle();
 }
 
-function renderKpis(overview) {
+function renderKpis(overview, nanoGptUsage = null) {
   const last = overview.last7Days || {};
   const sessionSeries = (last.daily && last.daily.sessions) || [];
   const costSeries = (last.daily && last.daily.costUsd) || [];
@@ -1974,8 +1989,36 @@ function renderKpis(overview) {
     renderKpiCard('7d Tokens', `${formatCompact(last.tokensIn || 0)}<span class="unit">in</span>`, `${formatCompact(last.tokensOut || 0)} out · ${ratio}`, tokenSeries, '--text-2'),
     renderKpiCard('Tool Errors', `${formatPercent(last.toolErrorRate || 0)}<span class="unit">%</span>`, `${formatCompact(last.toolErrors || 0)} / ${formatCompact(last.toolCalls || 0)} calls`, toolErrorSeries, '--ok'),
     renderKpiCard('Recent Errors', formatCompact(recentErrorCount), recentErrorSubtext, recentErrorSeries, recentErrorCount ? '--err' : '--ok'),
+    renderNanoGptUsageKpi(nanoGptUsage),
     renderKpiCard('Models', formatCompact(modelCatalog.total_model_count || modelCatalog.model_count || 0), modelSubtext, [], modelCatalog.status === 'ok' ? '--ok' : '--warn'),
   ].join('');
+}
+
+function renderNanoGptUsageKpi(usage) {
+  if (!usage || usage.status === 'missing_key') {
+    return renderKpiCard('NanoGPT Weekly', '—', usage?.message || 'usage unavailable', [], '--warn');
+  }
+  if (usage.status === 'error') {
+    return renderKpiCard('NanoGPT Weekly', '—', usage.message || 'usage unavailable', [], '--err');
+  }
+  const bucket = usage.weeklyInputTokens;
+  if (!bucket || bucket.limit == null) {
+    return renderKpiCard('NanoGPT Weekly', '—', `${usage.state || 'unknown'} · no token limit`, [], '--warn');
+  }
+  const used = Number(bucket.used || 0);
+  const limit = Number(bucket.limit || 0);
+  const remaining = bucket.remaining == null ? Math.max(0, limit - used) : Number(bucket.remaining || 0);
+  const reset = bucket.resetAt ? ` · resets ${formatDateShort(bucket.resetAt)}` : '';
+  const stale = usage.stale ? 'stale · ' : '';
+  const ratio = limit > 0 ? used / limit : 0;
+  const color = ratio >= 0.9 ? '--err' : ratio >= 0.75 ? '--warn' : '--info';
+  return renderKpiCard(
+    'NanoGPT Weekly',
+    `${formatShortNumber(used)}<span class="unit">/ ${formatShortNumber(limit)}</span>`,
+    `${stale}${formatShortNumber(remaining)} left${reset}`,
+    [],
+    color,
+  );
 }
 
 function renderKpiCard(label, valueHtml, subtext, series, colorVar) {
@@ -2064,7 +2107,7 @@ function renderActivitySidebar(archiveMode) {
 
 function renderActivityRow(row) {
   return `
-    <div class="session-row status-${escapeHtml(row.status)} ${row.sourceId === selectedSourceIdForKind(row.kind) ? 'selected' : ''}" data-kind="${escapeHtml(row.kind)}" data-id="${escapeHtml(row.sourceId)}">
+    <div class="session-row status-${escapeHtml(row.status)} ${row.kind === state.selectedActivityKind && row.sourceId === selectedSourceIdForKind(row.kind) ? 'selected' : ''}" data-kind="${escapeHtml(row.kind)}" data-id="${escapeHtml(row.sourceId)}">
       <div class="rail"></div>
       <div>
         <div class="sr-title">${escapeHtml(row.title)}</div>
@@ -2682,6 +2725,13 @@ function formatTime(value) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+function formatDateShort(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
 function formatDurationMs(ms) {
   const value = Number(ms || 0);
   if (!value) return '';
@@ -2706,6 +2756,10 @@ function formatMoney(value) {
 
 function formatCompact(value) {
   return new Intl.NumberFormat().format(Number(value || 0));
+}
+
+function formatShortNumber(value) {
+  return new Intl.NumberFormat([], { notation: 'compact', maximumFractionDigits: 1 }).format(Number(value || 0));
 }
 
 function formatPercent(value) {

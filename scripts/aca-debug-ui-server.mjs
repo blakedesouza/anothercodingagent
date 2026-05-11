@@ -31,10 +31,13 @@ const MAX_PREVIEW_BYTES = 96 * 1024;
 const STALE_CONSULT_MS = Number.parseInt(process.env.ACA_DEBUG_UI_STALE_CONSULT_MS || '', 10) || 10 * 60 * 1000;
 const SEEDED_WITNESSES = parseWitnessSeed(process.env.ACA_DEBUG_UI_WITNESS_SEED || '');
 const MODEL_CATALOG = readModelCatalogSnapshot(process.env.ACA_DEBUG_UI_MODEL_CATALOG_PATH || '');
+const NANOGPT_USAGE_ENDPOINT = process.env.ACA_DEBUG_UI_NANOGPT_USAGE_ENDPOINT || 'https://nano-gpt.com/api/subscription/v1/usage';
 const APP_HTML_URL = new URL('./aca-debug-ui-app.html', import.meta.url);
 
 let db = null;
 let activePort = PORT;
+let nanoGptUsageCache = null;
+let nanoGptUsagePromise = null;
 if (existsSync(DB_PATH)) {
   db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
 }
@@ -180,6 +183,11 @@ async function handleRequest(req, res) {
 
   if (url.pathname === '/api/models') {
     sendJson(res, 200, MODEL_CATALOG || emptyModelCatalog());
+    return;
+  }
+
+  if (url.pathname === '/api/nanogpt/usage') {
+    sendJson(res, 200, await nanoGptSubscriptionUsage());
     return;
   }
 
@@ -400,6 +408,142 @@ function emptyModelCatalog() {
     last_error: null,
     models: [],
   };
+}
+
+async function nanoGptSubscriptionUsage() {
+  const now = Date.now();
+  const ttlMs = nanoGptUsageTtlMs();
+  if (nanoGptUsageCache && now - nanoGptUsageCache.fetchedAtMs < ttlMs) {
+    return { ...nanoGptUsageCache.data, cached: true, ttlMs };
+  }
+  if (nanoGptUsagePromise) return nanoGptUsagePromise;
+
+  nanoGptUsagePromise = refreshNanoGptSubscriptionUsage(now, ttlMs)
+    .finally(() => {
+      nanoGptUsagePromise = null;
+    });
+  return nanoGptUsagePromise;
+}
+
+async function refreshNanoGptSubscriptionUsage(now, ttlMs) {
+  const apiKey = String(process.env.NANOGPT_API_KEY || '').trim();
+  const fetchedAt = new Date(now).toISOString();
+  if (!apiKey) {
+    return {
+      status: 'missing_key',
+      message: 'NANOGPT_API_KEY is not available to the debug UI process.',
+      fetchedAt,
+      cached: false,
+      stale: false,
+      ttlMs,
+      active: false,
+      state: 'unavailable',
+      weeklyInputTokens: null,
+      dailyInputTokens: null,
+      dailyImages: null,
+    };
+  }
+
+  try {
+    const response = await fetch(NANOGPT_USAGE_ENDPOINT, {
+      headers: { authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) {
+      throw new Error(`NanoGPT usage request failed with HTTP ${response.status}`);
+    }
+    const body = await response.json();
+    const data = sanitizeNanoGptSubscriptionUsage(body, fetchedAt, ttlMs);
+    nanoGptUsageCache = { fetchedAtMs: now, data };
+    return data;
+  } catch (error) {
+    const message = safeErrorMessage(error);
+    if (nanoGptUsageCache) {
+      return {
+        ...nanoGptUsageCache.data,
+        status: 'stale',
+        cached: true,
+        stale: true,
+        message,
+        ttlMs,
+      };
+    }
+    return {
+      status: 'error',
+      message,
+      fetchedAt,
+      cached: false,
+      stale: false,
+      ttlMs,
+      active: false,
+      state: 'unavailable',
+      weeklyInputTokens: null,
+      dailyInputTokens: null,
+      dailyImages: null,
+    };
+  }
+}
+
+function sanitizeNanoGptSubscriptionUsage(body, fetchedAt, ttlMs) {
+  const limits = body && typeof body === 'object' && body.limits && typeof body.limits === 'object'
+    ? body.limits
+    : {};
+  return {
+    status: 'ok',
+    fetchedAt,
+    cached: false,
+    stale: false,
+    ttlMs,
+    active: Boolean(body?.active),
+    state: safeStatusText(body?.state || body?.providerStatus || 'unknown'),
+    periodEnd: normalizeTimestamp(body?.period?.currentPeriodEnd),
+    allowOverage: Boolean(body?.allowOverage),
+    weeklyInputTokens: normalizeNanoGptUsageBucket(body?.weeklyInputTokens, limits.weeklyInputTokens),
+    dailyInputTokens: normalizeNanoGptUsageBucket(body?.dailyInputTokens, limits.dailyInputTokens),
+    dailyImages: normalizeNanoGptUsageBucket(body?.dailyImages, limits.dailyImages),
+  };
+}
+
+function normalizeNanoGptUsageBucket(bucket, limitFallback) {
+  if (!bucket || typeof bucket !== 'object') return null;
+  const used = finiteNumber(bucket.used) ?? 0;
+  const limit = finiteNumber(bucket.limit) ?? finiteNumber(limitFallback);
+  const remaining = finiteNumber(bucket.remaining) ?? (limit == null ? null : Math.max(0, limit - used));
+  const ratioUsed = limit && limit > 0 ? used / limit : null;
+  return {
+    used,
+    remaining,
+    limit,
+    ratioUsed,
+    resetAt: normalizeTimestamp(bucket.resetAt),
+  };
+}
+
+function nanoGptUsageTtlMs() {
+  const parsed = Number.parseInt(process.env.ACA_DEBUG_UI_NANOGPT_CACHE_TTL_MS || '', 10);
+  if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  return 5 * 60 * 1000;
+}
+
+function finiteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeTimestamp(value) {
+  if (!value) return null;
+  const date = typeof value === 'number' ? new Date(value) : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function safeStatusText(value) {
+  return String(value || '').replace(/[^a-zA-Z0-9_.:-]/g, '').slice(0, 64) || 'unknown';
+}
+
+function safeErrorMessage(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]').slice(0, 180);
 }
 
 function listSessions(limit) {

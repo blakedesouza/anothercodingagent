@@ -1804,6 +1804,16 @@ program
     .description('Start the local ACA debug UI')
     .action(async () => {
         process.env.ACA_DEBUG_UI_WITNESS_SEED ??= serializeWitnessSeed();
+        if (!process.env.NANOGPT_API_KEY) {
+            try {
+                const secretsResult = await loadSecrets();
+                if (secretsResult.secrets.nanogpt) {
+                    process.env.NANOGPT_API_KEY = secretsResult.secrets.nanogpt;
+                }
+            } catch {
+                // Debug UI can still start without optional NanoGPT subscription usage.
+            }
+        }
         if (!process.env.ACA_DEBUG_UI_MODEL_CATALOG_PATH) {
             try {
                 const acaHome = process.env.ACA_HOME || join(homedir(), '.aca');

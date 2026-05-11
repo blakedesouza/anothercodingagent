@@ -42,6 +42,9 @@ return {
   classificationLabel,
   diagnosticBadgeClass,
   renderContractPanel,
+  renderKpis,
+  renderActivityRow,
+  state,
 };`,
     )(window, document, localStorage, new URL('http://127.0.0.1:4777/?token=test'));
 }
@@ -53,6 +56,9 @@ describe('ACA debug UI static contracts', () => {
         expect(appHtml).toContain('.workbench {');
         expect(appHtml).toContain('grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);');
         expect(appHtml).not.toContain('@media (max-width: 1100px) {\n    .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }\n    .workbench { grid-template-columns: 1fr; }');
+        expect(appHtml).toContain('height: auto;');
+        expect(appHtml).toContain('.session-list { overflow: visible; }');
+        expect(appHtml).not.toContain('max-height: 42vh;');
         expect(appHtml).not.toMatch(/letter-spacing:\s*-/);
     });
 
@@ -102,6 +108,16 @@ describe('ACA debug UI static contracts', () => {
         expect(serverSource).toContain('modelCatalog: MODEL_CATALOG || emptyModelCatalog()');
         expect(appHtml).toContain("renderKpiCard('Models'");
         expect(appHtml).toContain('modelCatalog.total_model_count');
+    });
+
+    it('exposes sanitized cached NanoGPT subscription usage in the debug API and dashboard KPIs', () => {
+        expect(serverSource).toContain('ACA_DEBUG_UI_NANOGPT_CACHE_TTL_MS');
+        expect(serverSource).toContain("url.pathname === '/api/nanogpt/usage'");
+        expect(serverSource).toContain('sanitizeNanoGptSubscriptionUsage');
+        expect(serverSource).toContain('weeklyInputTokens: normalizeNanoGptUsageBucket');
+        expect(serverSource).not.toContain('stripeSubscriptionId:');
+        expect(appHtml).toContain("api('/api/nanogpt/usage')");
+        expect(appHtml).toContain("renderKpiCard('NanoGPT Weekly'");
     });
 
     it('writes debug UI metadata with owner-only permissions', () => {
@@ -476,6 +492,51 @@ describe('ACA debug UI static contracts', () => {
         expect(appHtml).toContain('CLI session -');
         expect(appHtml).toContain('Consult run -');
         expect(appHtml).toContain(' - historical');
+    });
+
+    it('selects activity rows by kind and source id together', () => {
+        const helpers = loadAppHelpers();
+        helpers.state.selectedActivityKind = 'session';
+        helpers.state.selectedSessionId = 'shared-id';
+        helpers.state.selectedConsultId = 'shared-id';
+
+        const baseRow = {
+            sourceId: 'shared-id',
+            title: 'Shared row',
+            subtitle: 'same ID, different kind',
+            status: 'complete',
+            visibleReason: 'latest',
+            lastActivityAt: '2026-04-27T13:00:00.000Z',
+            startedAt: '2026-04-27T13:00:00.000Z',
+        };
+
+        expect(helpers.renderActivityRow({ ...baseRow, kind: 'session' })).toContain(' selected');
+        expect(helpers.renderActivityRow({ ...baseRow, kind: 'consult' })).not.toContain(' selected');
+    });
+
+    it('renders NanoGPT weekly usage with the API-provided limit', () => {
+        const helpers = loadAppHelpers();
+        const html = helpers.renderKpis({
+            sessionCount: 0,
+            recentErrors: [],
+            recentSessions: [],
+            last7Days: {},
+            modelCatalog: { status: 'ok', source: 'live', total_model_count: 2 },
+        }, {
+            status: 'ok',
+            state: 'active',
+            weeklyInputTokens: {
+                used: 3313509,
+                remaining: 56686491,
+                limit: 60000000,
+                resetAt: '2026-05-18T00:00:00.000Z',
+            },
+        });
+
+        expect(html).toContain('NanoGPT Weekly');
+        expect(html).toContain('3.3M');
+        expect(html).toContain('60M');
+        expect(html).not.toContain('16M');
     });
 
     it('keeps raw session and consult sidebars available outside Relevant Activity', () => {
