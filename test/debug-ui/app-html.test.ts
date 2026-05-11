@@ -42,6 +42,9 @@ return {
   classificationLabel,
   diagnosticBadgeClass,
   renderContractPanel,
+  renderStructuredReview,
+  renderWitnessGrid,
+  summarizeMarkdownText,
   renderKpis,
   renderActivityRow,
   state,
@@ -545,5 +548,75 @@ describe('ACA debug UI static contracts', () => {
         expect(appHtml).toContain('function renderActivitySidebar(archiveMode)');
         expect(appHtml).toContain('Archive has no rows for the selected filters.');
         expect(appHtml).toContain('No relevant ACA activity in the current scope.');
+    });
+
+    it('renders consult structured review as human-readable findings and dissent', () => {
+        const helpers = loadAppHelpers();
+        const report = {
+            summary: {
+                totalWitnesses: 2,
+                totalFindings: 1,
+                clusterCount: 1,
+                severityCounts: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
+                noFindingsWitnesses: ['glm'],
+                budgetExceeded: false,
+            },
+            p0p1Findings: [{
+                clusterId: 'C-1',
+                severity: 'high',
+                claim: 'Missing Windows path normalization',
+                evidence: '**File:** `src/run.ts` can emit WSL-only paths.',
+                recommendedAction: 'Normalize paths before display.',
+                agreementCount: 2,
+                witnessPointers: [],
+                file: 'src/run.ts',
+                line: 42,
+            }],
+            dissent: [{ topic: 'severity', positions: [{ witnessId: 'kimi', severity: 'high', claim: 'Breaks Windows' }] }],
+            openQuestions: [{ question: 'Should WSL paths be preserved?', context: 'Only archival output may need this.' }],
+            lowerFindings: [],
+            rawReviewPointers: [{ witnessId: 'kimi', model: 'moonshotai/kimi-k2.6', findingCount: 1, rawOutputLength: 900 }],
+            warnings: [],
+        };
+
+        const html = helpers.renderStructuredReview({ status: 'ok' }, [{
+            kind: 'structured-review-json',
+            preview: JSON.stringify(report),
+        }]);
+
+        expect(appHtml).toContain('What the council concluded');
+        expect(html).toContain('Missing Windows path normalization');
+        expect(html).toContain('Normalize paths before display.');
+        expect(html).toContain('No-finding witnesses: glm');
+        expect(html).toContain('Should WSL paths be preserved?');
+        expect(html).toContain('Raw review pointers');
+        expect(html).not.toContain('<pre>');
+    });
+
+    it('renders witness answers as summaries with context evidence and collapsed raw output', () => {
+        const helpers = loadAppHelpers();
+        const html = helpers.renderWitnessGrid({
+            kimi: {
+                name: 'kimi',
+                model: 'moonshotai/kimi-k2.6',
+                status: 'ok',
+                usage: { input_tokens: 1200, output_tokens: 300 },
+                preview: '## Findings\n\nThe Windows path handling is understandable after normalization.\n\n```json\n{"noise":true}\n```',
+                contextRequests: [{ type: 'file', path: 'src/run.ts', line_start: 40, line_end: 55, reason: 'inspect Windows path handling' }],
+                contextSnippets: [{ path: 'src/run.ts' }],
+                contextAttemptDiagnostics: [{ stage: 'initial' }],
+                finalizationDiagnostics: [],
+                artifacts: [{ kind: 'response' }],
+            },
+        });
+
+        expect(appHtml).toContain('Witness answers');
+        expect(html).toContain('The Windows path handling is understandable after normalization.');
+        expect(html).toContain('Evidence requested');
+        expect(html).toContain('src/run.ts');
+        expect(html).toContain('inspect Windows path handling');
+        expect(html).toContain('Raw witness turn');
+        expect(html).toContain('1 context requests');
+        expect(helpers.summarizeMarkdownText('## Result\n\n**Useful** `text`')).toBe('Result\n\nUseful text');
     });
 });

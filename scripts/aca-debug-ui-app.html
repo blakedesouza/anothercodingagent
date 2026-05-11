@@ -757,15 +757,117 @@
   .witness-status.err { color: var(--err); background: color-mix(in oklab, var(--err) 14%, transparent); }
   .witness-body {
     padding: 12px;
-    max-height: 240px;
-    overflow: auto;
+  }
+  .witness-summary {
+    color: var(--text);
+    line-height: 1.5;
+    margin: 0 0 10px;
+  }
+  .witness-empty {
+    color: var(--text-3);
+  }
+  .witness-meta-list,
+  .context-list,
+  .finding-list {
+    display: grid;
+    gap: 8px;
+  }
+  .context-item,
+  .finding-item,
+  .review-note {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    padding: 10px;
+  }
+  .context-item b,
+  .finding-item b {
+    display: block;
+    margin-bottom: 4px;
+  }
+  .finding-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .finding-title {
+    font-weight: 650;
+  }
+  .severity-chip {
+    font: 600 11px var(--mono);
+    border-radius: 999px;
+    padding: 3px 8px;
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .severity-critical,
+  .severity-high { color: var(--err); border-color: color-mix(in oklab, var(--err) 40%, var(--line)); }
+  .severity-medium { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 40%, var(--line)); }
+  .severity-low,
+  .severity-info { color: var(--info); border-color: color-mix(in oklab, var(--info) 40%, var(--line)); }
+  .consult-callout {
+    border: 1px solid color-mix(in oklab, var(--accent) 35%, var(--line));
+    border-radius: 8px;
+    background: color-mix(in oklab, var(--accent) 8%, var(--panel));
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .consult-callout b {
+    display: block;
+    margin-bottom: 4px;
+  }
+  .consult-callout span,
+  .review-note,
+  .context-item,
+  .finding-item {
+    color: var(--text-2);
+    line-height: 1.45;
+  }
+  .mini-kpis {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin: 10px 0 12px;
+  }
+  .mini-kpi {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    padding: 8px;
+  }
+  .mini-kpi b {
+    display: block;
+    font: 10px var(--mono);
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 3px;
+  }
+  .mini-kpi span {
+    font-weight: 650;
+  }
+  .raw-details {
+    margin-top: 10px;
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+  .raw-details summary {
+    cursor: pointer;
+    color: var(--text-3);
+    font: 12px var(--mono);
   }
   .witness-body pre {
-    margin: 0;
+    margin: 8px 0 0;
     font: 11.5px/1.5 var(--mono);
     color: var(--text-2);
     white-space: pre-wrap;
     word-break: break-word;
+    max-height: 220px;
+    overflow: auto;
   }
   .witness-foot {
     padding: 8px 12px;
@@ -1124,7 +1226,8 @@
     .event-row,
     .conversation-row,
     .summary-grid,
-    .witness-grid {
+    .witness-grid,
+    .mini-kpis {
       grid-template-columns: 1fr;
     }
     .turn-cost { text-align: left; }
@@ -1252,15 +1355,15 @@
               <div class="summary-kv" id="consultSummary"></div>
             </div>
             <div class="summary-card">
-              <div class="section-title">Structured review</div>
+              <div class="section-title">What the council concluded</div>
               <div id="structuredReview"></div>
             </div>
           </div>
-          <div class="section-title">Witnesses</div>
+          <div class="section-title">Witness answers</div>
           <div class="witness-grid" id="witnessGrid"></div>
-          <div class="section-title" style="margin-top:24px">Triage</div>
+          <div class="section-title" style="margin-top:24px">Triage synthesis</div>
           <div id="triageCard"></div>
-          <div class="section-title" style="margin-top:24px">Artifacts</div>
+          <div class="section-title" style="margin-top:24px">Raw artifacts</div>
           <div class="artifact-list" id="consultArtifacts"></div>
         </div>
       </div>
@@ -2562,28 +2665,74 @@ function renderWitnessGrid(witnesses) {
   if (!items.length) {
     return '<div class="empty-state">No witness data was found for this consult.</div>';
   }
-  return items.map((witness) => {
-    const usage = formatUsage(witness.usage);
-    return `
-      <div class="witness-card">
-        <div class="witness-head">
-          <div>
-            <div class="witness-name">${escapeHtml(witness.name || '(witness)')}</div>
-            <div class="witness-model">${escapeHtml(witness.model || 'model unavailable')}</div>
-          </div>
-          <span class="witness-status ${statusTone(witness.status)}">${escapeHtml(witness.status || 'pending')}</span>
+  return items.map(renderWitnessCard).join('');
+}
+
+function renderWitnessCard(witness) {
+  const usage = formatUsage(witness.usage);
+  const rawOutput = witness.error || witness.preview || '';
+  const summary = summarizeMarkdownText(rawOutput, 520);
+  const requests = Array.isArray(witness.contextRequests) ? witness.contextRequests : [];
+  const snippets = Array.isArray(witness.contextSnippets) ? witness.contextSnippets : [];
+  const attempts = Array.isArray(witness.contextAttemptDiagnostics) ? witness.contextAttemptDiagnostics : [];
+  const finalization = Array.isArray(witness.finalizationDiagnostics) ? witness.finalizationDiagnostics : [];
+  return `
+    <div class="witness-card">
+      <div class="witness-head">
+        <div>
+          <div class="witness-name">${escapeHtml(witness.name || '(witness)')}</div>
+          <div class="witness-model">${escapeHtml(witness.model || 'model unavailable')}</div>
         </div>
-        <div class="witness-body"><pre>${escapeHtml(witness.error || witness.preview || 'Waiting for output.')}</pre></div>
-        <div class="witness-foot">
-          <span>${escapeHtml(usage)}</span>
-          <span>${escapeHtml(`${(witness.artifacts || []).length} artifacts`)}</span>
-        </div>
-      </div>`;
-  }).join('');
+        <span class="witness-status ${statusTone(witness.status)}">${escapeHtml(witness.status || 'pending')}</span>
+      </div>
+      <div class="witness-body">
+        <div class="witness-summary ${summary ? '' : 'witness-empty'}">${escapeHtml(summary || 'Waiting for output.').replace(/\n/g, '<br>')}</div>
+        ${renderContextEvidence(requests, snippets, attempts, finalization)}
+        <details class="raw-details">
+          <summary>Raw witness turn</summary>
+          <pre>${escapeHtml(rawOutput || 'No raw output yet.')}</pre>
+        </details>
+      </div>
+      <div class="witness-foot">
+        <span>${escapeHtml(usage)}</span>
+        <span>${escapeHtml(`${requests.length} context requests`)}</span>
+        <span>${escapeHtml(`${snippets.length} snippets`)}</span>
+        <span>${escapeHtml(`${(witness.artifacts || []).length} artifacts`)}</span>
+      </div>
+    </div>`;
+}
+
+function renderContextEvidence(requests, snippets, attempts, finalization) {
+  const items = [];
+  for (const request of requests.slice(0, 4)) {
+    const target = [request.type || 'context', request.path || 'no path', formatLineRange(request)].filter(Boolean).join(' · ');
+    items.push(`<div class="context-item"><b>${escapeHtml(target)}</b><span>${escapeHtml(request.reason || 'No reason recorded.')}</span></div>`);
+  }
+  if (requests.length > 4) {
+    items.push(`<div class="context-item">${escapeHtml(`${requests.length - 4} more context requests not shown here.`)}</div>`);
+  }
+  if (!items.length && (attempts.length || finalization.length || snippets.length)) {
+    const parts = [];
+    if (attempts.length) parts.push(`${attempts.length} context pass${attempts.length === 1 ? '' : 'es'}`);
+    if (finalization.length) parts.push(`${finalization.length} finalization pass${finalization.length === 1 ? '' : 'es'}`);
+    if (snippets.length) parts.push(`${snippets.length} snippet${snippets.length === 1 ? '' : 's'} supplied`);
+    items.push(`<div class="context-item">${escapeHtml(parts.join(' · '))}</div>`);
+  }
+  if (!items.length) return '<div class="review-note">No extra file context was requested by this witness.</div>';
+  return `<div class="section-title" style="margin-top:12px">Evidence requested</div><div class="context-list">${items.join('')}</div>`;
+}
+
+function formatLineRange(request) {
+  const start = Number(request.line_start || request.lineStart || 0);
+  const end = Number(request.line_end || request.lineEnd || 0);
+  if (!start && !end) return '';
+  if (start && end && start !== end) return `lines ${start}-${end}`;
+  return `line ${start || end}`;
 }
 
 function renderTriageCard(triage) {
   const usage = formatUsage(triage.usage);
+  const summary = summarizeMarkdownText(triage.preview || triage.error || '', 620);
   return `
     <div class="witness-card">
       <div class="witness-head">
@@ -2593,7 +2742,13 @@ function renderTriageCard(triage) {
         </div>
         <span class="witness-status ${statusTone(triage.status)}">${escapeHtml(triage.status || 'pending')}</span>
       </div>
-      <div class="witness-body"><pre>${escapeHtml(triage.preview || triage.error || 'No triage output yet.')}</pre></div>
+      <div class="witness-body">
+        <div class="witness-summary ${summary ? '' : 'witness-empty'}">${escapeHtml(summary || 'No triage output yet.').replace(/\n/g, '<br>')}</div>
+        <details class="raw-details">
+          <summary>Raw triage output</summary>
+          <pre>${escapeHtml(triage.preview || triage.error || 'No triage output yet.')}</pre>
+        </details>
+      </div>
       <div class="witness-foot">
         <span>${escapeHtml(usage)}</span>
         <span>${escapeHtml(`${(triage.artifacts || []).length} artifacts`)}</span>
@@ -2602,13 +2757,13 @@ function renderTriageCard(triage) {
 }
 
 function renderStructuredReview(review, artifacts) {
+  const report = parseStructuredReviewReport(artifacts);
+  if (report) return renderStructuredReviewReport(report, review);
   if (review && review.status === 'ok') {
     return `
-      <div class="summary-kv">
-        ${summaryRow('Status', 'ok')}
-        ${summaryRow('Findings', formatCompact(review.finding_count || 0))}
-        ${summaryRow('Clusters', formatCompact(review.cluster_count || 0))}
-        ${summaryRow('Disagreements', formatCompact(review.disagreement_count || 0))}
+      <div class="consult-callout">
+        <b>Structured review was produced, but the readable JSON report was unavailable.</b>
+        <span>${escapeHtml(`${formatCompact(review.finding_count || 0)} findings, ${formatCompact(review.cluster_count || 0)} clusters, ${formatCompact(review.disagreement_count || 0)} disagreements.`)}</span>
       </div>`;
   }
   if (review && review.status === 'error') {
@@ -2616,6 +2771,139 @@ function renderStructuredReview(review, artifacts) {
   }
   if (artifacts.length) return renderArtifacts(artifacts);
   return '<div class="empty-state">No structured review artifacts yet.</div>';
+}
+
+function parseStructuredReviewReport(artifacts) {
+  const jsonArtifact = (artifacts || []).find((artifact) => artifact.kind === 'structured-review-json' && artifact.preview);
+  if (!jsonArtifact) return null;
+  try {
+    return JSON.parse(jsonArtifact.preview);
+  } catch {
+    return null;
+  }
+}
+
+function renderStructuredReviewReport(report, review) {
+  const summary = report.summary || {};
+  const p0p1 = Array.isArray(report.p0p1Findings) ? report.p0p1Findings : [];
+  const lower = Array.isArray(report.lowerFindings) ? report.lowerFindings : [];
+  const dissent = Array.isArray(report.dissent) ? report.dissent : [];
+  const openQuestions = Array.isArray(report.openQuestions) ? report.openQuestions : [];
+  const warnings = Array.isArray(report.warnings) ? report.warnings : [];
+  const totalFindings = Number(summary.totalFindings ?? review?.finding_count ?? 0);
+  const headline = totalFindings === 0
+    ? 'No actionable findings were extracted from the witnesses.'
+    : `${formatCompact(totalFindings)} finding${totalFindings === 1 ? '' : 's'} extracted from witness output.`;
+  return `
+    <div class="consult-callout">
+      <b>${escapeHtml(headline)}</b>
+      <span>${escapeHtml(readableReviewStatus(summary, dissent, openQuestions))}</span>
+    </div>
+    <div class="mini-kpis">
+      ${miniKpi('Witnesses', summary.totalWitnesses ?? '—')}
+      ${miniKpi('Findings', totalFindings)}
+      ${miniKpi('Clusters', summary.clusterCount ?? review?.cluster_count ?? 0)}
+      ${miniKpi('Dissent', dissent.length || review?.disagreement_count || 0)}
+    </div>
+    ${renderSeverityCounts(summary.severityCounts)}
+    ${renderFindingSection('Highest priority findings', p0p1, 'No critical or high findings were extracted.')}
+    ${renderDisagreementSection(dissent)}
+    ${renderOpenQuestionSection(openQuestions)}
+    ${renderFindingSection('Lower severity findings', lower, 'No medium, low, or info findings were extracted.')}
+    ${warnings.length ? `<div class="section-title" style="margin-top:12px">Warnings</div><div class="context-list">${warnings.map((warning) => `<div class="review-note">${escapeHtml(warning)}</div>`).join('')}</div>` : ''}
+    ${renderRawReviewPointers(report.rawReviewPointers || [])}`;
+}
+
+function readableReviewStatus(summary, dissent, openQuestions) {
+  const parts = [];
+  if (Array.isArray(summary.noFindingsWitnesses) && summary.noFindingsWitnesses.length) {
+    parts.push(`No-finding witnesses: ${summary.noFindingsWitnesses.join(', ')}`);
+  }
+  if (dissent.length) parts.push(`${dissent.length} disagreement${dissent.length === 1 ? '' : 's'} need review`);
+  if (openQuestions.length) parts.push(`${openQuestions.length} open question${openQuestions.length === 1 ? '' : 's'}`);
+  if (summary.budgetExceeded) parts.push('Budget was exceeded; lower-priority findings may be trimmed.');
+  return parts.length ? parts.join(' · ') : 'No disagreements or open questions were reported.';
+}
+
+function miniKpi(label, value) {
+  const display = Number.isFinite(Number(value)) ? formatCompact(value) : String(value || '—');
+  return `<div class="mini-kpi"><b>${escapeHtml(label)}</b><span>${escapeHtml(display)}</span></div>`;
+}
+
+function renderSeverityCounts(counts) {
+  if (!counts || typeof counts !== 'object') return '';
+  const severities = ['critical', 'high', 'medium', 'low', 'info'];
+  return `<div class="witness-foot" style="border-top:0;padding:0 0 12px;">${severities.map((severity) => `<span class="severity-chip severity-${severity}">${escapeHtml(`${severity}: ${formatCompact(counts[severity] || 0)}`)}</span>`).join('')}</div>`;
+}
+
+function renderFindingSection(title, findings, emptyMessage) {
+  const items = Array.isArray(findings) ? findings : [];
+  return `
+    <div class="section-title" style="margin-top:12px">${escapeHtml(title)}</div>
+    ${items.length ? `<div class="finding-list">${items.map(renderFindingItem).join('')}</div>` : `<div class="review-note">${escapeHtml(emptyMessage)}</div>`}`;
+}
+
+function renderFindingItem(finding) {
+  const location = finding.file ? `${finding.file}${finding.line != null ? `:${finding.line}` : ''}` : 'No location reported';
+  const severity = severityClassName(finding.severity);
+  const extractorNote = findingLooksNegated(finding)
+    ? '<div class="review-note" style="margin-top:8px">Extractor note: this reads like a no-issue statement even though a severity word was present. Treat it as informational unless the raw witness answer says otherwise.</div>'
+    : '';
+  return `
+    <div class="finding-item">
+      <div class="finding-head">
+        <div class="finding-title">${escapeHtml(finding.claim || '(no claim)')}</div>
+        <span class="severity-chip severity-${severity}">${escapeHtml(finding.severity || 'info')}</span>
+      </div>
+      <div class="muted">${escapeHtml(location)} · ${escapeHtml(formatCompact(finding.agreementCount || 0))} witness${Number(finding.agreementCount || 0) === 1 ? '' : 'es'}</div>
+      ${finding.evidence ? `<div style="margin-top:8px"><b>Evidence</b>${escapeHtml(summarizeMarkdownText(finding.evidence, 360))}</div>` : ''}
+      ${finding.recommendedAction ? `<div style="margin-top:8px"><b>Recommended action</b>${escapeHtml(finding.recommendedAction)}</div>` : ''}
+      ${extractorNote}
+    </div>`;
+}
+
+function severityClassName(value) {
+  const severity = String(value || 'info').toLowerCase();
+  return ['critical', 'high', 'medium', 'low', 'info'].includes(severity) ? severity : 'info';
+}
+
+function findingLooksNegated(finding) {
+  const text = `${finding.claim || ''} ${finding.evidence || ''}`.toLowerCase();
+  return /\b(no|none|not)\b.{0,40}\b(critical|high|issue|finding|problem|actionable)\b/.test(text);
+}
+
+function renderDisagreementSection(dissent) {
+  const items = Array.isArray(dissent) ? dissent : [];
+  if (!items.length) return '<div class="section-title" style="margin-top:12px">Dissent</div><div class="review-note">No witness disagreements were detected.</div>';
+  return `
+    <div class="section-title" style="margin-top:12px">Dissent</div>
+    <div class="context-list">
+      ${items.map((item) => `
+        <div class="context-item">
+          <b>${escapeHtml(item.topic || 'Disagreement')}</b>
+          ${(item.positions || []).map((position) => `<div>${escapeHtml(`${position.witnessId || 'witness'} [${position.severity || 'unknown'}]: ${position.claim || ''}`)}</div>`).join('')}
+        </div>`).join('')}
+    </div>`;
+}
+
+function renderOpenQuestionSection(openQuestions) {
+  const items = Array.isArray(openQuestions) ? openQuestions : [];
+  if (!items.length) return '<div class="section-title" style="margin-top:12px">Open questions</div><div class="review-note">No open questions were reported.</div>';
+  return `
+    <div class="section-title" style="margin-top:12px">Open questions</div>
+    <div class="context-list">
+      ${items.map((item) => `<div class="context-item"><b>${escapeHtml(item.question || 'Open question')}</b><span>${escapeHtml(item.context || '')}</span></div>`).join('')}
+    </div>`;
+}
+
+function renderRawReviewPointers(pointers) {
+  const items = Array.isArray(pointers) ? pointers : [];
+  if (!items.length) return '';
+  return `
+    <div class="section-title" style="margin-top:12px">Raw review pointers</div>
+    <div class="context-list">
+      ${items.map((pointer) => `<div class="context-item"><b>${escapeHtml(pointer.witnessId || 'witness')}</b><span>${escapeHtml(`${pointer.model || 'unknown model'} · ${formatCompact(pointer.findingCount || 0)} findings · ${formatCompact(pointer.rawOutputLength || 0)} bytes`)}</span></div>`).join('')}
+    </div>`;
 }
 
 function renderArtifacts(artifacts) {
@@ -2779,6 +3067,21 @@ function formatUsage(usage) {
   const outTokens = usage.output_tokens ?? usage.completion_tokens ?? usage.tokens_out;
   if (inTokens == null && outTokens == null) return 'usage unavailable';
   return `${formatCompact(inTokens || 0)} in / ${formatCompact(outTokens || 0)} out`;
+}
+
+function summarizeMarkdownText(value, maxChars = 480) {
+  const text = String(value || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
 }
 
 function summarizeRecord(record) {
