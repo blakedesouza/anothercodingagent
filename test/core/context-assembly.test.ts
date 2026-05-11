@@ -1176,7 +1176,7 @@ describe('getVerbatimTurnLimit', () => {
 
 describe('renderProjectForTier', () => {
     const snapshot: ProjectSnapshot = {
-        root: '/home/user/project',
+        root: '/workspace/project',
         stack: ['Node', 'TypeScript', 'pnpm'],
         git: { branch: 'main', status: 'clean', staged: false },
         ignorePaths: ['.git/', 'node_modules/', 'dist/'],
@@ -1185,7 +1185,7 @@ describe('renderProjectForTier', () => {
 
     it('full → complete renderProjectContext output', () => {
         const result = renderProjectForTier('full', snapshot);
-        expect(result).toContain('Project root: /home/user/project');
+        expect(result).toContain('Project root: /workspace/project');
         expect(result).toContain('Stack: Node, TypeScript, pnpm');
         expect(result).toContain('branch=main');
         expect(result).toContain('staged=false');
@@ -1195,7 +1195,7 @@ describe('renderProjectForTier', () => {
 
     it('medium → root + stack + git only (no ignore, no index, no staged)', () => {
         const result = renderProjectForTier('medium', snapshot);
-        expect(result).toContain('Project root: /home/user/project');
+        expect(result).toContain('Project root: /workspace/project');
         expect(result).toContain('Stack: Node, TypeScript, pnpm');
         expect(result).toContain('Git: branch=main, clean');
         // Removed fields

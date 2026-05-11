@@ -470,7 +470,7 @@ Pure function: `(command, cwd, env) → CommandRiskAssessment`. Also covers `ope
 Hard filesystem boundary enforcement.
 
 - [ ] Zone check: resolve path via `fs.realpath`, verify it falls within allowed zones
-- [ ] Allowed zones: workspace root, current session dir (`~/.aca/sessions/<ses_ULID>/`), scoped tmp (`/tmp/aca-<ses_ULID>/`), user-configured `extraTrustedRoots`
+- [ ] Allowed zones: workspace root, current session dir (`~/.aca/sessions/<ses_ULID>/`), scoped tmp (`<temp>/aca-<ses_ULID>/`), user-configured `extraTrustedRoots`
 - [ ] Symlink handling: resolve target, deny if outside all zones
 - [ ] Path traversal: `../` collapsed before zone check
 - [ ] Integration: all file system tools call zone check before any operation
@@ -485,8 +485,8 @@ Hard filesystem boundary enforcement.
 - Path traversal (`../../etc/passwd` from workspace) → resolves outside → denied
 - Symlink within workspace pointing outside → denied, error message shows resolved target
 - Symlink within workspace pointing to workspace subdirectory → allowed
-- `/tmp/random-dir` (not scoped) → denied
-- `/tmp/aca-<correct_session_id>/file` → allowed
+- `<temp>/random-dir` (not scoped) → denied
+- `<temp>/aca-<correct_session_id>/file` → allowed
 - `~/.ssh/id_rsa` → denied
 - `~/.aca/sessions/<different_session>/` → denied
 - TOCTOU: path passes zone check, then symlink target changes before operation → verify atomic check-and-open pattern

@@ -383,7 +383,7 @@ describe('Project Awareness', () => {
     describe('renderProjectContext', () => {
         it('renders compact text with all fields', () => {
             const snapshot: ProjectSnapshot = {
-                root: '/home/user/myproject',
+                root: '/workspace/myproject',
                 stack: ['Node', 'TypeScript', 'pnpm', 'vitest', 'eslint'],
                 git: { branch: 'feature/x', status: 'dirty', staged: false },
                 ignorePaths: ['.git/', 'node_modules/', 'dist/', 'build/', 'coverage/'],
@@ -391,7 +391,7 @@ describe('Project Awareness', () => {
             };
 
             const text = renderProjectContext(snapshot);
-            expect(text).toContain('Project root: /home/user/myproject');
+            expect(text).toContain('Project root: /workspace/myproject');
             expect(text).toContain('Stack: Node, TypeScript, pnpm, vitest, eslint');
             expect(text).toContain('branch=feature/x');
             expect(text).toContain('dirty');
@@ -437,7 +437,7 @@ describe('Project Awareness', () => {
 
         it('renders under 200 tokens (< 600 bytes as proxy)', () => {
             const snapshot: ProjectSnapshot = {
-                root: '/home/user/projects/my-long-project-name',
+                root: '/workspace/my-long-project-name',
                 stack: ['Node', 'TypeScript', 'pnpm', 'vitest', 'eslint'],
                 git: { branch: 'feature/very-long-branch-name-here', status: 'dirty', staged: true },
                 ignorePaths: ['.git/', 'node_modules/', 'dist/', 'build/', 'coverage/', '.cache/', 'vendor/'],

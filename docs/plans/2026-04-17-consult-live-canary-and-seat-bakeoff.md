@@ -65,12 +65,12 @@ node scripts/consult-live-canary.mjs \
   --no-build \
   --witnesses minimax,gemma \
   --triage auto \
-  --out-dir /tmp/aca-consult-canary-current
+  --out-dir <temp>/aca-consult-canary-current
 ```
 
 Summary artifact:
 
-- `/tmp/aca-consult-canary-current/summary.json`
+- `<temp>/aca-consult-canary-current/summary.json`
 
 Result:
 
@@ -97,13 +97,13 @@ Command:
 
 ```bash
 node --import tsx scripts/consult-seat-bakeoff.ts \
-  --out-dir /tmp/aca-consult-seat-bakeoff-current \
+  --out-dir <temp>/aca-consult-seat-bakeoff-current \
   --concurrency 2
 ```
 
 Summary artifact:
 
-- `/tmp/aca-consult-seat-bakeoff-current/summary.json`
+- `<temp>/aca-consult-seat-bakeoff-current/summary.json`
 
 Candidate ranking from this bakeoff:
 

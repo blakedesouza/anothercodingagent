@@ -257,7 +257,7 @@ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-symlookup1-XXXXXX) \
   --question "What does countHardRejectedToolCalls do — what condition does it filter on, what error code does it check, and what file is it defined in?" \
   --project-dir <repo> \
   --max-context-rounds 3 \
-  2>&1 | tee /tmp/aca-symlookup1-${SUFFIX}.txt
+  2>&1 | tee <temp>/aca-symlookup1-${SUFFIX}.txt
 ```
 
 **Pass criteria:** All 4 witnesses name `src/cli/invoke-output-validation.ts` and report
@@ -275,7 +275,7 @@ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-symlookup2-XXXXXX) \
   --question "What does prepareInvokeTurnConfig do, what options does it accept, and what file is it defined in?" \
   --project-dir <repo> \
   --max-context-rounds 3 \
-  2>&1 | tee /tmp/aca-symlookup2-${SUFFIX}.txt
+  2>&1 | tee <temp>/aca-symlookup2-${SUFFIX}.txt
 ```
 
 **Pass criteria:** All 4 witnesses name `src/cli/invoke-runtime-state.ts`.
@@ -292,7 +292,7 @@ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-symlookup3-XXXXXX) \
   --question "What does registerInvokeRuntimeTools do and what file defines it?" \
   --project-dir <repo> \
   --max-context-rounds 3 \
-  2>&1 | tee /tmp/aca-symlookup3-${SUFFIX}.txt
+  2>&1 | tee <temp>/aca-symlookup3-${SUFFIX}.txt
 ```
 
 **Pass criteria:** All 4 witnesses name `src/cli/invoke-tooling.ts`.

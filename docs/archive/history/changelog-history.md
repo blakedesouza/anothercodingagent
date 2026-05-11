@@ -208,8 +208,8 @@ The drivers also discarded the provider-supplied `tc.id` entirely, so the accumu
 ### Diagnostic forensics
 
 - **Failing session**: `~/.aca/sessions/ses_01KNHD40QA8K342R2QX40NYV3E/conversation.jsonl` — three consecutive assistant steps, each with one `tool_call` whose `arguments: {}` and a `tool.validation` error.
-- **Captured raw SSE from a failing run**: `/tmp/aca-gemma-fail-sse-2.txt` — explicit chunk dump showing 4 deltas with ids `call_bao4exy4`, `call_bffx74vu`, `call_chezyjpy`, `call_3o0n7un8` all at `index:0`.
-- **Captured request body**: `/tmp/aca-gemma-fail-body-2.json` — three sequential bodies, each later body's assistant message contained ACA's reconstructed (corrupted) merged tool call: `name=exec_command, arguments="{}"`, confirming the accumulator's last-write-wins + parse-failure path.
+- **Captured raw SSE from a failing run**: `<temp>/aca-gemma-fail-sse-2.txt` — explicit chunk dump showing 4 deltas with ids `call_bao4exy4`, `call_bffx74vu`, `call_chezyjpy`, `call_3o0n7un8` all at `index:0`.
+- **Captured request body**: `<temp>/aca-gemma-fail-body-2.json` — three sequential bodies, each later body's assistant message contained ACA's reconstructed (corrupted) merged tool call: `name=exec_command, arguments="{}"`, confirming the accumulator's last-write-wins + parse-failure path.
 
 ### Hypotheses tested and rejected
 
@@ -241,7 +241,7 @@ Five files changed:
   - Legacy parallel (distinct indices, no ids anywhere) → 2 tool calls (backward compat)
   - **Gemma collision (4 deltas all at index 0, distinct ids, complete args each)** → 4 reconstructed tool calls, no `tool.validation` errors
   - Gemma collision with mixed names → each call keeps its own name (no last-write-wins corruption)
-- Empirical re-run via `/tmp/aca-gemma-repro2.sh` of the exact witness-verification task that originally failed: post-fix gemma succeeded with `status: success` and produced `fix_present: true`. The captured SSE stream confirmed 5 distinct parallel tool calls all at `index:0` were correctly reconstructed (pre-fix this is the exact pattern that caused the collision).
+- Empirical re-run via `<temp>/aca-gemma-repro2.sh` of the exact witness-verification task that originally failed: post-fix gemma succeeded with `status: success` and produced `fix_present: true`. The captured SSE stream confirmed 5 distinct parallel tool calls all at `index:0` were correctly reconstructed (pre-fix this is the exact pattern that caused the collision).
 
 ### Risk register
 
@@ -286,7 +286,7 @@ Grep for `invoke --json` and `describe --json` across the project surfaced exact
 
 ### Verification
 
-Re-ran the consult ring in `aca` mode against a fresh small lean prompt (`/tmp/consult-aca-bugfix-verify.md`, 1775 bytes) that asks witnesses to use their tools to verify the fix landed. Suffix: `acabugfix-1775475803`.
+Re-ran the consult ring in `aca` mode against a fresh small lean prompt (`<temp>/consult-aca-bugfix-verify.md`, 1775 bytes) that asks witnesses to use their tools to verify the fix landed. Suffix: `acabugfix-1775475803`.
 
 | Witness | Status | aca_mode | Tools called | Latency |
 |---|---|---|---|---|
@@ -758,7 +758,7 @@ End-to-end integration tests verifying real LLM tool calls work with NanoGPT (qw
 **Design decisions:**
 - exec_command and sandbox tests verify via conversation.jsonl (durable log) rather than stdout — LLM doesn't always produce follow-up text after tool calls (tool_error outcome)
 - Sandbox test has retry loop (up to 2 attempts) for LLM timeout resilience
-- Write_file tests use workspace-relative paths (spec said /tmp/ but that's outside sandbox zones)
+- Write_file tests use workspace-relative paths (spec said <temp>/ but that's outside sandbox zones)
 
 **Consultation:** 3/4 witnesses (MiniMax 503). 2 P1 fixes applied: TEST_HOME cleanup in afterAll, try-catch in JSONL parser with informative error context. P0 race condition claims rejected (vitest sequential within file). P2 skipIf pattern rejected (async-loaded condition incompatible).
 
@@ -2039,7 +2039,7 @@ Implemented `WorkspaceSandbox` — zone-based filesystem boundary enforcement fo
 
 **What was built:**
 - `checkZone(path, context)` — resolves paths via `fs.realpath` (existing) or nearest-ancestor walk (non-existent), verifies against allowed zones
-- 4 allowed zones: workspaceRoot, `~/.aca/sessions/<sessionId>/`, `/tmp/aca-<sessionId>/`, user-configured `extraTrustedRoots`
+- 4 allowed zones: workspaceRoot, `~/.aca/sessions/<sessionId>/`, `<temp>/aca-<sessionId>/`, user-configured `extraTrustedRoots`
 - Symlink resolution: `realpath` resolves all symlinks before zone check; symlinks pointing outside zones are denied with resolved target shown
 - Path traversal: `path.resolve()` collapses `../` before zone check; defense-in-depth `..` guard on remaining components during ancestor walk
 - Integration: all 9 file system tools (read_file, write_file, edit_file, delete_path, move_path, make_directory, stat_path, find_paths, search_text) call `checkZone()` at the top of their implementation
@@ -2699,7 +2699,7 @@ Tightly coupled blocks were bundled to avoid design mismatches. Independent bloc
 
 **Block 8 -- Permission / Sandbox Model:**
 
-- Hard workspace enforcement via `fs.realpath` zone checks. 4 allowed zones: workspace, current session dir, scoped `/tmp/aca-<ses_ULID>/`, user-configured `extraTrustedRoots`. Everything else denied
+- Hard workspace enforcement via `fs.realpath` zone checks. 4 allowed zones: workspace, current session dir, scoped `<temp>/aca-<ses_ULID>/`, user-configured `extraTrustedRoots`. Everything else denied
 - `exec_command` is NOT filesystem-sandboxed (would require OS-level isolation). Sandboxed by approval class + `CommandRiskAnalyzer`
 - 3-tier `CommandRiskAnalyzer`: `forbidden` (hard deny, never overridable), `high` (requires explicit confirmation), `normal` (standard approval flow). Context-aware (`rm -rf node_modules` in workspace is normal, at `/` is high)
 - Risk facets: `filesystem_delete`, `network_download`, `pipe_to_shell`, `privilege_escalation`, `credential_touch`, etc.
@@ -3006,7 +3006,7 @@ Fixed three bugs preventing tool execution in delegated ACA sessions (via `aca i
 - Conservative extraction: under-extract rather than hallucinate; missing fields left absent
 - Meta-section filter: Summary/Overview/Conclusion/Dissent/etc. excluded
 
-**`src/cli/consult.ts` wiring:** Aggregation block inserted between `triageableCount` and `triage` init. For each witness with a `triage_input_path`, extracts markdown → WitnessReview → aggregateReviews → buildReport → renderReportText. Writes both `.md` and `.json` artifacts to `/tmp/`. Entire block wrapped in try/catch — cannot break existing LLM triage flow.
+**`src/cli/consult.ts` wiring:** Aggregation block inserted between `triageableCount` and `triage` init. For each witness with a `triage_input_path`, extracts markdown → WitnessReview → aggregateReviews → buildReport → renderReportText. Writes both `.md` and `.json` artifacts to `<temp>/`. Entire block wrapped in try/catch — cannot break existing LLM triage flow.
 
 **`ConsultResult` type:** New `structured_review` field (ok/error/null union) added.
 
@@ -3191,7 +3191,7 @@ Pre-fix: `qwen/qwen3.5-397b-a17b` failed 2/6 consult runs with `"pseudo-tool cal
 
 2. **False positive on `containsPseudoToolCall`**: The thinking chain is emitted as `> `-prefixed blockquote lines. It quotes the prompt's own invalid-example list verbatim (e.g. `<tool_call>`, `<function_calls>`), which matched the detector regex even though Qwen was not attempting a real tool call.
 
-Raw evidence: `/tmp/aca-consult-qwen-context-request-*` files from the failing runs.
+Raw evidence: `<temp>/aca-consult-qwen-context-request-*` files from the failing runs.
 
 ### Fix: `src/prompts/prompt-guardrails.ts` (New File)
 
@@ -3391,7 +3391,7 @@ Listed longest-first so `pseudo-tool-call` is detected and replaced before `tool
 
 ### Continuation round disk persistence (Task 1)
 
-Added per-round artifact files to `runWitness()` in `src/cli/consult.ts`. Each continuation round response (round 2+) is now written to `/tmp/aca-consult-{witness}-round-{n}-{suffix}.md`. Round 1 (initial context-request) already had `outPath: requestPath`; the gap was rounds 2–N during the multi-round loop. Live-validated: deepseek 3-round consult produced `round-2` and `round-3` files alongside `context-request` and `final-raw` artifacts.
+Added per-round artifact files to `runWitness()` in `src/cli/consult.ts`. Each continuation round response (round 2+) is now written to `<temp>/aca-consult-{witness}-round-{n}-{suffix}.md`. Round 1 (initial context-request) already had `outPath: requestPath`; the gap was rounds 2–N during the multi-round loop. Live-validated: deepseek 3-round consult produced `round-2` and `round-3` files alongside `context-request` and `final-raw` artifacts.
 
 ### C11.7 Stress-Test Battery
 

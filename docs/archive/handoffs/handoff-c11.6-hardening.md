@@ -53,7 +53,7 @@ pseudo-tool-call, pseudo-tool-use, function-call, tool-call, api-call, tool-use
 
 In `runWitness()` in `src/cli/consult.ts`, write each extra round's response to disk:
 ```
-/tmp/aca-consult-{witness}-round-{n}-{suffix}.md
+<temp>/aca-consult-{witness}-round-{n}-{suffix}.md
 ```
 Currently only the first context-request and final response are persisted. Mid-loop failures leave no forensic artifacts.
 

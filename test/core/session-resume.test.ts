@@ -38,7 +38,7 @@ describe('M3.7 — Session Resume', () => {
 
     describe('Create session → exit → resume → in-memory state matches', () => {
         it('should rebuild items, turns, steps, and sequence counter on resume', () => {
-            const projection = manager.create('/home/user/project');
+            const projection = manager.create('/workspace/project');
             const sessionId = projection.manifest.sessionId;
 
             // Simulate a 2-turn session with tool calls
@@ -95,7 +95,7 @@ describe('M3.7 — Session Resume', () => {
 
     describe('Resume with config drift', () => {
         it('should detect model change as informational drift', () => {
-            const projection = manager.create('/home/user/project', {
+            const projection = manager.create('/workspace/project', {
                 model: { default: 'gpt-4' },
                 defaultProvider: 'nanogpt',
             });
@@ -123,7 +123,7 @@ describe('M3.7 — Session Resume', () => {
         });
 
         it('should detect security-relevant drift for permissions change', () => {
-            const projection = manager.create('/home/user/project', {
+            const projection = manager.create('/workspace/project', {
                 permissions: { nonInteractive: false },
             });
             manager.saveManifest(projection);
@@ -163,7 +163,7 @@ describe('M3.7 — Session Resume', () => {
 
     describe('findLatestForWorkspace', () => {
         it('should return the most recent session for a workspace', () => {
-            const workspaceRoot = '/home/user/project';
+            const workspaceRoot = '/workspace/project';
             const workspaceId = deriveWorkspaceId(workspaceRoot);
 
             // Create 3 sessions with staggered timestamps
@@ -191,20 +191,20 @@ describe('M3.7 — Session Resume', () => {
 
         it('should return null when sessions dir does not exist', () => {
             const freshManager = new SessionManager(join(tmpDir, 'no-such-dir'));
-            const workspaceId = deriveWorkspaceId('/home/user/project');
+            const workspaceId = deriveWorkspaceId('/workspace/project');
             expect(freshManager.findLatestForWorkspace(workspaceId)).toBeNull();
         });
 
         it('should ignore sessions for different workspaces', () => {
-            const proj1 = manager.create('/home/user/project-a');
+            const proj1 = manager.create('/workspace/project-a');
             proj1.manifest.lastActivityTimestamp = '2026-03-01T00:00:00.000Z';
             manager.saveManifest(proj1);
 
-            const proj2 = manager.create('/home/user/project-b');
+            const proj2 = manager.create('/workspace/project-b');
             proj2.manifest.lastActivityTimestamp = '2026-03-02T00:00:00.000Z';
             manager.saveManifest(proj2);
 
-            const workspaceIdA = deriveWorkspaceId('/home/user/project-a');
+            const workspaceIdA = deriveWorkspaceId('/workspace/project-a');
             const latest = manager.findLatestForWorkspace(workspaceIdA);
             expect(latest).toBe(proj1.manifest.sessionId);
         });
@@ -212,7 +212,7 @@ describe('M3.7 — Session Resume', () => {
 
     describe('Projection rebuild with summaries → visibleHistory matches', () => {
         it('should rebuild coverage map so visibleHistory skips summarized items', () => {
-            const projection = manager.create('/home/user/project');
+            const projection = manager.create('/workspace/project');
             const sessionId = projection.manifest.sessionId;
 
             // Write 10 turns
@@ -285,7 +285,7 @@ describe('M3.7 — Session Resume', () => {
 
     describe('Resume rebuilds FileActivityIndex from log', () => {
         it('should rebuild file scores from replayed tool calls', () => {
-            const projection = manager.create('/home/user/project');
+            const projection = manager.create('/workspace/project');
             const sessionId = projection.manifest.sessionId;
 
             // Turn 1: read_file on foo.ts
@@ -336,7 +336,7 @@ describe('M3.7 — Session Resume', () => {
 
     describe('Resume loads durable task state from manifest', () => {
         it('should preserve durable task state across resume', () => {
-            const projection = manager.create('/home/user/project');
+            const projection = manager.create('/workspace/project');
 
             // Set durable task state in manifest
             projection.manifest.durableTaskState = {

@@ -15,8 +15,8 @@ The drivers also dropped the provider-supplied `tc.id` entirely, so the accumula
 
 ## Smoking gun
 
-- `/tmp/aca-gemma-fail-sse-2.txt` (captured during diagnostic repro): four deltas from one stream all at `"index":0`, ids `call_bao4exy4`, `call_bffx74vu`, `call_chezyjpy`, `call_3o0n7un8`, names `read_file`/`read_file`/`read_file`/`exec_command`, full JSON args each.
-- `/tmp/aca-gemma-fail-body-2.json` body 2 msg 2: ACA's reconstructed assistant message had **one** `tool_call`, `name=exec_command` (last-write-wins), `arguments="{}"` (parse-failure fallback). Confirms the accumulator merge.
+- `<temp>/aca-gemma-fail-sse-2.txt` (captured during diagnostic repro): four deltas from one stream all at `"index":0`, ids `call_bao4exy4`, `call_bffx74vu`, `call_chezyjpy`, `call_3o0n7un8`, names `read_file`/`read_file`/`read_file`/`exec_command`, full JSON args each.
+- `<temp>/aca-gemma-fail-body-2.json` body 2 msg 2: ACA's reconstructed assistant message had **one** `tool_call`, `name=exec_command` (last-write-wins), `arguments="{}"` (parse-failure fallback). Confirms the accumulator merge.
 
 ## Fix surface
 
@@ -41,7 +41,7 @@ Six files changed:
   3. Legacy parallel (distinct indices, no ids anywhere) → 2 reconstructed calls (backward compat)
   4. **Gemma collision (4 deltas all index 0, distinct ids, complete args)** → 4 reconstructed calls, no `tool.validation` errors
   5. Gemma collision with mixed names → each call keeps its own name (no last-write-wins)
-- **Empirical re-run via `/tmp/aca-gemma-repro2.sh`**: 17/17 successful iters of the exact witness-verification task that originally failed. Zero `tool.validation` errors anywhere in any captured session log. Pre-fix this task collapsed within 1-2 iters.
+- **Empirical re-run via `<temp>/aca-gemma-repro2.sh`**: 17/17 successful iters of the exact witness-verification task that originally failed. Zero `tool.validation` errors anywhere in any captured session log. Pre-fix this task collapsed within 1-2 iters.
 
 ## Hypotheses tested and rejected during diagnosis
 

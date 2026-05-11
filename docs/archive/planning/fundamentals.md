@@ -873,7 +873,7 @@ Safety boundaries that cut across all tools and delegation. The agent may operat
   |---|---|---|---|
   | `workspaceRoot` and all descendants | yes | yes | Primary work area. Detected via Project Awareness (Block: Project Awareness) |
   | `~/.aca/sessions/<current_ses_ULID>/` | yes | yes | Current session's own data (scratch files, blobs) |
-  | `/tmp/aca-<ses_ULID>/` | yes | yes | Scoped temporary directory, created on demand, cleaned on session end. Tools needing `/tmp` are redirected here — not bare `/tmp` |
+  | `<temp>/aca-<ses_ULID>/` | yes | yes | Scoped temporary directory, created on demand, cleaned on session end. Tools needing `/tmp` are redirected here — not bare `/tmp` |
   | User-configured `extraTrustedRoots` | yes | yes | Absolute paths the user explicitly trusts (e.g., a locally-linked package outside the project tree). User config only — project config cannot add these (Block 9) |
 
   **Everything else is denied**, including `~/.config`, `~/.ssh`, `~/.bashrc`, `/etc`, other users' home directories, and bare `/tmp`. The agent's own internal data at `~/.aca/` (outside the current session directory) is not accessible to tools — the runtime reads it directly, tools do not.
@@ -935,7 +935,7 @@ Safety boundaries that cut across all tools and delegation. The agent may operat
   ⚠ exec_command requires confirmation
     Command: npm install --save lodash
     Risk: network_download, package_install
-    Working directory: /home/user/project
+    Working directory: <workspace>
 
     [y] approve    [n] deny    [a] always (this session)    [e] edit command
   ```

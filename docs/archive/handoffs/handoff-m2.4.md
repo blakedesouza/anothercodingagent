@@ -38,7 +38,7 @@ Hard filesystem boundary enforcement for all file system tools.
 // Allowed zones:
 // - workspaceRoot
 // - ~/.aca/sessions/<ses_ULID>/
-// - /tmp/aca-<ses_ULID>/
+// - <temp>/aca-<ses_ULID>/
 // - user-configured extraTrustedRoots
 
 // Symlink handling: resolve target, deny if outside all zones
@@ -60,8 +60,8 @@ Hard filesystem boundary enforcement for all file system tools.
 - Path traversal `../../etc/passwd` from workspace → denied
 - Symlink within workspace pointing outside → denied
 - Symlink within workspace pointing inside → allowed
-- `/tmp/random-dir` (not scoped) → denied
-- `/tmp/aca-<correct_id>/file` → allowed
+- `<temp>/random-dir` (not scoped) → denied
+- `<temp>/aca-<correct_id>/file` → allowed
 - `~/.ssh/id_rsa` → denied
 - TOCTOU: atomic check-and-open with `O_NOFOLLOW` / `openat` pattern
 

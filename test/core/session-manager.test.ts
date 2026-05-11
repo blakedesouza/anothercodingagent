@@ -38,7 +38,7 @@ describe('M1.3 — Session Manager', () => {
 
     describe('Create session', () => {
         it('should create directory, valid manifest.json, and empty conversation.jsonl', () => {
-            const projection = manager.create('/home/user/project');
+            const projection = manager.create('/workspace/project');
 
             // Directory exists
             expect(existsSync(projection.sessionDir)).toBe(true);
@@ -53,7 +53,7 @@ describe('M1.3 — Session Manager', () => {
             expect(manifest.turnCount).toBe(0);
             expect(manifest.lastActivityTimestamp).toBeTruthy();
             expect(manifest.configSnapshot).toEqual({
-                workspaceRoot: '/home/user/project',
+                workspaceRoot: '/workspace/project',
             });
             expect(manifest.durableTaskState).toBeNull();
             expect(manifest.calibration).toBeNull();
@@ -75,7 +75,7 @@ describe('M1.3 — Session Manager', () => {
         });
 
         it('preserves caller configSnapshot fields and adds workspaceRoot', () => {
-            const projection = manager.create('/home/user/project', {
+            const projection = manager.create('/workspace/project', {
                 model: 'qwen/qwen3-coder-next',
                 provider: 'nanogpt',
             });
@@ -83,13 +83,13 @@ describe('M1.3 — Session Manager', () => {
             expect(projection.manifest.configSnapshot).toEqual({
                 model: 'qwen/qwen3-coder-next',
                 provider: 'nanogpt',
-                workspaceRoot: '/home/user/project',
+                workspaceRoot: '/workspace/project',
             });
         });
 
         it('persists optional parent/root session lineage in the manifest', () => {
             const projection = manager.create(
-                '/home/user/project',
+                '/workspace/project',
                 { mode: 'sub-agent' },
                 {
                     parentSessionId: 'ses_PARENT0000000000000000000' as SessionId,
@@ -109,7 +109,7 @@ describe('M1.3 — Session Manager', () => {
 
     describe('Load session', () => {
         it('should rebuild in-memory state matching what was written', () => {
-            const projection = manager.create('/home/user/project');
+            const projection = manager.create('/workspace/project');
             const sessionId = projection.manifest.sessionId;
 
             // Write some items via the writer
@@ -156,7 +156,7 @@ describe('M1.3 — Session Manager', () => {
         });
 
         it('coalesces duplicate turn records and prefers the latest status', () => {
-            const projection = manager.create('/home/user/project');
+            const projection = manager.create('/workspace/project');
             const sessionId = projection.manifest.sessionId;
 
             const { turn } = createTurn(sessionId, 1, {
@@ -190,7 +190,7 @@ describe('M1.3 — Session Manager', () => {
 
     describe('Write items → save manifest → reload → match', () => {
         it('should round-trip items and manifest through save/reload', () => {
-            const projection = manager.create('/home/user/project');
+            const projection = manager.create('/workspace/project');
             const sessionId = projection.manifest.sessionId;
 
             // Write items
@@ -227,39 +227,39 @@ describe('M1.3 — Session Manager', () => {
 
     describe('workspaceId determinism', () => {
         it('should produce the same ID for the same path', () => {
-            const id1 = deriveWorkspaceId('/home/user/project');
-            const id2 = deriveWorkspaceId('/home/user/project');
+            const id1 = deriveWorkspaceId('/workspace/project');
+            const id2 = deriveWorkspaceId('/workspace/project');
             expect(id1).toBe(id2);
         });
 
         it('should produce different IDs for different paths', () => {
-            const id1 = deriveWorkspaceId('/home/user/project-a');
-            const id2 = deriveWorkspaceId('/home/user/project-b');
+            const id1 = deriveWorkspaceId('/workspace/project-a');
+            const id2 = deriveWorkspaceId('/workspace/project-b');
             expect(id1).not.toBe(id2);
         });
 
         it('should have wrk_ prefix', () => {
-            const id = deriveWorkspaceId('/home/user/project');
+            const id = deriveWorkspaceId('/workspace/project');
             expect(id).toMatch(/^wrk_[0-9a-f]{64}$/);
         });
     });
 
     describe('workspaceId path normalization', () => {
         it('should normalize trailing slashes', () => {
-            const id1 = deriveWorkspaceId('/home/user/project');
-            const id2 = deriveWorkspaceId('/home/user/project/');
+            const id1 = deriveWorkspaceId('/workspace/project');
+            const id2 = deriveWorkspaceId('/workspace/project/');
             expect(id1).toBe(id2);
         });
 
         it('should normalize dot components', () => {
-            const id1 = deriveWorkspaceId('/home/user/project');
-            const id2 = deriveWorkspaceId('/home/user/./project');
+            const id1 = deriveWorkspaceId('/workspace/project');
+            const id2 = deriveWorkspaceId('/workspace/./project');
             expect(id1).toBe(id2);
         });
 
         it('should normalize double-dot components', () => {
-            const id1 = deriveWorkspaceId('/home/user/project');
-            const id2 = deriveWorkspaceId('/home/user/other/../project');
+            const id1 = deriveWorkspaceId('/workspace/project');
+            const id2 = deriveWorkspaceId('/workspace/other/../project');
             expect(id1).toBe(id2);
         });
 
@@ -291,7 +291,7 @@ describe('M1.3 — Session Manager', () => {
 
     describe('Corrupt manifest throws typed error', () => {
         it('should throw session.corrupt when manifest.json has invalid JSON', () => {
-            const projection = manager.create('/home/user/project');
+            const projection = manager.create('/workspace/project');
             const sessionId = projection.manifest.sessionId;
 
             // Corrupt the manifest

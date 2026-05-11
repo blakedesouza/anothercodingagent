@@ -96,7 +96,7 @@ Pure function: `(command, cwd, env) → CommandRiskAssessment`. Also covers `ope
 Hard filesystem boundary enforcement.
 
 - [x] Zone check: for existing paths, resolve via `fs.realpath` and verify the resolved path falls within allowed zones. For create operations (`write_file`, `make_directory`), resolve the nearest existing ancestor via `fs.realpath`, verify the ancestor is within an allowed zone, then validate the remaining path components contain no traversal (`..`). This handles nonexistent target paths without requiring the full path to exist
-- [x] Allowed zones: workspace root, current session dir (`~/.aca/sessions/<ses_ULID>/`), scoped tmp (`/tmp/aca-<ses_ULID>/`), user-configured `extraTrustedRoots`
+- [x] Allowed zones: workspace root, current session dir (`~/.aca/sessions/<ses_ULID>/`), scoped tmp (`<temp>/aca-<ses_ULID>/`), user-configured `extraTrustedRoots`
 - [x] Symlink handling: resolve target, deny if outside all zones
 - [x] Path traversal: `../` collapsed before zone check
 - [x] Integration: all file system tools call zone check before any operation
@@ -111,8 +111,8 @@ Hard filesystem boundary enforcement.
 - Path traversal (`../../etc/passwd` from workspace) → resolves outside → denied
 - Symlink within workspace pointing outside → denied, error message shows resolved target
 - Symlink within workspace pointing to workspace subdirectory → allowed
-- `/tmp/random-dir` (not scoped) → denied
-- `/tmp/aca-<correct_session_id>/file` → allowed
+- `<temp>/random-dir` (not scoped) → denied
+- `<temp>/aca-<correct_session_id>/file` → allowed
 - `~/.ssh/id_rsa` → denied
 - `~/.aca/sessions/<different_session>/` → denied
 - TOCTOU: verify atomic check-and-open. For existing files: open with `O_NOFOLLOW` or resolve+open atomically. For create operations: open parent dir fd, then create relative to it (`openat(dirfd, basename, O_CREAT|O_EXCL)`) to prevent symlink race between zone check and file creation
@@ -154,7 +154,7 @@ Full config loading pipeline.
 - Frozen config: attempt to mutate → TypeError (Object.freeze)
 - Trust boundary: new `providers`, `budget`, `retention` fields are user-only (silently dropped from project config)
 - **Config precedence chain (end-to-end):** set `model.default` at all 5 levels (defaults=`d`, user=`u`, project=`p`, env=`e`, CLI=`c`) → resolved value is `c`. Remove CLI → `e`. Remove env → `p`. Remove project → `u`. Remove user → `d`. Each level wins only when all higher-priority levels are absent
-- **Trust boundary escalation:** project config sets `sandbox.extraTrustedRoots: ["/tmp/evil"]` → silently dropped, resolved config has no extra roots. Same project config in a `trustedWorkspaces` entry → field accepted (expanded schema)
+- **Trust boundary escalation:** project config sets `sandbox.extraTrustedRoots: ["<temp>/evil"]` → silently dropped, resolved config has no extra roots. Same project config in a `trustedWorkspaces` entry → field accepted (expanded schema)
 - **Trust boundary completeness:** project config attempts each user-only field (`providers`, `budget`, `retention`, `sandbox.extraTrustedRoots`) → all silently dropped, no error emitted, remaining project fields still applied
 
 ### M2.6 — Approval Flow (Block 8)

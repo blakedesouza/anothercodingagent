@@ -248,4 +248,4 @@ All fetched 2026-04-06:
 
 Per-source detail: [cline.md](cline.md), [aider.md](aider.md), [anthropic.md](anthropic.md), [openai.md](openai.md).
 
-Raw research notes (subagent output, verbatim quotes, larger): `/tmp/giants-cline.md`, `/tmp/giants-aider.md`, `/tmp/giants-anthropic.md`.
+Raw research notes (subagent output, verbatim quotes, larger): `<temp>/giants-cline.md`, `<temp>/giants-aider.md`, `<temp>/giants-anthropic.md`.

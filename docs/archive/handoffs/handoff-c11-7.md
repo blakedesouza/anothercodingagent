@@ -96,7 +96,7 @@ Integration tests (`test/cli/consult.test.ts`) — mock `runAcaInvoke`:
 
 ### Live Tests (run after all steps are committed and built)
 
-Run each test with `HOME=$(mktemp -d -t aca-c11-7-XXXXXX) node dist/index.js consult ...`. Write artifacts to `/tmp/c11-7-test-N-*.json`.
+Run each test with `HOME=$(mktemp -d -t aca-c11-7-XXXXXX) node dist/index.js consult ...`. Write artifacts to `<temp>/c11-7-test-N-*.json`.
 
 **Test 1 — Baseline round 1 (warm-up)**
 Question about a simple fact in the codebase. Witness should finalize in round 1 with no context requests. Confirms backward compat and that the new defaults don't break the happy path.

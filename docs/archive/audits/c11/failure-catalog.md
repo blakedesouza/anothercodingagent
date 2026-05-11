@@ -191,16 +191,16 @@
 
 | File | Contents |
 |------|----------|
-| `/tmp/c11-s1-kimi.json` | S1 invoke response (kimi) |
-| `/tmp/c11-s1-qwen.json` | S1 invoke response (qwen) |
-| `/tmp/c11-s1-minimax.json` | S1 invoke response (minimax) |
-| `/tmp/c11-s2-deepseek.json` | S2 invoke response (deepseek) |
-| `/tmp/c11-s2-qwen.json` | S2 invoke response (qwen) |
-| `/tmp/c11-s2-gemma.json` | S2 invoke response (gemma) |
-| `/tmp/c11-consult-s3.json` | S3 consult result (all 4 witnesses) |
-| `/tmp/c11-s4-kimi.json` | S4 invoke response (kimi) |
-| `/tmp/c11-s4-qwen.json` | S4 invoke response (qwen) |
-| `/tmp/c11-s4-deepseek.json` | S4 invoke response (deepseek — FAIL) |
-| `/tmp/c11-s5-kimi.json` | S5 invoke response (kimi) |
-| `/tmp/c11-s5-qwen.json` | S5 invoke response (qwen) |
-| `/tmp/c11-s5-gemma.json` | S5 invoke response (gemma) |
+| `<temp>/c11-s1-kimi.json` | S1 invoke response (kimi) |
+| `<temp>/c11-s1-qwen.json` | S1 invoke response (qwen) |
+| `<temp>/c11-s1-minimax.json` | S1 invoke response (minimax) |
+| `<temp>/c11-s2-deepseek.json` | S2 invoke response (deepseek) |
+| `<temp>/c11-s2-qwen.json` | S2 invoke response (qwen) |
+| `<temp>/c11-s2-gemma.json` | S2 invoke response (gemma) |
+| `<temp>/c11-consult-s3.json` | S3 consult result (all 4 witnesses) |
+| `<temp>/c11-s4-kimi.json` | S4 invoke response (kimi) |
+| `<temp>/c11-s4-qwen.json` | S4 invoke response (qwen) |
+| `<temp>/c11-s4-deepseek.json` | S4 invoke response (deepseek — FAIL) |
+| `<temp>/c11-s5-kimi.json` | S5 invoke response (kimi) |
+| `<temp>/c11-s5-qwen.json` | S5 invoke response (qwen) |
+| `<temp>/c11-s5-gemma.json` | S5 invoke response (gemma) |

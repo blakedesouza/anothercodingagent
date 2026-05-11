@@ -110,7 +110,7 @@ Qwen produced extensive chain-of-thought deliberation wrapped in `>` blockquote 
 
 Currently only the round-1 context-request (`raw_request_path`) and the final pass (`finalRawPath`) are written to disk. Round 2 and 3 responses have no artifact, making post-mortem debugging hard.
 
-- [ ] In `runWitness()` in `src/cli/consult.ts`, write each round's response to `/tmp/aca-consult-{witness}-round-{n}-{suffix}.md`
+- [ ] In `runWitness()` in `src/cli/consult.ts`, write each round's response to `<temp>/aca-consult-{witness}-round-{n}-{suffix}.md`
 - [ ] Decide priority: is this worth doing before Bug 1, or after?
 
 ---

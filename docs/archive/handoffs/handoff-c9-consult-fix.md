@@ -21,7 +21,7 @@ Root cause (two simultaneous issues):
 1. **Token budget exhaustion**: Qwen3.5's chain-of-thought burns ~2100 tokens deliberating over which JSON format to use (simple `needs_context` vs structured `action` form). The thinking chain terminates mid-thought — no actual answer ever produced.
 2. **False positive on detector**: The thinking chain is emitted as `> ` blockquote-prefixed lines. It quotes the prompt's invalid-example list verbatim (e.g. `(<tool_call>, <call>, etc.)`), which matches `containsPseudoToolCall` even though Qwen isn't actually trying to call tools.
 
-Raw evidence files: `/tmp/aca-consult-qwen-context-request-1775798410070-300788.md` (run D) and `/tmp/aca-consult-qwen-context-request-1775798421099-301408.md` (run F).
+Raw evidence files: `<temp>/aca-consult-qwen-context-request-1775798410070-300788.md` (run D) and `<temp>/aca-consult-qwen-context-request-1775798421099-301408.md` (run F).
 
 ### 3. Created `src/prompts/prompt-guardrails.ts`
 

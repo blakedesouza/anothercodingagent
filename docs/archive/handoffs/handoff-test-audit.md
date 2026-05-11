@@ -5,11 +5,11 @@
 A test coverage audit was run across all 11 step files and 22 spec files. ~547 tests exist, ~87% are concrete. The remaining ~13% (~72 items) have issues: contradictions, vague assertions, untested sub-features, or spec-only criteria without step-level tests.
 
 Three external AI models (MiniMax M2.7, Kimi K2.5, DeepSeek V3.2 Thinking) independently reviewed all 72 issues and reached consensus on resolutions. Their full responses are saved at:
-- `/tmp/consult-minimax-response-1774834439922128761.md` (18KB)
-- `/tmp/consult-kimi-response-1774834439922128761.md` (13KB)
-- `/tmp/consult-deepseek-response-1774834960145245763.md` (10KB)
+- `<temp>/consult-minimax-response-1774834439922128761.md` (18KB)
+- `<temp>/consult-kimi-response-1774834439922128761.md` (13KB)
+- `<temp>/consult-deepseek-response-1774834960145245763.md` (10KB)
 
-The compiled issue list is at `/tmp/test-audit-issues.md`.
+The compiled issue list is at `<temp>/test-audit-issues.md`.
 
 ## What Needs to Be Done
 

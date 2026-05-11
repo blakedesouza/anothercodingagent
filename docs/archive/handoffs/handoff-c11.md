@@ -234,14 +234,14 @@ print(json.dumps({
     'task': 'YOUR TASK HERE',
     'context': {'model': 'MODEL_ID', 'profile': 'coder', 'cwd': '<repo>'},
 }))
-" > /tmp/input.json
-cat /tmp/input.json | HOME=$(mktemp -d -t aca-test-XXXXXX) node dist/index.js invoke --json
+" > <temp>/input.json
+cat <temp>/input.json | HOME=$(mktemp -d -t aca-test-XXXXXX) node dist/index.js invoke --json
 
 # Debug mode (raw SSE to stderr)
-cat /tmp/input.json | NANOGPT_DEBUG=1 HOME=$(mktemp -d -t aca-debug-XXXXXX) node dist/index.js invoke --json > /tmp/out.json 2>/tmp/debug.txt
+cat <temp>/input.json | NANOGPT_DEBUG=1 HOME=$(mktemp -d -t aca-debug-XXXXXX) node dist/index.js invoke --json > <temp>/out.json 2><temp>/debug.txt
 
 # Consult
-node dist/index.js consult --question "YOUR QUESTION" --out /tmp/consult-out.json
+node dist/index.js consult --question "YOUR QUESTION" --out <temp>/consult-out.json
 ```
 
 **Model IDs:**

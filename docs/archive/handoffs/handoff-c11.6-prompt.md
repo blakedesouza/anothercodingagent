@@ -44,7 +44,7 @@ Read plan.md and docs/handoff-c11.6.md before doing anything else.
   ▎   --question "What does formatOtlpPayload do, what does it return, and what file defines it?" \
   ▎   --project-dir <repo> \
   ▎   --max-context-rounds 3 \
-  ▎   2>&1 | tee /tmp/aca-c116-qwen-${SUFFIX}.txt
+  ▎   2>&1 | tee <temp>/aca-c116-qwen-${SUFFIX}.txt
   ▎ Pass: qwen context_requests is non-empty (previously was [] due to blockquote swallow).
   ▎
   ▎ Read docs/handoff-c11.6.md for the full checklist, exact line numbers, and

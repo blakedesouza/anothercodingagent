@@ -31,7 +31,7 @@ If a future Codex session needs to resume this work, start here.
 - Milestone 11 is complete under the new framework.
 - Phase 0 through Milestone 11 have recorded live NanoGPT validation in `LIVE_VALIDATION.md`.
 - Post-M2 hardening added specialist-model fallback so `rp-researcher` can recover from a removed default model when ACA selected it.
-- Live executor benchmark artifacts now exist at `/tmp/aca-executor-benchmark.json` and `/tmp/aca-executor-benchmark-deep.json`.
+- Live executor benchmark artifacts now exist at `<temp>/aca-executor-benchmark.json` and `<temp>/aca-executor-benchmark-deep.json`.
 - Current benchmark leader is `zai-org/glm-5`, but the executor-default decision is intentionally deferred until more of the core audit is complete.
 - M3 fixed a real invoke/executor parity bug: invoke now does pre-turn summarization, refreshed runtime context injection, and post-turn state persistence.
 - M4 fixed a real renderer/output-channel leak: embedding initialization no longer prints raw console warnings into live REPL startup.
@@ -91,7 +91,7 @@ If a future Codex session needs to resume this work, start here.
   - built `invoke` with `profile: "witness"` and `allowed_tools: ["read_file"]` succeeded on the emulated path with one accepted `read_file`
   - built `invoke` with `profile: "rp-researcher"` created `<workspace-parent>/.aca-c7-rp-probe/royal-biblia-academy.md` through accepted `read_file` + `write_file`, then hit a retryable post-write `llm.malformed` abort
   - a built no-tools DeepSeek consult against `docs/rp/authoring-contract.md` stayed in clean `needs_context` / snippet-fulfillment mode and did not drift into pseudo-tool markup
-  - a fresh built no-tools Qwen consult on `/tmp/aca-c7-pseudo-tool-prompt.md` now gives the missing degraded replay: Qwen emitted active pseudo-tool markup in the context-request pass, ACA classified it as degraded, and triage still completed from the raw artifact
+  - a fresh built no-tools Qwen consult on `<temp>/aca-c7-pseudo-tool-prompt.md` now gives the missing degraded replay: Qwen emitted active pseudo-tool markup in the context-request pass, ACA classified it as degraded, and triage still completed from the raw artifact
   - delegate-wrapper bakeoff on `<workspace-parent>` showed `moonshotai/Kimi-K2-Instruct-0905` and `zai-org/glm-5` reaching real read→write completion, but only the `glm-5` run was exact on the bounded heading-copy task; both `qwen/qwen3-coder-next` and `qwen/qwen3-coder` aborted with retryable `llm.malformed` after the first accepted `read_file`
   - a fresh built Qwen size probe showed the smaller-source path is materially healthier but still flaky: one tiny-file run completed end-to-end, a rerun wrote the required output and then still aborted with retryable `llm.malformed`, and the full 7.6 KB contract-file run aborted after the first accepted `read_file` without writing the output
 - The old no-tools degradation gap is now closed. The main remaining `C7` decision is whether the Qwen `llm.malformed` cases, especially the post-write abort after a satisfied required output, warrant workflow-level salvage or should remain documented model-quality/runtime-shape notes.

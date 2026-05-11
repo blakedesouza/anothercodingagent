@@ -113,7 +113,7 @@ function baseOptions(overrides: Partial<PromptAssemblyOptions> = {}): PromptAsse
         model: 'test-model',
         tools: [],
         items: [],
-        cwd: '/home/user/project',
+        cwd: '/workspace/project',
         shell: 'bash',
         ...overrides,
     };
@@ -142,7 +142,7 @@ describe('assemblePrompt', () => {
 
             // Layer 3: context block has environment info
             const ctxContent = result.messages[1].content as string;
-            expect(ctxContent).toContain('CWD: /home/user/project');
+            expect(ctxContent).toContain('CWD: /workspace/project');
             expect(ctxContent).toContain('Shell: bash');
         });
 
@@ -323,7 +323,7 @@ describe('assemblePrompt', () => {
         it('project snapshot present in context block', () => {
             const result = assemblePrompt(baseOptions({
                 projectSnapshot: {
-                    root: '/home/user/project',
+                    root: '/workspace/project',
                     stack: ['Node', 'TypeScript', 'pnpm'],
                     git: { branch: 'main', status: 'dirty', staged: true },
                     ignorePaths: ['.git/', 'node_modules/'],
@@ -333,7 +333,7 @@ describe('assemblePrompt', () => {
 
             const ctxContent = result.messages[1].content as string;
             expect(ctxContent).toContain('--- Project ---');
-            expect(ctxContent).toContain('Project root: /home/user/project');
+            expect(ctxContent).toContain('Project root: /workspace/project');
             expect(ctxContent).toContain('Stack: Node, TypeScript, pnpm');
             expect(ctxContent).toContain('branch=main');
             expect(ctxContent).toContain('dirty');
@@ -647,7 +647,7 @@ describe('buildConversationMessages', () => {
 describe('buildInvokeSystemMessages', () => {
     it('returns a single system message with identity', () => {
         const msgs = buildInvokeSystemMessages({
-            cwd: '/home/user/project',
+            cwd: '/workspace/project',
             toolNames: ['read_file'],
         });
 
@@ -697,10 +697,10 @@ describe('buildInvokeSystemMessages', () => {
 
     it('includes project stack from snapshot', () => {
         const msgs = buildInvokeSystemMessages({
-            cwd: '/home/user/project',
+            cwd: '/workspace/project',
             toolNames: ['read_file'],
             projectSnapshot: {
-                root: '/home/user/project',
+                root: '/workspace/project',
                 stack: ['Node', 'TypeScript', 'pnpm', 'vitest'],
                 git: { branch: 'main', status: 'clean', staged: false },
                 ignorePaths: ['.git/', 'node_modules/'],
@@ -900,10 +900,10 @@ describe('buildInvokeSystemMessages', () => {
 
     it('sanitizes control characters in paths', () => {
         const msgs = buildInvokeSystemMessages({
-            cwd: '/home/user/evil\ninjected line\ndir',
+            cwd: '/workspace/evil\ninjected line\ndir',
             toolNames: ['read_file'],
             projectSnapshot: {
-                root: '/home/user/evil\rinjection\nroot',
+                root: '/workspace/evil\rinjection\nroot',
                 stack: [],
                 git: null,
                 ignorePaths: [],
@@ -932,7 +932,7 @@ describe('buildInvokeSystemMessages', () => {
         // path has no compression coupling (verified at turn-engine.ts:778)
         // so the real constraint is "leave room for tool outputs".
         const msgs = buildInvokeSystemMessages({
-            cwd: '/home/user/project',
+            cwd: '/workspace/project',
             toolNames: [
                 'read_file', 'write_file', 'edit_file', 'delete_path', 'move_path',
                 'make_directory', 'stat_path', 'find_paths', 'search_text',
@@ -942,7 +942,7 @@ describe('buildInvokeSystemMessages', () => {
                 'web_search', 'fetch_url', 'lookup_docs',
             ],
             projectSnapshot: {
-                root: '/home/user/project',
+                root: '/workspace/project',
                 stack: ['Node', 'TypeScript', 'pnpm', 'vitest', 'eslint'],
                 git: { branch: 'feature/invoke-prompt', status: 'dirty', staged: true },
                 ignorePaths: ['.git/', 'node_modules/', 'dist/', 'build/', 'coverage/'],

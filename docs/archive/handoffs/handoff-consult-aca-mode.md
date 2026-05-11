@@ -25,7 +25,7 @@ Options:
   -h, --help  display help for command
 ```
 
-All 4 witnesses in the 2026-04-06 demo run had `aca_mode: False` in `/tmp/consult-result-1775460979363918475-r0.json`. Trace log confirms: `<claude-home>/logs/consult-trace.ndjson` lines 1582-1621 all show `error: unknown option '--json'`.
+All 4 witnesses in the 2026-04-06 demo run had `aca_mode: False` in `<temp>/consult-result-1775460979363918475-r0.json`. Trace log confirms: `<claude-home>/logs/consult-trace.ndjson` lines 1582-1621 all show `error: unknown option '--json'`.
 
 **Fix (one line, two locations):**
 
@@ -51,7 +51,7 @@ Also update the 2 docstring mentions of `aca invoke --json` in the same file (li
 ```bash
 CONSULT_ID="$(date +%s%N)" CONSULT_PHASE=initial CONSULT_ROUND=0 \
   python3 ~/.claude/skills/consult/consult_ring.py aca \
-  /tmp/consult-prompt-1775460979363918475-r0.md \
+  <temp>/consult-prompt-1775460979363918475-r0.md \
   <repo> \
   "$(date +%s%N)-r0"
 ```
@@ -61,7 +61,7 @@ After the fix, look for:
 - `triage_status: "ok"` (currently `error`)
 - Witnesses actually reading files via `read_file` (check `~/.aca/sessions/` for tool traces from the witness subprocesses)
 
-**Important:** The existing M10.2 lean consult prompt at `/tmp/consult-prompt-1775460979363918475-r0.md` is still valid. Don't rewrite it — just re-run.
+**Important:** The existing M10.2 lean consult prompt at `<temp>/consult-prompt-1775460979363918475-r0.md` is still valid. Don't rewrite it — just re-run.
 
 There are probably other consumers of `aca invoke --json` that are also broken. Grep found `src/mcp/server.ts:2,34` and `src/cli/executor.ts:2` comments mentioning it — those are just comments, check whether the actual spawn call uses `--json`. Also `fundamentals.md` documents it wrong (lines 119, 1273, 1296, 1360) — fix the docs too.
 
@@ -110,10 +110,10 @@ There are probably other consumers of `aca invoke --json` that are also broken. 
 - Hard constraints: never inline source in aca mode, size target 3-15KB, closing reminder sentence
 
 ### Empirical demo — PARTIALLY DONE
-- Lean M10.2 consult prompt written: `/tmp/consult-prompt-1775460979363918475-r0.md`
+- Lean M10.2 consult prompt written: `<temp>/consult-prompt-1775460979363918475-r0.md`
 - **8,343 bytes / 102 lines** — confirmed smaller than the ~45KB baseline an inlined old-style prompt would have been (5.4x reduction on the prompt alone)
 - Consult ran, all 4 witnesses returned status=ok — BUT they all silently fell back to NanoGPT due to the `--json` bug. The tools were never actually used. The "smaller prompt" measurement is still valid (we wrote a lean prompt successfully), but the "witnesses used tools" part is NOT verified yet.
-- Witness repaired responses: `/tmp/consult-*-response-1775460979363918475-r0.md` — these are NanoGPT-only responses, not ACA-tool responses. Don't trust them as evidence of tool use.
+- Witness repaired responses: `<temp>/consult-*-response-1775460979363918475-r0.md` — these are NanoGPT-only responses, not ACA-tool responses. Don't trust them as evidence of tool use.
 
 ---
 
@@ -121,9 +121,9 @@ There are probably other consumers of `aca invoke --json` that are also broken. 
 
 1. **Fix the `--json` bug** in `consult_ring.py` as described above. ~30 seconds.
 2. **Rebuild** (`cd <repo> && npm run build`) — already built today, but rebuild for safety.
-3. **Re-run the empirical demo** with the same lean prompt file at `/tmp/consult-prompt-1775460979363918475-r0.md`. Same command as above.
+3. **Re-run the empirical demo** with the same lean prompt file at `<temp>/consult-prompt-1775460979363918475-r0.md`. Same command as above.
 4. **Verify ACA mode actually fired this time** — check `aca_mode: true` on witnesses in the result.json, `triage_status: ok`, and look for evidence of tool calls in `~/.aca/sessions/` (new session dirs from the witness subprocesses).
-5. **Compare witness response quality** (grounded-with-file-line-evidence vs guessed-from-memory) between the old run at `/tmp/consult-*-response-1775460979363918475-r0.md` and the new tool-enabled run.
+5. **Compare witness response quality** (grounded-with-file-line-evidence vs guessed-from-memory) between the old run at `<temp>/consult-*-response-1775460979363918475-r0.md` and the new tool-enabled run.
 6. **Audit other `aca invoke --json` consumers**:
    - `src/mcp/server.ts:2, 34` (grep found these — comments only? or actual spawn call?)
    - `src/cli/executor.ts:2` (comment header, probably just docs)
@@ -188,14 +188,14 @@ M10.2 + M11 + M10.1c are done. Next on the roadmap is M10.3 (Self-Building: ACA 
 3. **`npm run build`:** clean. 458.89 KB ESM bundle.
 
 4. **Empirical demo re-run** (handoff steps 3-5):
-   - Original prompt at `/tmp/consult-prompt-1775460979363918475-r0.md` was gone (`/tmp` cleared since the prior session — likely WSL reboot). Wrote a fresh small lean prompt at `/tmp/consult-aca-bugfix-verify.md` (1775 bytes) asking witnesses to use `read_file` + `exec_command` to verify the fix landed.
-   - Ran `python3 ~/.claude/skills/consult/consult_ring.py aca /tmp/consult-aca-bugfix-verify.md <repo> acabugfix-1775475803`.
+   - Original prompt at `<temp>/consult-prompt-1775460979363918475-r0.md` was gone (`/tmp` cleared since the prior session — likely WSL reboot). Wrote a fresh small lean prompt at `<temp>/consult-aca-bugfix-verify.md` (1775 bytes) asking witnesses to use `read_file` + `exec_command` to verify the fix landed.
+   - Ran `python3 ~/.claude/skills/consult/consult_ring.py aca <temp>/consult-aca-bugfix-verify.md <repo> acabugfix-1775475803`.
    - **All 4 witnesses returned `status: ok`. 3 of 4 witnesses returned `aca_mode: true`** (minimax, kimi, qwen). Triage `status: ok` via deepseek-v3.2 in ACA mode (took 194 seconds — meaning it actually used tools to verify findings, which had been impossible before).
    - **Trace log proof:** `<claude-home>/logs/consult-trace.ndjson` now shows `aca_invoke_start` → `aca_invoke_end status: ok` for minimax/kimi/qwen/deepseek-triage on suffix `acabugfix-1775475803`. Zero `unknown option '--json'` errors anywhere in the post-fix run. The 14 `unknown option` entries in the log are all from the failing 07:50 UTC run with suffix `1775460979363918475-r0` that prompted this handoff.
 
 ### Witness response evidence (handoff step 5 — quality comparison)
 
-The original NanoGPT-only responses at `/tmp/consult-*-response-1775460979363918475-r0.md` were lost when /tmp cleared, so a head-to-head can't be done. But the new run's responses are demonstrably tool-grounded:
+The original NanoGPT-only responses at `<temp>/consult-*-response-1775460979363918475-r0.md` were lost when /tmp cleared, so a head-to-head can't be done. But the new run's responses are demonstrably tool-grounded:
 
 - **kimi**: `tools_used: ["exec_command"]`, called `npx aca invoke --help` and confirmed source via exec — `running_in_aca_mode: true`.
 - **qwen**: `tools_used: ["read_file", "find_paths", "exec_command"]` — three distinct tool families, all real calls through ACA.
@@ -230,7 +230,7 @@ User stopped here at peak hours start; resume from this point. Everything below 
 
 | File | Change |
 |---|---|
-| `src/providers/nanogpt-driver.ts` | (a) baseUrl default `api.nano-gpt.com/v1` → `nano-gpt.com/api/subscription/v1` with explanatory comment. (b) `timeout` fallback uses `DEFAULT_API_TIMEOUT_MS` import. (c) **TEMP DEBUG instrumentation** at lines ~145-152 — `if (process.env.ACA_DUMP_BODY) { fs.appendFileSync('/tmp/aca-request-body.json', ...) }`. **Remove this when gemma diagnosis is complete.** |
+| `src/providers/nanogpt-driver.ts` | (a) baseUrl default `api.nano-gpt.com/v1` → `nano-gpt.com/api/subscription/v1` with explanatory comment. (b) `timeout` fallback uses `DEFAULT_API_TIMEOUT_MS` import. (c) **TEMP DEBUG instrumentation** at lines ~145-152 — `if (process.env.ACA_DUMP_BODY) { fs.appendFileSync('<temp>/aca-request-body.json', ...) }`. **Remove this when gemma diagnosis is complete.** |
 | `src/config/schema.ts` | New `export const DEFAULT_API_TIMEOUT_MS = 20 * 60 * 1000` constant with provenance comment. `CONFIG_DEFAULTS.providers[0].timeout` and `CONFIG_DEFAULTS.apiTimeout` both reference it. |
 | `src/mcp/server.ts` | Imports `DEFAULT_API_TIMEOUT_MS` from `../config/schema.js`. `DEFAULT_DEADLINE_MS` is now `= DEFAULT_API_TIMEOUT_MS` with explanatory comment. |
 | `src/config/witness-models.ts` | New `export const DEFAULT_WITNESS_TIMEOUT_S = DEFAULT_API_TIMEOUT_MS / 1000`. All 4 witness `timeout` fields reference it. |
@@ -310,7 +310,7 @@ L12 turn  status=completed  outcome=tool_error
 
 **Latest empirical run (the one we just did before the wrap):** ran `aca invoke` for gemma with the verification task and **gemma succeeded this time** — produced a coherent text response saying "the file is outside workspace sandbox, I searched the project and couldn't find it". This means gemma DID call tools successfully (search_text or find_paths) in this single-shot test. So the empty-args bug is intermittent, not deterministic. The 3-consecutive-empty-args failure may be a pathological tail case that doesn't reproduce on every invocation.
 
-**Debug instrumentation captured:** I added a `process.env.ACA_DUMP_BODY` gate to `nanogpt-driver.ts:rawStream` that appends the full outgoing request body to `/tmp/aca-request-body.json`. **The latest invoke captured a 1611-line dump.** I copied the file to a persistent location since /tmp can clear:
+**Debug instrumentation captured:** I added a `process.env.ACA_DUMP_BODY` gate to `nanogpt-driver.ts:rawStream` that appends the full outgoing request body to `<temp>/aca-request-body.json`. **The latest invoke captured a 1611-line dump.** I copied the file to a persistent location since /tmp can clear:
 
 ```
 <claude-home>/projects/-repo-project/aca-request-body-gemma-debug.json
@@ -353,7 +353,7 @@ cd <repo> && git status --short | head -20 && git log -1 --oneline
 SUFFIX="gemma-debug-$(date +%s)"
 CONSULT_ID="$(date +%s%N)" CONSULT_PHASE=initial CONSULT_ROUND=0 \
   python3 ~/.claude/skills/consult/consult_ring.py aca \
-  /tmp/consult-aca-bugfix-verify.md \
+  <temp>/consult-aca-bugfix-verify.md \
   <repo> \
   "$SUFFIX"
 

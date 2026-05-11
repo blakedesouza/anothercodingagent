@@ -648,13 +648,13 @@ describe('formatApprovalPrompt', () => {
         const prompt = formatApprovalPrompt(
             makeRequest({
                 toolName: 'exec_command',
-                toolArgs: { command: 'npm install', cwd: '/home/user/project' },
+                toolArgs: { command: 'npm install', cwd: '/workspace/project' },
                 approvalClass: 'external-effect',
             }),
         );
         expect(prompt).toContain('exec_command');
         expect(prompt).toContain('npm install');
-        expect(prompt).toContain('/home/user/project');
+        expect(prompt).toContain('/workspace/project');
         expect(prompt).toContain('[y] approve');
         expect(prompt).toContain('[n] deny');
         expect(prompt).toContain('[a] always');

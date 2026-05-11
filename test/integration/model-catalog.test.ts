@@ -206,10 +206,10 @@ describe('M11.8 Model Catalog Wiring', () => {
 
     it('T4: invoke prompt assembly includes workspace context', () => {
         const msgs = buildInvokeSystemMessages({
-            cwd: '/home/user/myproject',
+            cwd: '/workspace/myproject',
             toolNames: ['read_file', 'write_file', 'exec_command'],
             projectSnapshot: {
-                root: '/home/user/myproject',
+                root: '/workspace/myproject',
                 stack: ['Node', 'TypeScript'],
                 git: { branch: 'main', status: 'clean', staged: false },
                 ignorePaths: [],
@@ -219,7 +219,7 @@ describe('M11.8 Model Catalog Wiring', () => {
 
         expect(msgs.length).toBeGreaterThan(0);
         const content = msgs[0].content as string;
-        expect(content).toContain('/home/user/myproject');
+        expect(content).toContain('/workspace/myproject');
         expect(content).toContain('Node');
         expect(content).toContain('TypeScript');
         expect(content).toContain('read_file');

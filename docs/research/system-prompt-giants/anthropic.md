@@ -1,7 +1,7 @@
 # Anthropic Tool-Use Docs — Curated Findings
 
 **Source:** https://platform.claude.com/docs/en/docs/agents-and-tools/tool-use/ and related docs, fetched 2026-04-06
-**Full notes:** `/tmp/giants-anthropic.md` (488 lines, extensive verbatim quotes)
+**Full notes:** `<temp>/giants-anthropic.md` (488 lines, extensive verbatim quotes)
 
 Anthropic is the authoritative voice on prompting Claude-family models for tool use. One section — [handling-stop-reasons § "Empty responses with end_turn"](https://platform.claude.com/docs/en/api/handling-stop-reasons) — is a **direct hit** on the ACA failure mode and is the single most load-bearing discovery in this research.
 

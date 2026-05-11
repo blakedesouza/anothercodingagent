@@ -46,10 +46,10 @@ Get ACA from "all tests pass" to "actually runs and completes real tasks." This 
 ### M8.3 — Real Tool Execution
 
 - [x] `aca "read the file package.json and tell me the project name"` → uses read_file tool, returns "anothercodingagent"
-- [x] `aca "create a file /tmp/aca-test-output.txt with the content 'hello from aca'"` → uses write_file, file exists after
+- [x] `aca "create a file <temp>/aca-test-output.txt with the content 'hello from aca'"` → uses write_file, file exists after
 - [x] `aca "run the command 'echo hello world'"` → uses exec_command, output contains "hello world"
 - [x] Tool approval flow works: workspace-write tools prompt for confirmation (unless --no-confirm)
-- [x] `aca --no-confirm "create /tmp/aca-smoke.txt with 'smoke test'"` → auto-approves, file created
+- [x] `aca --no-confirm "create <temp>/aca-smoke.txt with 'smoke test'"` → auto-approves, file created
 - [x] Sandbox enforcement: write outside workspace → blocked with clear error
 - [x] SecretScrubber: API key doesn't appear in conversation.jsonl or stdout
 

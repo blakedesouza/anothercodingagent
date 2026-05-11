@@ -35,7 +35,7 @@ From `docs/steps/07a5-milestone7-review-aggregation.md`:
 - M7A.5.1 types: `src/review/witness-finding.ts` (WitnessFinding, WitnessReview, parseWitnessOutput, buildWitnessReview)
 - M7A.5.2 aggregator: `src/review/aggregator.ts` (aggregateReviews, AggregatorConfig, AggregatedReport)
 - NanoGPT provider: `src/providers/nanogpt-driver.ts` (for watchdog model invocation)
-- Historical reviews: `/tmp/consult-*` files from prior consultations (or synthetic fixtures)
+- Historical reviews: `<temp>/consult-*` files from prior consultations (or synthetic fixtures)
 
 ## File Locations
 

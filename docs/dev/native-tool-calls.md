@@ -57,7 +57,7 @@ Run the raw provider probe:
 ```bash
 node --import tsx scripts/native-tool-probe.ts \
   --models deepseek/deepseek-v4-pro,deepseek/deepseek-v4-flash \
-  --out /tmp/aca-native-tool-probe-deepseek-v4.json
+  --out <temp>/aca-native-tool-probe-deepseek-v4.json
 ```
 
 It checks:
@@ -70,7 +70,7 @@ It checks:
 
 ## 2026-04-25 Probe Result
 
-Output: `/tmp/aca-native-tool-probe-deepseek-v4-20260425.json`
+Output: `<temp>/aca-native-tool-probe-deepseek-v4-20260425.json`
 
 DeepSeek V4 Pro:
 
@@ -91,9 +91,9 @@ DeepSeek V4 Flash:
 - after DSML pseudo-call parsing, coding-completion repair ordering, and native
   argument normalization: basic ACA workflow bakeoff passed 3/3, with 43
   accepted tool calls and 0 rejected
-  (`/tmp/aca-deepseek-v4-flash-normalized-basic-20260425`)
+  (`<temp>/aca-deepseek-v4-flash-normalized-basic-20260425`)
 - targeted rerun of the hard resume-registry case passed after native
-  normalization (`/tmp/aca-flash-registry-debug-Ggn8qd`)
+  normalization (`<temp>/aca-flash-registry-debug-Ggn8qd`)
 
 ## Current Interpretation
 
@@ -108,28 +108,28 @@ validation to catch incomplete work.
 
 ## 2026-04-25 Qwen / GLM / Kimi Probe
 
-Output: `/tmp/aca-native-tool-probe-qwen-glm-kimi-20260425.json`
+Output: `<temp>/aca-native-tool-probe-qwen-glm-kimi-20260425.json`
 
 - `qwen/qwen3-coder-next`: native calls worked for auto, streaming, required,
   parallel, and post-tool continuation in the raw probe. ACA basic workflow rerun
-  was only 2/3 (`/tmp/aca-native-tools-qwen-basic-rerun-20260425`): one
+  was only 2/3 (`<temp>/aca-native-tools-qwen-basic-rerun-20260425`): one
   `llm.malformed` failure and poor final text on two passing cases.
 - `zai-org/glm-5`: native calls worked for auto, streaming, required, and
   continuation. Parallel probe emitted one native tool call for a two-call
   request, so do not assume reliable parallel compliance. ACA basic passed 3/3;
   full workflow passed 8/9 with one `llm.malformed` hard-case failure
-  (`/tmp/aca-native-tools-glm-kimi-all-20260425`).
+  (`<temp>/aca-native-tools-glm-kimi-all-20260425`).
 - `moonshotai/kimi-k2.5`: native calls worked for auto, streaming, required,
   parallel, and continuation. Full ACA workflow passed 9/9 with 90 accepted tool
-  calls and 0 rejected (`/tmp/aca-native-tools-glm-kimi-all-20260425`).
+  calls and 0 rejected (`<temp>/aca-native-tools-glm-kimi-all-20260425`).
 
 ## 2026-04-25 GLM 5.1 / Kimi 2.6 / Qwen 3.5 Probe
 
 Outputs:
 
-- `/tmp/aca-native-tool-probe-glm51-kimi26-qwen35-20260425.json`
-- `/tmp/aca-native-tools-glm51-kimi26-qwen35-basic-20260425`
-- `/tmp/aca-native-tools-glm51-kimi26-all-20260425`
+- `<temp>/aca-native-tool-probe-glm51-kimi26-qwen35-20260425.json`
+- `<temp>/aca-native-tools-glm51-kimi26-qwen35-basic-20260425`
+- `<temp>/aca-native-tools-glm51-kimi26-all-20260425`
 
 Results:
 
@@ -157,7 +157,7 @@ fixtures:
 - project file walking with ignored directories and symlink avoidance
 - content-addressed blob storage with safe id validation
 
-Output: `/tmp/aca-native-tools-glm51-kimi26-dsv4pro-stress-20260425`
+Output: `<temp>/aca-native-tools-glm51-kimi26-dsv4pro-stress-20260425`
 
 Results:
 
@@ -169,8 +169,8 @@ Results:
 
 Outputs:
 
-- `/tmp/aca-native-impact-delegation-20260425`
-- `/tmp/aca-native-impact-rp-researcher-20260425`
+- `<temp>/aca-native-impact-delegation-20260425`
+- `<temp>/aca-native-impact-rp-researcher-20260425`
 
 Results:
 

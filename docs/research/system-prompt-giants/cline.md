@@ -1,7 +1,7 @@
 # Cline System Prompt — Curated Findings
 
 **Source:** https://github.com/cline/cline (branch `main` @ `841402c1789d`, fetched 2026-04-06)
-**Full notes:** `/tmp/giants-cline.md` (373 lines, extensive verbatim quotes)
+**Full notes:** `<temp>/giants-cline.md` (373 lines, extensive verbatim quotes)
 
 Cline is the most battle-tested open-source multi-model coding agent. It ships 12 per-model prompt variants because "one prompt fits all models" does not work. This chapter extracts the patterns relevant to ACA.
 

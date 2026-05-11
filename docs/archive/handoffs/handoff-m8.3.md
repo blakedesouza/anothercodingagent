@@ -21,10 +21,10 @@
 From `docs/steps/08-milestone8-standalone.md`:
 
 - [ ] `aca "read the file package.json and tell me the project name"` → uses read_file tool, returns "anothercodingagent"
-- [ ] `aca "create a file /tmp/aca-test-output.txt with the content 'hello from aca'"` → uses write_file, file exists after
+- [ ] `aca "create a file <temp>/aca-test-output.txt with the content 'hello from aca'"` → uses write_file, file exists after
 - [ ] `aca "run the command 'echo hello world'"` → uses exec_command, output contains "hello world"
 - [ ] Tool approval flow works: workspace-write tools prompt for confirmation (unless --no-confirm)
-- [ ] `aca --no-confirm "create /tmp/aca-smoke.txt with 'smoke test'"` → auto-approves, file created
+- [ ] `aca --no-confirm "create <temp>/aca-smoke.txt with 'smoke test'"` → auto-approves, file created
 - [ ] Sandbox enforcement: write outside workspace → blocked with clear error
 - [ ] SecretScrubber: API key doesn't appear in conversation.jsonl or stdout
 

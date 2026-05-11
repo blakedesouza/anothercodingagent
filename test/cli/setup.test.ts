@@ -93,7 +93,7 @@ describe('CLI Setup Commands', () => {
             // Init first
             await runInit(testDir);
 
-            const projectPath = '/home/user/my-project';
+            const projectPath = '/workspace/my-project';
             const resolvedProjectPath = resolve(projectPath);
             const result = await runTrust(projectPath, testDir);
 
@@ -108,7 +108,7 @@ describe('CLI Setup Commands', () => {
         it('aca untrust /path/to/project removes entry', async () => {
             // Init and trust first
             await runInit(testDir);
-            const projectPath = '/home/user/my-project';
+            const projectPath = '/workspace/my-project';
             const resolvedProjectPath = resolve(projectPath);
             await runTrust(projectPath, testDir);
 

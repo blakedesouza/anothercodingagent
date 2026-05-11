@@ -8,7 +8,7 @@ import type { ToolContext } from '../../src/tools/tool-registry.js';
 
 // WORKSPACE is used for analyzeCommand workspace-aware logic tests.
 // It doesn't need to exist on disk — analyzeCommand is a pure function.
-const WORKSPACE = '/home/user/testproject';
+const WORKSPACE = '/workspace/testproject';
 const WINDOWS_WORKSPACE = 'C:\\Users\\test\\project';
 
 // Integration tests that spawn real processes need a real directory.

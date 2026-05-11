@@ -186,7 +186,7 @@ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-c116-qwen-XXXXXX) \
   --question "What does formatOtlpPayload do, what does it return, and what file defines it?" \
   --project-dir <repo> \
   --max-context-rounds 3 \
-  2>&1 | tee /tmp/aca-c116-qwen-${SUFFIX}.txt
+  2>&1 | tee <temp>/aca-c116-qwen-${SUFFIX}.txt
 ```
 
 **Pass criteria:** qwen's `context_requests` array is **non-empty** — it requests `src/observability/telemetry.ts` and receives a real snippet.

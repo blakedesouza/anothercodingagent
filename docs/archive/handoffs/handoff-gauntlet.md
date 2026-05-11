@@ -43,7 +43,7 @@
 
 **05 — Multi-round + tree + round persistence**
 - 3-round max, deepseek should request trees and navigate to correct files
-- Pass: `status: ok`; `ls /tmp/aca-consult-deepseek-round-2-*.md` returns a file
+- Pass: `status: ok`; `ls <temp>/aca-consult-deepseek-round-2-*.md` returns a file
 
 **06 — Un-evidenced-absence hardening**
 - Witnesses may claim "X is not implemented" — triage must classify these as open questions
@@ -69,7 +69,7 @@
 
 ## Commands
 
-Run from project root. All results to `/tmp/gauntlet-NN-result.json`. Run sequentially.
+Run from project root. All results to `<temp>/gauntlet-NN-result.json`. Run sequentially.
 
 ```bash
 SUFFIX=$(date +%s)
@@ -78,60 +78,60 @@ SUFFIX=$(date +%s)
 node dist/index.js consult --witnesses all \
   --question "Review the classifyWitnessFirstPass function — does the pseudo-tool-call detection correctly handle the retryable flag, and what edge cases could cause a false positive?" \
   --max-context-rounds 3 \
-  --out /tmp/gauntlet-01-result-$SUFFIX.json 2>/tmp/gauntlet-01-stderr-$SUFFIX.txt
+  --out <temp>/gauntlet-01-result-$SUFFIX.json 2><temp>/gauntlet-01-stderr-$SUFFIX.txt
 
 # 02 — Symbol lookup navigation
 node dist/index.js consult --witnesses all \
   --question "In runWitness, how does the buildContinuationPrompt function determine roundsRemaining? Could the counter ever allow an extra round beyond maxContextRounds?" \
   --max-context-rounds 3 \
-  --out /tmp/gauntlet-02-result-$SUFFIX.json 2>/tmp/gauntlet-02-stderr-$SUFFIX.txt
+  --out <temp>/gauntlet-02-result-$SUFFIX.json 2><temp>/gauntlet-02-stderr-$SUFFIX.txt
 
 # 03 — No-tools discipline (conceptual)
 node dist/index.js consult --witnesses all \
   --question "What design principles should govern when an AI agent retries a tool call automatically versus escalating to the user? Consider latency, safety, and user trust tradeoffs." \
-  --out /tmp/gauntlet-03-result-$SUFFIX.json 2>/tmp/gauntlet-03-stderr-$SUFFIX.txt
+  --out <temp>/gauntlet-03-result-$SUFFIX.json 2><temp>/gauntlet-03-stderr-$SUFFIX.txt
 
 # 04 — Context-request placeholder fix
 node dist/index.js consult --witnesses all \
   --question "Does the needs_context protocol in src/consult/context-request.ts correctly prevent witnesses from submitting placeholder paths instead of real file paths? What guards exist?" \
   --max-context-rounds 3 \
-  --out /tmp/gauntlet-04-result-$SUFFIX.json 2>/tmp/gauntlet-04-stderr-$SUFFIX.txt
+  --out <temp>/gauntlet-04-result-$SUFFIX.json 2><temp>/gauntlet-04-stderr-$SUFFIX.txt
 
 # 05 — Multi-round + tree + round persistence (check /tmp after)
 node dist/index.js consult --witnesses deepseek \
   --question "What does the extractCodeIdentifiers function in src/consult/symbol-lookup.ts actually extract, and how does resolveSymbolLocations use that output to populate the <symbol_locations> block?" \
   --max-context-rounds 3 --skip-triage \
-  --out /tmp/gauntlet-05-result-$SUFFIX.json 2>/tmp/gauntlet-05-stderr-$SUFFIX.txt
+  --out <temp>/gauntlet-05-result-$SUFFIX.json 2><temp>/gauntlet-05-stderr-$SUFFIX.txt
 
 # 06 — Un-evidenced-absence hardening
 node dist/index.js consult --witnesses all \
   --question "Does the ACA consult pipeline handle ENOENT results during context-request fulfillment? Does it fail silently, surface the error to the witness, or substitute empty content?" \
   --max-context-rounds 2 \
-  --out /tmp/gauntlet-06-result-$SUFFIX.json 2>/tmp/gauntlet-06-stderr-$SUFFIX.txt
+  --out <temp>/gauntlet-06-result-$SUFFIX.json 2><temp>/gauntlet-06-stderr-$SUFFIX.txt
 
 # 07 — DeepSeek large context (runConsult is in 47KB file)
 node dist/index.js consult --witnesses deepseek \
   --question "Review the full runConsult function in src/cli/consult.ts — what are the main phases, and are there any gaps in error handling between the witness aggregation phase and the triage phase?" \
   --max-context-rounds 3 --skip-triage \
-  --out /tmp/gauntlet-07-result-$SUFFIX.json 2>/tmp/gauntlet-07-stderr-$SUFFIX.txt
+  --out <temp>/gauntlet-07-result-$SUFFIX.json 2><temp>/gauntlet-07-stderr-$SUFFIX.txt
 
 # 08 — XML backtick fix (tool-call concepts in question)
 node dist/index.js consult --witnesses qwen \
   --question "In the ACA tool-emulation system, how does the tool-call detection distinguish between a legitimate tool invocation and a model that accidentally includes tool-call syntax in its prose output?" \
   --max-context-rounds 2 --skip-triage \
-  --out /tmp/gauntlet-08-result-$SUFFIX.json 2>/tmp/gauntlet-08-stderr-$SUFFIX.txt
+  --out <temp>/gauntlet-08-result-$SUFFIX.json 2><temp>/gauntlet-08-stderr-$SUFFIX.txt
 
 # 09 — Blockquote + obfuscation combo
 node dist/index.js consult --witnesses qwen \
   --question "Review the stripBlockquoteMarkers function in src/consult/context-request.ts — what patterns does it handle and what edge cases might it miss?" \
   --max-context-rounds 2 --skip-triage \
-  --out /tmp/gauntlet-09-result-$SUFFIX.json 2>/tmp/gauntlet-09-stderr-$SUFFIX.txt
+  --out <temp>/gauntlet-09-result-$SUFFIX.json 2><temp>/gauntlet-09-stderr-$SUFFIX.txt
 
 # 10 — Full pipeline end-to-end
 node dist/index.js consult --witnesses all \
   --question "Review the error handling in runWitness in src/cli/consult.ts — are the retryable vs. unrecoverable failure paths correctly distinguished? Are there cases where a failure could be swallowed silently?" \
   --max-context-rounds 3 \
-  --out /tmp/gauntlet-10-result-$SUFFIX.json 2>/tmp/gauntlet-10-stderr-$SUFFIX.txt
+  --out <temp>/gauntlet-10-result-$SUFFIX.json 2><temp>/gauntlet-10-stderr-$SUFFIX.txt
 ```
 
 ---
@@ -143,12 +143,12 @@ For each result JSON, extract:
 jq '{success_count, total_witnesses, degraded,
      witnesses: (.witnesses | to_entries[] | {key, status:.value.status, error:.value.error, context_requests:(.value.context_requests|length)}),
      triage_status: .triage.status,
-     structured_review: .structured_review.status}' /tmp/gauntlet-NN-result-$SUFFIX.json
+     structured_review: .structured_review.status}' <temp>/gauntlet-NN-result-$SUFFIX.json
 ```
 
 For test 05 specifically, also run:
 ```bash
-ls /tmp/aca-consult-deepseek-round-*-*.md 2>/dev/null
+ls <temp>/aca-consult-deepseek-round-*-*.md 2>/dev/null
 ```
 
 Collect all results and report in a single table. Do not fix anything found — document failures for the next session.

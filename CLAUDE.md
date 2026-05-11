@@ -57,7 +57,7 @@ Live tests run the built `aca` binary against real NanoGPT models and prove actu
 **Live test format:**
 - Use a temp HOME: `HOME=$(mktemp -d -t aca-<feature>-XXXXXX)`
 - Run the built dist: `node dist/index.js <command>`
-- Write durable artifacts to `/tmp/` with timestamped names
+- Write durable artifacts to `<temp>/` with timestamped names
 - Inspect actual model output, not just exit codes
 
 **When local-only tests are acceptable:**

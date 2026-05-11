@@ -1,7 +1,7 @@
 # Aider System Prompts — Curated Findings
 
 **Source:** https://github.com/Aider-AI/aider (branch `main`, fetched 2026-04-06)
-**Full notes:** `/tmp/giants-aider.md` (487 lines, extensive verbatim quotes)
+**Full notes:** `<temp>/giants-aider.md` (487 lines, extensive verbatim quotes)
 
 Aider takes a fundamentally different approach than tool-based agents. It uses **edit formats** (SEARCH/REPLACE blocks, unified diffs, whole-file rewrites, V4A patches) parsed out-of-band from assistant text. **There are no tool calls.** The format IS the interface. This contrast is valuable: it illustrates what happens when you design an agent loop where narration and action cannot be separated.
 

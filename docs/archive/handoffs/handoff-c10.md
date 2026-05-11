@@ -48,12 +48,12 @@ node dist/index.js --model minimax/minimax-m2.7 --no-confirm "task"
 Still in production code. Logs raw SSE data and emulation buffer state to stderr.
 
 ```bash
-NANOGPT_DEBUG=1 node dist/index.js --model <model> --no-confirm "task" 2>/tmp/debug.txt
+NANOGPT_DEBUG=1 node dist/index.js --model <model> --no-confirm "task" 2><temp>/debug.txt
 ```
 
 **Verify which model NanoGPT actually routed to:**
 ```bash
-grep '"model"' /tmp/debug.txt | head -1
+grep '"model"' <temp>/debug.txt | head -1
 ```
 The SSE data includes `"model":"..."` — always check this matches what you asked for.
 

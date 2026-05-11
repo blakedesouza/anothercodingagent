@@ -27,8 +27,8 @@ The `\-` escape is produced when GLM-5 writes Markdown list items inside a JSON 
 
 Two Opus agents ran before implementation:
 
-1. **Targeted audit** (`/tmp/agent-findings-rp-audit.md`) — found the root cause and 5 gaps in `rp-research.ts` and `tool-emulation.ts`
-2. **Spider-web audit** (`/tmp/agent-findings-spider-audit.md`) — confirmed regex safety, found regex fallback overcapture bug (introduced and fixed same session), found 5 more unguarded `JSON.parse` sites across the codebase, confirmed no test snapshot impact
+1. **Targeted audit** (`<temp>/agent-findings-rp-audit.md`) — found the root cause and 5 gaps in `rp-research.ts` and `tool-emulation.ts`
+2. **Spider-web audit** (`<temp>/agent-findings-spider-audit.md`) — confirmed regex safety, found regex fallback overcapture bug (introduced and fixed same session), found 5 more unguarded `JSON.parse` sites across the codebase, confirmed no test snapshot impact
 
 ---
 

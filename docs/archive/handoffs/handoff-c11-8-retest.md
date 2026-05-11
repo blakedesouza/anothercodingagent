@@ -89,7 +89,7 @@ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-retest1-XXXXXX) \
   --question "What error code does the invoke pipeline use to identify hard-rejected tool calls? Find the function that counts them, explain what condition it checks, and name the file it lives in." \
   --project-dir <repo> \
   --max-context-rounds 3 \
-  2>&1 | tee /tmp/aca-retest1-${SUFFIX}.txt
+  2>&1 | tee <temp>/aca-retest1-${SUFFIX}.txt
 ```
 
 **Pass criteria:** All 4 witnesses name `src/cli/invoke-output-validation.ts` and report `tool.max_tool_calls`.
@@ -113,7 +113,7 @@ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-retest3-XXXXXX) \
   --question "In the invoke runtime state module, when does a TurnEngine turn receive a runtime context system message? What parameter controls this, what is its default, and what content does the system message contain when it is included?" \
   --project-dir <repo> \
   --max-context-rounds 3 \
-  2>&1 | tee /tmp/aca-retest3-${SUFFIX}.txt
+  2>&1 | tee <temp>/aca-retest3-${SUFFIX}.txt
 ```
 
 **Pass criteria:** All 4 witnesses name `src/cli/invoke-runtime-state.ts` and identify `includeRuntimeContextMessage` with default `false`. Qwen must produce actual findings (not blockquote deliberation).
@@ -136,7 +136,7 @@ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-retest-a-XXXXXX) \
   --question "What are the exit codes defined in the executor module, and what fields does InvokeConstraints expose for capping tool usage? Name the exact file these are defined in." \
   --project-dir <repo> \
   --max-context-rounds 3 \
-  2>&1 | tee /tmp/aca-retest-a-${SUFFIX}.txt
+  2>&1 | tee <temp>/aca-retest-a-${SUFFIX}.txt
 ```
 
 **Pass criteria:** All 4 witnesses name `src/cli/executor.ts`, report the three exit codes with correct values, and list at least 5 of the 11 `InvokeConstraints` fields accurately.
@@ -159,7 +159,7 @@ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-retest-b-XXXXXX) \
   --question "What directories does runInit create, and what protection does it apply to the secrets file? Also: what is the write strategy for runConfigure to avoid partial config on cancellation? Name the file these functions live in." \
   --project-dir <repo> \
   --max-context-rounds 3 \
-  2>&1 | tee /tmp/aca-retest-b-${SUFFIX}.txt
+  2>&1 | tee <temp>/aca-retest-b-${SUFFIX}.txt
 ```
 
 **Pass criteria:** All 4 witnesses name `src/cli/setup.ts`, list the three directories, describe `writeIfAbsent` / restricted permissions for secrets, and mention end-of-wizard buffered writes.
@@ -168,17 +168,17 @@ SUFFIX=$(date +%s) && HOME=$(mktemp -d -t aca-retest-b-XXXXXX) \
 
 ## How to Inspect Results
 
-After each test, find the triage artifact in the console output (look for `"path": "/tmp/aca-consult-triage-..."`), then:
+After each test, find the triage artifact in the console output (look for `"path": "<temp>/aca-consult-triage-..."`), then:
 
 ```bash
-cat /tmp/aca-consult-triage-<timestamp>-<pid>.md
+cat <temp>/aca-consult-triage-<timestamp>-<pid>.md
 ```
 
 Also check each witness's context-request artifact for how they navigated:
 
 ```bash
-cat /tmp/aca-consult-kimi-context-request-<timestamp>-<pid>.md
-cat /tmp/aca-consult-qwen-context-request-<timestamp>-<pid>.md
+cat <temp>/aca-consult-kimi-context-request-<timestamp>-<pid>.md
+cat <temp>/aca-consult-qwen-context-request-<timestamp>-<pid>.md
 ```
 
 For qwen specifically: the response should NOT contain lines starting with `>`. If it does, the model hint is not working.
@@ -191,4 +191,4 @@ For kimi specifically: the response should cite `src/cli/` as the source file, n
 Update `docs/handoff-c11-8.md` live-validation table with the retest results.
 The remaining open item in C11.8 is still: **continuation round responses not persisted to disk**
 (`runWitness()` in `src/cli/consult.ts` — write each round's raw response to
-`/tmp/aca-consult-{witness}-round-{n}-{suffix}.md`).
+`<temp>/aca-consult-{witness}-round-{n}-{suffix}.md`).

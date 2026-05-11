@@ -11,7 +11,7 @@ Read plan.md and docs/handoff-c11.6-hardening.md before doing anything else.
 ▎
 ▎ TASK 1 — Continuation round disk persistence (open since symbol-lookup session)
 ▎ In runWitness() in src/cli/consult.ts, write each extra round's response to:
-▎   /tmp/aca-consult-{witness}-round-{n}-{suffix}.md
+▎   <temp>/aca-consult-{witness}-round-{n}-{suffix}.md
 ▎ Currently only the first context-request and final response are persisted.
 ▎ Mid-loop round failures leave no artifacts for post-mortem debugging.
 ▎ This is a small targeted addition — no new tests needed beyond confirming

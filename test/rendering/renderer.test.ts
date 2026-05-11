@@ -326,10 +326,10 @@ describe('Renderer', () => {
                 result: 'exit 0',
                 durationMs: 500,
                 success: true,
-                detail: 'cwd: /home/user\ntimeout: 30s',
+                detail: 'cwd: /workspace\ntimeout: 30s',
             });
             const output = stderr();
-            expect(output).toContain('cwd: /home/user');
+            expect(output).toContain('cwd: /workspace');
             expect(output).toContain('timeout: 30s');
         });
 
@@ -340,9 +340,9 @@ describe('Renderer', () => {
                 result: 'exit 0',
                 durationMs: 500,
                 success: true,
-                detail: 'cwd: /home/user',
+                detail: 'cwd: /workspace',
             });
-            expect(stderr()).not.toContain('cwd: /home/user');
+            expect(stderr()).not.toContain('cwd: /workspace');
         });
 
         it('omits detail lines when verbose but no detail', () => {
@@ -400,7 +400,7 @@ describe('Renderer', () => {
                 version: '0.1.0',
                 model: 'test-model',
                 provider: 'nanogpt',
-                workspace: '/home/user/project',
+                workspace: '/workspace/project',
             });
             const output = stderr();
             expect(output).toContain('----------');
@@ -415,14 +415,14 @@ describe('Renderer', () => {
                 version: '0.1.0',
                 model: 'gpt-4o',
                 provider: 'nanogpt',
-                workspace: '/home/user/project',
+                workspace: '/workspace/project',
             });
             const output = stderr();
             expect(output).toContain('ACA');
             expect(output).toContain('v0.1.0');
             expect(output).toContain('gpt-4o');
             expect(output).toContain('nanogpt');
-            expect(output).toContain('/home/user/project');
+            expect(output).toContain('/workspace/project');
         });
 
         it('renders with timestamps when non-TTY', () => {

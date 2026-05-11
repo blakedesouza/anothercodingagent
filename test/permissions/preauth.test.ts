@@ -68,11 +68,11 @@ describe('matchPreauthRules', () => {
         const rules = [makeRule({
             id: 'r1',
             tool: 'exec_command',
-            match: { cwdPattern: '/home/user/project' },
+            match: { cwdPattern: '/workspace/project' },
         })];
         expect(matchPreauthRules(rules, {
             toolName: 'exec_command',
-            cwd: '/home/user/project/src',
+            cwd: '/workspace/project/src',
         })).not.toBeNull();
     });
 
@@ -80,11 +80,11 @@ describe('matchPreauthRules', () => {
         const rules = [makeRule({
             id: 'r1',
             tool: 'exec_command',
-            match: { cwdPattern: '/home/user/project' },
+            match: { cwdPattern: '/workspace/project' },
         })];
         expect(matchPreauthRules(rules, {
             toolName: 'exec_command',
-            cwd: '/home/other/project',
+            cwd: '/workspace-other/project',
         })).toBeNull();
     });
 
@@ -92,11 +92,11 @@ describe('matchPreauthRules', () => {
         const rules = [makeRule({
             id: 'r1',
             tool: 'exec_command',
-            match: { cwdPattern: '/home/user/project' },
+            match: { cwdPattern: '/workspace/project' },
         })];
         expect(matchPreauthRules(rules, {
             toolName: 'exec_command',
-            cwd: '/home/user/project-evil',
+            cwd: '/workspace/project-evil',
         })).toBeNull();
     });
 
@@ -104,11 +104,11 @@ describe('matchPreauthRules', () => {
         const rules = [makeRule({
             id: 'r1',
             tool: 'exec_command',
-            match: { cwdPattern: 'C:\\Users\\Blake\\Project' },
+            match: { cwdPattern: 'C:\\Users\\Example\\Project' },
         })];
         expect(matchPreauthRules(rules, {
             toolName: 'exec_command',
-            cwd: 'c:/users/blake/project/packages/app',
+            cwd: 'c:/users/example/project/packages/app',
         })).not.toBeNull();
     });
 
@@ -116,11 +116,11 @@ describe('matchPreauthRules', () => {
         const rules = [makeRule({
             id: 'r1',
             tool: 'exec_command',
-            match: { cwdPattern: 'C:\\Users\\Blake\\Project' },
+            match: { cwdPattern: 'C:\\Users\\Example\\Project' },
         })];
         expect(matchPreauthRules(rules, {
             toolName: 'exec_command',
-            cwd: 'C:\\Users\\Blake\\ProjectEvil',
+            cwd: 'C:\\Users\\Example\\ProjectEvil',
         })).toBeNull();
     });
 
@@ -128,7 +128,7 @@ describe('matchPreauthRules', () => {
         const rules = [makeRule({
             id: 'r1',
             tool: 'exec_command',
-            match: { cwdPattern: '/home/user/project' },
+            match: { cwdPattern: '/workspace/project' },
         })];
         expect(matchPreauthRules(rules, {
             toolName: 'exec_command',
@@ -141,13 +141,13 @@ describe('matchPreauthRules', () => {
             tool: 'exec_command',
             match: {
                 commandRegex: '^npm test$',
-                cwdPattern: '/home/user/project',
+                cwdPattern: '/workspace/project',
             },
         })];
         expect(matchPreauthRules(rules, {
             toolName: 'exec_command',
             command: 'npm test',
-            cwd: '/home/user/project/src',
+            cwd: '/workspace/project/src',
         })).not.toBeNull();
     });
 
@@ -157,7 +157,7 @@ describe('matchPreauthRules', () => {
             tool: 'exec_command',
             match: {
                 commandRegex: '^npm test$',
-                cwdPattern: '/home/user/project',
+                cwdPattern: '/workspace/project',
             },
         })];
         expect(matchPreauthRules(rules, {
