@@ -10,7 +10,7 @@ const DIST_INDEX = join(ROOT, 'dist', 'index.js');
 
 function parseArgs(argv) {
   const options = {
-    witnesses: 'minimax,gemma',
+    witnesses: 'default',
     triage: 'auto',
     outDir: `/tmp/aca-consult-canary-${Date.now()}`,
     projectDir: ROOT,
@@ -32,7 +32,7 @@ function parseArgs(argv) {
       process.stdout.write(`Usage: node scripts/consult-live-canary.mjs [options]
 
 Options:
-  --witnesses <list>    Witness pair to test (default: minimax,gemma)
+  --witnesses <list>    Witness names, presets, or raw model IDs (default: default)
   --triage <mode>       Triage mode: auto|always|never (default: auto)
   --out-dir <path>      Output directory (default: /tmp/aca-consult-canary-<ts>)
   --project-dir <path>  Project directory for consult runs

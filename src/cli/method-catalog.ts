@@ -188,12 +188,12 @@ const METHOD_CATALOG_ENTRIES: readonly MethodCatalogEntry[] = Object.freeze([
         key_arguments: [
             { name: '--question', kind: 'flag', required: false, description: 'Inline consult task; use exactly one of --question or --prompt-file.', value_type: 'string' },
             { name: '--prompt-file', kind: 'flag', required: false, description: 'Markdown prompt file; use exactly one of --question or --prompt-file.', value_type: 'string' },
-            { name: '--witnesses', kind: 'flag', required: false, description: 'Comma-separated witness list.', value_type: 'string_array', default: 'minimax,gemma' },
+            { name: '--witnesses', kind: 'flag', required: false, description: 'Comma-separated witness names, presets, or raw NanoGPT model IDs.', value_type: 'string_array', default: 'default' },
             { name: '--triage', kind: 'flag', required: false, description: 'Triage mode: auto, always, or never.', value_type: 'enum', choices: ['auto', 'always', 'never'], default: 'auto' },
             { name: '--pack-path', kind: 'flag', required: false, description: 'File or directory to include in the deterministic evidence pack.', value_type: 'string_array' },
         ],
         examples: [
-            'aca consult --question "Review src/cli/consult.ts for grounded correctness risks only." --pack-path src/cli/consult.ts',
+            'aca consult --witnesses kimi26,glm51,deepseek --question "Review src/cli/consult.ts for grounded correctness risks only." --pack-path src/cli/consult.ts',
         ],
     },
     {
@@ -225,14 +225,14 @@ const METHOD_CATALOG_ENTRIES: readonly MethodCatalogEntry[] = Object.freeze([
         id: 'witnesses',
         invocation: 'aca witnesses --json',
         surface: 'subcommand',
-        summary: 'Output the current witness seat configuration and model IDs.',
+        summary: 'Output the current witness presets, names, aliases, and model IDs.',
         selector: {
             input_mode: 'cli_args',
             task_kinds: ['witness_inventory', 'model_seat_discovery'],
-            preferred_for: ['Reading the canonical witness names and model mapping.'],
+            preferred_for: ['Reading the canonical witness presets, names, aliases, and model mapping.'],
         },
         when_to_use: [
-            'You need the canonical witness names and model mapping.',
+            'You need the canonical witness presets, names, aliases, and model mapping.',
             'You want tooling to stay aligned with ACA witness seat configuration.',
         ],
         key_arguments: [

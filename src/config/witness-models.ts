@@ -1,10 +1,11 @@
 /**
  * Witness model configuration — single source of truth.
  *
- * Defines the witness models used by /consult and ACA-mode witness agents.
- * consult_ring.py reads these via `aca witnesses --json` to stay in sync.
+ * Defines the named witness models and presets used by ACA consult.
  *
- * Max output values sourced from NanoGPT /subscription/v1/models?detailed=true (2026-04-05).
+ * Max output values are sourced from NanoGPT model catalog observations and
+ * live workflow probes recorded in project docs. Runtime guardrails still
+ * decide how much of each ceiling a workflow should use.
  */
 
 import { DEFAULT_API_TIMEOUT_MS } from './schema.js';
@@ -19,12 +20,14 @@ import { DEFAULT_API_TIMEOUT_MS } from './schema.js';
 export const DEFAULT_WITNESS_TIMEOUT_S = DEFAULT_API_TIMEOUT_MS / 1000;
 
 export interface WitnessModelConfig {
-    /** Short canonical name used by consult_ring.py (e.g., "minimax") */
+    /** Short stable name used in result keys and artifact file names. */
     name: string;
     /** Display name for reports (e.g., "MiniMax") */
     displayName: string;
     /** NanoGPT model ID */
     model: string;
+    /** Additional user-facing names accepted by `--witnesses`. */
+    aliases?: readonly string[];
     /** Fallback model if primary fails */
     fallbackModel?: string;
     /** Actual max output tokens from the API */
@@ -40,12 +43,40 @@ export interface WitnessModelConfig {
 }
 
 /**
- * Canonical witness model configurations.
- *
- * These values are model ceilings reported by NanoGPT. Runtime guardrails still
- * decide how much of each ceiling a workflow should use.
+ * Canonical named witness model configurations.
  */
 export const WITNESS_MODELS: readonly Readonly<WitnessModelConfig>[] = Object.freeze([
+    Object.freeze({
+        name: 'kimi26',
+        displayName: 'Kimi K2.6',
+        model: 'moonshotai/kimi-k2.6',
+        aliases: ['kimi2.6', 'kimi-k2.6'],
+        maxOutputTokens: 65_536,
+        contextLength: 256_000,
+        timeout: DEFAULT_WITNESS_TIMEOUT_S,
+        temperature: 0.6,
+        topP: 0.95,
+    }),
+    Object.freeze({
+        name: 'glm51',
+        displayName: 'GLM 5.1',
+        model: 'zai-org/glm-5.1',
+        aliases: ['glm', 'glm5.1', 'glm-5.1'],
+        maxOutputTokens: 128_000,
+        contextLength: 200_000,
+        timeout: DEFAULT_WITNESS_TIMEOUT_S,
+        temperature: 0.6,
+    }),
+    Object.freeze({
+        name: 'deepseek',
+        displayName: 'DeepSeek V4 Pro',
+        model: 'deepseek/deepseek-v4-pro',
+        aliases: ['deepseek-v4', 'deepseek-v4-pro'],
+        maxOutputTokens: 65_536,
+        contextLength: 163_000,
+        timeout: DEFAULT_WITNESS_TIMEOUT_S,
+        temperature: 0.6,
+    }),
     Object.freeze({
         name: 'minimax',
         displayName: 'MiniMax',
@@ -88,9 +119,105 @@ export const WITNESS_MODELS: readonly Readonly<WitnessModelConfig>[] = Object.fr
     }),
 ]);
 
+export const DEFAULT_CONSULT_WITNESS_NAMES = ['kimi26', 'glm51', 'deepseek'] as const;
+
+export const CONSULT_WITNESS_PRESETS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+    default: DEFAULT_CONSULT_WITNESS_NAMES,
+    strong: DEFAULT_CONSULT_WITNESS_NAMES,
+    legacy: ['minimax', 'gemma'],
+    current: DEFAULT_CONSULT_WITNESS_NAMES,
+    all: WITNESS_MODELS.map(w => w.name),
+});
+
+function parseList(raw: string | undefined): string[] {
+    return (raw ?? '')
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean);
+}
+
+function dedupeWitnesses(witnesses: WitnessModelConfig[]): WitnessModelConfig[] {
+    const seenModels = new Set<string>();
+    const seenNames = new Set<string>();
+    const deduped: WitnessModelConfig[] = [];
+    for (const witness of witnesses) {
+        const modelKey = witness.model.toLowerCase();
+        if (seenModels.has(modelKey)) continue;
+        seenModels.add(modelKey);
+
+        let name = witness.name;
+        let suffix = 2;
+        while (seenNames.has(name)) {
+            name = `${witness.name}-${suffix}`;
+            suffix += 1;
+        }
+        seenNames.add(name);
+        deduped.push(name === witness.name ? witness : Object.freeze({ ...witness, name }));
+    }
+    return deduped;
+}
+
+export function witnessNameFromModelId(model: string): string {
+    const normalized = model
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    if (normalized.length === 0) return 'custom-model';
+    return /^[a-z]/.test(normalized) ? normalized : `model-${normalized}`;
+}
+
 /** Look up a witness config by canonical name. */
 export function getWitnessModel(name: string): WitnessModelConfig | undefined {
-    return WITNESS_MODELS.find(w => w.name === name);
+    const normalized = name.trim().toLowerCase();
+    return WITNESS_MODELS.find(w =>
+        w.name === normalized
+        || w.aliases?.includes(normalized)
+        || w.model.toLowerCase() === normalized,
+    );
+}
+
+export function createCustomWitnessModel(model: string): WitnessModelConfig {
+    const trimmed = model.trim();
+    return Object.freeze({
+        name: witnessNameFromModelId(trimmed),
+        displayName: trimmed,
+        model: trimmed,
+        maxOutputTokens: 65_536,
+        contextLength: 200_000,
+        timeout: DEFAULT_WITNESS_TIMEOUT_S,
+        temperature: 0.6,
+    });
+}
+
+export function resolveWitnesses(raw: string | undefined): WitnessModelConfig[] {
+    const tokens = parseList(raw);
+    const requested = tokens.length === 0 ? ['default'] : tokens;
+    const selected: WitnessModelConfig[] = [];
+
+    for (const token of requested) {
+        const normalized = token.toLowerCase();
+        const preset = CONSULT_WITNESS_PRESETS[normalized];
+        if (preset) {
+            selected.push(...resolveWitnesses(preset.join(',')));
+            continue;
+        }
+
+        const named = getWitnessModel(token);
+        if (named) {
+            selected.push(named);
+            continue;
+        }
+
+        if (token.includes('/')) {
+            selected.push(createCustomWitnessModel(token));
+            continue;
+        }
+
+        throw new Error(`unknown witness: ${token}`);
+    }
+
+    return dedupeWitnesses(selected);
 }
 
 /** Get all witness model IDs (primary + fallback). */
@@ -108,18 +235,30 @@ export function getAllWitnessModelIds(): string[] {
  * Format matches what consult_ring.py expects.
  */
 export function serializeWitnessConfigs(): string {
-    const output: Record<string, Record<string, unknown>> = {};
+    const output: Record<string, unknown> = {};
+    output.default = [...DEFAULT_CONSULT_WITNESS_NAMES];
+    output.presets = CONSULT_WITNESS_PRESETS;
+    output.witnesses = {};
     for (const w of WITNESS_MODELS) {
         const entry: Record<string, unknown> = {
             type: 'nanogpt',
             model: w.model,
+            display_name: w.displayName,
             timeout: w.timeout,
             temperature: w.temperature,
             max_tokens: w.maxOutputTokens,
         };
+        if (w.aliases?.length) entry.aliases = [...w.aliases];
         if (w.fallbackModel) entry.fallback_model = w.fallbackModel;
         if (w.topP !== undefined) entry.top_p = w.topP;
+        (output.witnesses as Record<string, unknown>)[w.name] = entry;
         output[w.name] = entry;
     }
     return JSON.stringify(output, null, 2);
+}
+
+export function serializeWitnessSeed(raw?: string): string {
+    return resolveWitnesses(raw)
+        .map(witness => `${witness.name}=${witness.model}`)
+        .join(',');
 }

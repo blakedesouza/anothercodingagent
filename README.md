@@ -63,14 +63,17 @@ All milestones M1–M11 are complete. The current default validation surface pas
 
 ### Consult pipeline (multi-model review)
 
-`aca consult` runs bounded witness review against the default witness pair in parallel:
+`aca consult` runs bounded witness review against the default strong witness preset in parallel:
 
-| Witness  | Model                         | Context | Max output |
-|----------|-------------------------------|---------|------------|
-| MiniMax  | `minimax/minimax-m2.7`        | 205K    | 128K       |
-| Gemma    | `google/gemma-4-31b-it`       | 262K    | 128K       |
+| Witness     | Model                         | Context | Max output |
+|-------------|-------------------------------|---------|------------|
+| Kimi K2.6   | `moonshotai/kimi-k2.6`        | 256K    | 65K        |
+| GLM 5.1     | `zai-org/glm-5.1`             | 200K    | 128K       |
+| DeepSeek V4 | `deepseek/deepseek-v4-pro`    | 163K    | 65K        |
 
-You can override the default pair with `--witnesses ...` if you want a different lineup.
+You can override the default lineup with named witnesses, presets, or raw NanoGPT model IDs:
+`--witnesses legacy`, `--witnesses kimi26,glm51`, or
+`--witnesses zai-org/glm-5.1,moonshotai/kimi-k2.6`.
 
 Features that took real work to get right:
 

@@ -92,10 +92,22 @@ function shutdown(code) {
 }
 
 function parseWitnessSeed(raw) {
-  return [...new Set(String(raw || '')
+  const seen = new Set();
+  return String(raw || '')
     .split(',')
     .map((item) => item.trim())
-    .filter(Boolean))];
+    .filter(Boolean)
+    .map((item) => {
+      const separator = item.indexOf('=');
+      const name = separator >= 0 ? item.slice(0, separator).trim() : item;
+      const model = separator >= 0 ? item.slice(separator + 1).trim() : null;
+      return { name, model: model || null };
+    })
+    .filter((item) => {
+      if (!item.name || seen.has(item.name)) return false;
+      seen.add(item.name);
+      return true;
+    });
 }
 
 async function handleRequest(req, res) {
@@ -255,6 +267,7 @@ function overview() {
     dbPath: DB_PATH,
     dbAvailable: Boolean(db),
     sessionsDir: SESSIONS_DIR,
+    consultWitnessDefaults: SEEDED_WITNESSES,
     sessionCount: sessions.length,
     recentSessions: sessions.slice(0, 10),
     last7Days: {
@@ -411,7 +424,7 @@ function consultDetail(suffix) {
     return {
       suffix,
       status: 'missing',
-      witnesses: Object.fromEntries(SEEDED_WITNESSES.map((name) => [name, { name, status: 'pending', artifacts: [] }])),
+      witnesses: Object.fromEntries(SEEDED_WITNESSES.map((witness) => [witness.name, { ...witness, status: 'pending', artifacts: [] }])),
       triage: { status: 'pending', artifacts: [] },
       artifacts: [],
     };
@@ -466,7 +479,7 @@ function parseConsultArtifactName(name) {
   match = name.match(/^aca-consult-shared-context-(.+)\.md$/);
   if (match) return { suffix: match[1], kind: 'shared-context', role: 'shared_context', extension: 'md' };
 
-  match = name.match(/^aca-consult-([^-]+)-fallback-(.+)\.md$/);
+  match = name.match(/^aca-consult-(.+?)-fallback-(.+)\.md$/);
   if (match) {
     return {
       suffix: match[2],
@@ -483,10 +496,10 @@ function parseConsultArtifactName(name) {
   match = name.match(/^aca-consult-triage-(.+)\.md$/);
   if (match) return { suffix: match[1], kind: 'triage', role: 'triage', extension: 'md' };
 
-  match = name.match(/^aca-consult-([^-]+)-pending-(.+)\.md$/);
+  match = name.match(/^aca-consult-(.+?)-pending-(.+)\.md$/);
   if (match) return { suffix: match[2], kind: 'pending', role: 'witness', witness: match[1], extension: 'md' };
 
-  match = name.match(/^aca-consult-([^-]+)-(context-request|response|final-raw|round-\d+)-(.+)\.md$/);
+  match = name.match(/^aca-consult-(.+?)-(context-request|response|final-raw|round-\d+)-(.+)\.md$/);
   if (match) {
     return {
       suffix: match[3],
@@ -523,7 +536,10 @@ function summarizeConsultGroup(group, includePreviews) {
   const artifactWitnessNames = group.files
     .map((file) => file.witness)
     .filter((name) => typeof name === 'string' && name.trim() !== '');
-  const witnessNames = [...new Set([...SEEDED_WITNESSES, ...artifactWitnessNames, ...Object.keys(resultWitnesses)])];
+  const seededWitnesses = new Map(SEEDED_WITNESSES.map((witness) => [witness.name, witness]));
+  const shouldUseSeededWitnesses = artifactWitnessNames.length === 0 && Object.keys(resultWitnesses).length === 0;
+  const seedWitnessNames = shouldUseSeededWitnesses ? [...seededWitnesses.keys()] : [];
+  const witnessNames = [...new Set([...seedWitnessNames, ...artifactWitnessNames, ...Object.keys(resultWitnesses)])];
   const witnesses = {};
 
   for (const witnessName of witnessNames) {
@@ -534,6 +550,7 @@ function summarizeConsultGroup(group, includePreviews) {
     const finalRawFile = witnessFiles.find((file) => file.kind === 'final-raw');
     const requestFile = witnessFiles.find((file) => file.kind === 'context-request');
     const pendingFile = witnessFiles.find((file) => file.kind === 'pending');
+    const seededWitness = seededWitnesses.get(witnessName);
     const status = resultWitness?.status
       || (responseFile ? 'ok' : finalRawFile || requestFile
         ? inferredGroupStatus === 'degraded' ? 'degraded' : 'running'
@@ -543,7 +560,7 @@ function summarizeConsultGroup(group, includePreviews) {
     const selectedPreviewPath = resultWitness?.response_path || resultWitness?.triage_input_path || responseFile?.path || finalRawFile?.path || requestFile?.path;
     witnesses[witnessName] = {
       name: witnessName,
-      model: resultWitness?.model || null,
+      model: resultWitness?.model || seededWitness?.model || null,
       status,
       error: resultWitness?.error || null,
       usage: resultWitness?.usage || null,

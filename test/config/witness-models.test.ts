@@ -4,22 +4,27 @@ import {
     DEFAULT_WITNESS_TIMEOUT_S,
     getWitnessModel,
     getAllWitnessModelIds,
+    resolveWitnesses,
     serializeWitnessConfigs,
+    serializeWitnessSeed,
 } from '../../src/config/witness-models.js';
 describe('M11.5 — Witness Model Configuration', () => {
     describe('WITNESS_MODELS', () => {
-        it('defines exactly 4 witness models', () => {
-            expect(WITNESS_MODELS).toHaveLength(4);
+        it('defines the strong default witnesses plus legacy witnesses', () => {
+            expect(WITNESS_MODELS).toHaveLength(7);
         });
 
-        it('includes minimax, kimi, qwen, gemma', () => {
+        it('includes strong and legacy names in stable order', () => {
             const names = WITNESS_MODELS.map(w => w.name);
-            expect(names).toEqual(['minimax', 'kimi', 'qwen', 'gemma']);
+            expect(names).toEqual(['kimi26', 'glm51', 'deepseek', 'minimax', 'kimi', 'qwen', 'gemma']);
         });
 
         it('uses actual API ceilings for maxOutputTokens', () => {
             // Values from NanoGPT /subscription/v1/models?detailed=true (2026-04-05)
             const expected: Record<string, number> = {
+                kimi26: 65_536,
+                glm51: 128_000,
+                deepseek: 65_536,
                 minimax: 131_072,
                 kimi: 65_536,
                 qwen: 65_536,
@@ -32,6 +37,9 @@ describe('M11.5 — Witness Model Configuration', () => {
 
         it('has correct context lengths from API', () => {
             const expected: Record<string, number> = {
+                kimi26: 256_000,
+                glm51: 200_000,
+                deepseek: 163_000,
                 minimax: 204_800,
                 kimi: 256_000,
                 qwen: 258_048,
@@ -58,11 +66,13 @@ describe('M11.5 — Witness Model Configuration', () => {
             const qwen = getWitnessModel('qwen');
             const gemma = getWitnessModel('gemma');
             const kimi = getWitnessModel('kimi');
+            const deepseek = getWitnessModel('deepseek');
 
             expect(minimax?.fallbackModel).toBe('minimax/minimax-m2.5');
             expect(qwen?.fallbackModel).toBe('qwen/qwen3.5-397b-a17b-thinking');
             expect(gemma?.fallbackModel).toBe('meta-llama/llama-4-maverick');
             expect(kimi?.fallbackModel).toBeUndefined();
+            expect(deepseek?.fallbackModel).toBeUndefined();
         });
 
         it('is frozen (immutable)', () => {
@@ -84,18 +94,43 @@ describe('M11.5 — Witness Model Configuration', () => {
             expect(minimax!.displayName).toBe('MiniMax');
         });
 
+        it('returns config for aliases and exact model IDs', () => {
+            expect(getWitnessModel('glm')?.model).toBe('zai-org/glm-5.1');
+            expect(getWitnessModel('deepseek-v4')?.model).toBe('deepseek/deepseek-v4-pro');
+            expect(getWitnessModel('moonshotai/kimi-k2.6')?.name).toBe('kimi26');
+        });
+
         it('returns undefined for unknown name', () => {
             expect(getWitnessModel('nonexistent')).toBeUndefined();
+        });
+    });
+
+    describe('resolveWitnesses()', () => {
+        it('defaults to Kimi K2.6, GLM 5.1, and DeepSeek V4 Pro', () => {
+            expect(resolveWitnesses(undefined).map(w => w.model)).toEqual([
+                'moonshotai/kimi-k2.6',
+                'zai-org/glm-5.1',
+                'deepseek/deepseek-v4-pro',
+            ]);
+        });
+
+        it('expands legacy preset and accepts raw model IDs', () => {
+            const witnesses = resolveWitnesses('legacy,provider/custom-model');
+            expect(witnesses.map(w => w.name)).toEqual(['minimax', 'gemma', 'provider-custom-model']);
+            expect(witnesses.map(w => w.model)).toContain('provider/custom-model');
         });
     });
 
     describe('getAllWitnessModelIds()', () => {
         it('returns primary + fallback model IDs', () => {
             const ids = getAllWitnessModelIds();
-            // 4 primary + 3 fallback (kimi has no fallback)
-            expect(ids).toHaveLength(7);
+            // 7 primary + 3 fallback.
+            expect(ids).toHaveLength(10);
             expect(ids).toContain('minimax/minimax-m2.7');
             expect(ids).toContain('minimax/minimax-m2.5');
+            expect(ids).toContain('moonshotai/kimi-k2.6');
+            expect(ids).toContain('zai-org/glm-5.1');
+            expect(ids).toContain('deepseek/deepseek-v4-pro');
             expect(ids).toContain('moonshotai/kimi-k2.5');
             expect(ids).toContain('qwen/qwen3.5-397b-a17b');
             expect(ids).toContain('qwen/qwen3.5-397b-a17b-thinking');
@@ -109,12 +144,15 @@ describe('M11.5 — Witness Model Configuration', () => {
             const json = serializeWitnessConfigs();
             const parsed = JSON.parse(json);
 
-            expect(Object.keys(parsed)).toEqual(['minimax', 'kimi', 'qwen', 'gemma']);
+            expect(parsed.default).toEqual(['kimi26', 'glm51', 'deepseek']);
+            expect(parsed.presets.legacy).toEqual(['minimax', 'gemma']);
+            expect(Object.keys(parsed.witnesses)).toEqual(['kimi26', 'glm51', 'deepseek', 'minimax', 'kimi', 'qwen', 'gemma']);
 
             // Verify minimax entry structure
-            expect(parsed.minimax).toEqual({
+            expect(parsed.witnesses.minimax).toEqual({
                 type: 'nanogpt',
                 model: 'minimax/minimax-m2.7',
+                display_name: 'MiniMax',
                 fallback_model: 'minimax/minimax-m2.5',
                 timeout: DEFAULT_WITNESS_TIMEOUT_S,
                 temperature: 0.6,
@@ -122,16 +160,24 @@ describe('M11.5 — Witness Model Configuration', () => {
             });
 
             // Verify kimi has top_p but no fallback_model
-            expect(parsed.kimi.top_p).toBe(0.95);
-            expect(parsed.kimi.fallback_model).toBeUndefined();
-            expect(parsed.kimi.max_tokens).toBe(65_536);
+            expect(parsed.witnesses.kimi.top_p).toBe(0.95);
+            expect(parsed.witnesses.kimi.fallback_model).toBeUndefined();
+            expect(parsed.witnesses.kimi.max_tokens).toBe(65_536);
         });
 
         it('max_tokens values match WITNESS_MODELS maxOutputTokens', () => {
             const parsed = JSON.parse(serializeWitnessConfigs());
             for (const w of WITNESS_MODELS) {
-                expect(parsed[w.name].max_tokens, `${w.name}`).toBe(w.maxOutputTokens);
+                expect(parsed.witnesses[w.name].max_tokens, `${w.name}`).toBe(w.maxOutputTokens);
             }
+        });
+    });
+
+    describe('serializeWitnessSeed()', () => {
+        it('serializes default witnesses for debug UI pending cards', () => {
+            expect(serializeWitnessSeed()).toBe(
+                'kimi26=moonshotai/kimi-k2.6,glm51=zai-org/glm-5.1,deepseek=deepseek/deepseek-v4-pro',
+            );
         });
     });
 });

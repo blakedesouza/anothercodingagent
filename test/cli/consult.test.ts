@@ -238,16 +238,19 @@ describe('runConsult', () => {
         expect(result.success_count).toBe(1);
     });
 
-    it('defaults to minimax and gemma, and auto-skips triage when the witnesses align', async () => {
+    it('defaults to the strong witness preset, and auto-skips triage when the witnesses align', async () => {
         const invokedModels: string[] = [];
 
         runAcaInvokeMock.mockImplementation(async (_task: string, options?: { model?: string }) => {
             if (options?.model) invokedModels.push(options.model);
-            if (options?.model === 'minimax/minimax-m2.7') {
-                return makeInvokeSuccess('## Findings\n\nMiniMax witness report.');
+            if (options?.model === 'moonshotai/kimi-k2.6') {
+                return makeInvokeSuccess('## Findings\n\nKimi witness report.');
             }
-            if (options?.model === 'google/gemma-4-31b-it') {
-                return makeInvokeSuccess('## Findings\n\nGemma witness report.');
+            if (options?.model === 'zai-org/glm-5.1') {
+                return makeInvokeSuccess('## Findings\n\nGLM witness report.');
+            }
+            if (options?.model === 'deepseek/deepseek-v4-pro') {
+                return makeInvokeSuccess('## Findings\n\nDeepSeek witness report.');
             }
             throw new Error(`unexpected consult model: ${options?.model ?? 'unknown'}`);
         });
@@ -257,11 +260,31 @@ describe('runConsult', () => {
             projectDir: tmpProjectDir(),
         });
 
-        expect(result.total_witnesses).toBe(2);
-        expect(Object.keys(result.witnesses)).toEqual(['minimax', 'gemma']);
+        expect(result.total_witnesses).toBe(3);
+        expect(Object.keys(result.witnesses)).toEqual(['kimi26', 'glm51', 'deepseek']);
         expect(result.triage.status).toBe('skipped');
         expect(result.triage.error).toBe('skipped by triage=auto');
-        expect(invokedModels).toEqual(['minimax/minimax-m2.7', 'google/gemma-4-31b-it']);
+        expect(invokedModels).toEqual(['moonshotai/kimi-k2.6', 'zai-org/glm-5.1', 'deepseek/deepseek-v4-pro']);
+    });
+
+    it('accepts raw NanoGPT model IDs as custom witnesses', async () => {
+        runAcaInvokeMock.mockImplementation(async (_task: string, options?: { model?: string }) => {
+            if (options?.model === 'provider/custom-model-1') {
+                return makeInvokeSuccess('## Findings\n\nCustom witness report.');
+            }
+            throw new Error(`unexpected consult model: ${options?.model ?? 'unknown'}`);
+        });
+
+        const result = await runConsult({
+            question: 'Review the change.',
+            projectDir: tmpProjectDir(),
+            witnesses: 'provider/custom-model-1',
+            skipTriage: true,
+        });
+
+        expect(Object.keys(result.witnesses)).toEqual(['provider-custom-model-1']);
+        expect(result.witnesses['provider-custom-model-1'].model).toBe('provider/custom-model-1');
+        expect(result.success_count).toBe(1);
     });
 
     it('rejects repo-context fishing for advisory prompts and retries for a direct answer', async () => {

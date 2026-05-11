@@ -34,7 +34,7 @@ import {
     type ContextRequestLimits,
     type ContextSnippet,
 } from '../consult/context-request.js';
-import { WITNESS_MODELS, type WitnessModelConfig } from '../config/witness-models.js';
+import { resolveWitnesses, type WitnessModelConfig } from '../config/witness-models.js';
 import { parseInvokeOutput, runAcaInvoke } from '../mcp/server.js';
 import type { InvokeResponse, InvokeSafety, InvokeSystemMessage, InvokeUsage } from './executor.js';
 import type { ModelResponseFormat } from '../types/provider.js';
@@ -172,7 +172,6 @@ const TRIAGE_MODEL_CANDIDATES = [
 const DEFAULT_SHARED_CONTEXT_SNIPPETS = 8;
 const DEFAULT_SHARED_CONTEXT_LINES = 160;
 const DEFAULT_SHARED_CONTEXT_BYTES = 16_000;
-const DEFAULT_CONSULT_WITNESS_NAMES = ['minimax', 'gemma'] as const;
 const STRICT_ADVISORY_WITNESS_NAMES = new Set<string>(['minimax']);
 const REQUIRED_TRIAGE_SECTIONS = [
     'consensus findings',
@@ -223,35 +222,8 @@ const SHARED_CONTEXT_RESPONSE_FORMAT: ModelResponseFormat = {
     },
 };
 
-function parseList(raw: string | undefined): string[] {
-    return (raw ?? '')
-        .split(',')
-        .map(item => item.trim())
-        .filter(Boolean);
-}
-
 function uniqueModels(models: Array<string | null | undefined>): string[] {
     return [...new Set(models.filter((model): model is string => typeof model === 'string' && model.trim() !== ''))];
-}
-
-function selectWitnesses(raw: string | undefined): WitnessModelConfig[] {
-    const names = parseList(raw);
-    if (names.length === 0 || names.includes('default')) {
-        return DEFAULT_CONSULT_WITNESS_NAMES.map(name => {
-            const witness = WITNESS_MODELS.find(item => item.name === name);
-            if (!witness) throw new Error(`unknown default witness: ${name}`);
-            return witness;
-        });
-    }
-    if (names.includes('all')) return [...WITNESS_MODELS];
-    const selected: WitnessModelConfig[] = [];
-    for (const name of names) {
-        const canonicalName = name === 'deepseek' ? 'minimax' : name;
-        const witness = WITNESS_MODELS.find(item => item.name === canonicalName);
-        if (!witness) throw new Error(`unknown witness: ${name}`);
-        selected.push(witness);
-    }
-    return selected;
 }
 
 function usageOrNull(response: InvokeResponse): InvokeUsage | null {
@@ -2441,7 +2413,7 @@ export async function runConsult(options: ConsultOptions): Promise<ConsultResult
     const promptForWitnesses = sharedContext?.status === 'ok' && sharedContext.snippetsWithText.length > 0
         ? appendSharedContextPack(prompt, sharedContext.model ?? TRIAGE_MODEL, sharedContext.snippetsWithText)
         : prompt;
-    const witnesses = selectWitnesses(options.witnesses);
+    const witnesses = resolveWitnesses(options.witnesses);
     const triageMode = resolveTriageMode(options);
     const limits = {
         maxContextSnippets: normalizePositiveInteger(options.maxContextSnippets, 3),

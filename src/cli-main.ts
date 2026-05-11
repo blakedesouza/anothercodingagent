@@ -61,7 +61,7 @@ import {
     hasConfigDriftBaseline,
 } from './config/session-snapshot.js';
 import { loadSecrets } from './config/secrets.js';
-import { serializeWitnessConfigs } from './config/witness-models.js';
+import { serializeWitnessConfigs, serializeWitnessSeed } from './config/witness-models.js';
 import type { ResolvedConfig } from './config/schema.js';
 
 // --- Providers ---
@@ -1719,6 +1719,7 @@ program
     .command('debug-ui')
     .description('Start the local ACA debug UI')
     .action(async () => {
+        process.env.ACA_DEBUG_UI_WITNESS_SEED ??= serializeWitnessSeed();
         await import(pathToFileURL(join(__dirname, '..', 'scripts', 'aca-debug-ui-server.mjs')).href);
     });
 
@@ -1737,7 +1738,7 @@ program
     .option('--question <question>', 'Question to ask witnesses')
     .option('--prompt-file <path>', 'Prompt file to use instead of --question')
     .option('--project-dir <path>', 'Project directory', process.cwd())
-    .option('--witnesses <list>', 'Comma-separated witness list; defaults to minimax,gemma')
+    .option('--witnesses <list>', 'Comma-separated witness names, presets, or raw model IDs; defaults to strong')
     .option('--pack-repo', 'Build an evidence pack from the repo', false)
     .option('--pack-path <path>', 'File or directory to include in the evidence pack', (value, previous: string[]) => [...previous, value], [])
     .option('--pack-max-files <n>', 'Maximum evidence-pack files', value => parsePositiveIntegerOption(value, '--pack-max-files'), 5)
