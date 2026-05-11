@@ -63,6 +63,13 @@ import {
 import { loadSecrets } from './config/secrets.js';
 import { serializeWitnessConfigs, serializeWitnessSeed } from './config/witness-models.js';
 import type { ResolvedConfig } from './config/schema.js';
+import {
+    loadAutoConsultConfig,
+    maybeRunAutoConsult,
+    type AutoConsultConfig,
+    type AutoConsultRunOutcome,
+    type AutoConsultSurface,
+} from './consult/auto-consult.js';
 
 // --- Providers ---
 import { AnthropicDriver } from './providers/anthropic-driver.js';
@@ -247,6 +254,36 @@ function buildFinalOnlyTurnConfig(baseTurnConfig: InvokeTurnConfigBase): InvokeT
         maxToolCalls: undefined,
         maxToolCallsByName: {},
     };
+}
+
+async function runAutoConsultAdvisory(options: {
+    task: string;
+    cwd: string;
+    surface: AutoConsultSurface;
+    config: AutoConsultConfig;
+    warn: (message: string) => void;
+}): Promise<string | undefined> {
+    const outcome = await maybeRunAutoConsult({
+        task: options.task,
+        cwd: options.cwd,
+        surface: options.surface,
+        config: options.config,
+    });
+    reportAutoConsultOutcome(outcome, options.warn);
+    return outcome.status === 'ran' ? outcome.instruction : undefined;
+}
+
+function reportAutoConsultOutcome(
+    outcome: AutoConsultRunOutcome,
+    warn: (message: string) => void,
+): void {
+    if (outcome.status === 'ran') {
+        warn(
+            `[auto-consult] witnesses complete${outcome.degraded ? ' (degraded)' : ''}: ${outcome.resultPath}\n`,
+        );
+    } else if (outcome.status === 'error') {
+        warn(`[auto-consult] failed: ${outcome.error}\n`);
+    }
 }
 
 // --- TurnOutcome → exit code mapping ---
@@ -897,6 +934,8 @@ program
         // --- Load config ---
         const configResult = await loadConfig({ workspaceRoot });
         const config = configResult.config;
+        const autoConsultResult = await loadAutoConsultConfig();
+        const autoConsultConfig = autoConsultResult.config;
 
         // --- Resolve model: CLI flag > config model.default ---
         const effectiveModel = options.model ?? config.model?.default;
@@ -908,6 +947,11 @@ program
         if (options.verbose && configResult.warnings.length > 0) {
             for (const w of configResult.warnings) {
                 writeHumanStderr(`[config] ${w}\n`);
+            }
+        }
+        if (autoConsultResult.warnings.length > 0) {
+            for (const w of autoConsultResult.warnings) {
+                writeHumanStderr(`[auto-consult] ${w}\n`);
             }
         }
 
@@ -1423,6 +1467,14 @@ program
                 sinks: [jsonlSink, bgWriter],
             });
 
+            const autoConsultInstruction = await runAutoConsultAdvisory({
+                task: task!,
+                cwd: workspaceRoot,
+                surface: 'one-shot',
+                config: autoConsultConfig,
+                warn: (message) => outputChannel.stderr(message),
+            });
+
             await summarizeHistoryBeforeTurn({
                 historyItems: existingItems,
                 pendingUserInput: task!,
@@ -1458,6 +1510,7 @@ program
                 extraTrustedRoots: config.sandbox?.extraTrustedRoots,
                 resolvedConfig: config,
                 sessionGrants,
+                userInstructions: autoConsultInstruction,
             };
 
             const startTime = Date.now();
@@ -1605,6 +1658,7 @@ program
                 providerRegistry,
                 networkPolicy,
                 resolvedConfig: config,
+                autoConsultConfig,
                 indexer,
                 checkpointManager,
                 healthMap,
@@ -1950,6 +2004,10 @@ program
             process.exit(EXIT_RUNTIME);
         });
         const config = configResult.config;
+        const autoConsultResult = await loadAutoConsultConfig();
+        for (const w of autoConsultResult.warnings) {
+            process.stderr.write(`[auto-consult] ${w}\n`);
+        }
         const secretsResult = await loadSecrets().catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
             process.stdout.write(JSON.stringify(
@@ -2183,6 +2241,16 @@ program
             profilePrompt: activeProfile?.systemPrompt,
             projectSnapshot: initialPromptContext.projectSnapshot,
         });
+        const autoConsultInstruction = await runAutoConsultAdvisory({
+            task: request.task,
+            cwd,
+            surface: 'invoke',
+            config: autoConsultResult.config,
+            warn: (message) => process.stderr.write(message),
+        });
+        const effectiveBaseSystemMessages: RequestMessage[] = autoConsultInstruction
+            ? [...baseSystemMessages, { role: 'system', content: autoConsultInstruction }]
+            : baseSystemMessages;
 
         // --- Execute turn ---
         const engine = new TurnEngine(
@@ -2259,7 +2327,7 @@ program
                 shell: detectRuntimeShell(),
                 healthMap,
                 baseConfig: configOverride,
-                baseSystemMessages,
+                baseSystemMessages: effectiveBaseSystemMessages,
                 includeRuntimeContextMessage: contextSystemMessages === undefined,
             });
             const turnPromise = engine.executeTurn(resolvedTurnConfig, task, existingItems);

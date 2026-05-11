@@ -30,6 +30,10 @@ import { TurnRenderer } from '../rendering/turn-renderer.js';
 import type { EventSink } from '../core/event-sink.js';
 import { bindRuntimeObservability } from '../observability/runtime-events.js';
 import { refreshIndexAfterTurn } from '../indexing/runtime-refresh.js';
+import {
+    maybeRunAutoConsult,
+    type AutoConsultConfig,
+} from '../consult/auto-consult.js';
 
 export interface ReplOptions {
     projection: SessionProjection;
@@ -56,6 +60,7 @@ export interface ReplOptions {
     metricsAccumulator?: MetricsAccumulator;
     eventSinks?: EventSink[];
     sessionGrants?: SessionGrantStore;
+    autoConsultConfig?: AutoConsultConfig;
 }
 
 export class Repl {
@@ -82,6 +87,7 @@ export class Repl {
     private readonly metricsAccumulator?: MetricsAccumulator;
     private readonly eventSinks: EventSink[];
     private readonly sessionGrants: SessionGrantStore;
+    private readonly autoConsultConfig?: AutoConsultConfig;
     private rl: ReadlineInterface | null = null;
     private turnCount = 0;
     private totalInputTokens = 0;
@@ -118,6 +124,7 @@ export class Repl {
         this.metricsAccumulator = options.metricsAccumulator;
         this.eventSinks = options.eventSinks ?? [];
         this.sessionGrants = options.sessionGrants ?? new SessionGrantStore();
+        this.autoConsultConfig = options.autoConsultConfig;
         this.items = [...options.projection.items];
         this.turnCount = options.projection.manifest.turnCount ?? 0;
     }
@@ -181,6 +188,7 @@ export class Repl {
 
     private async executeTurn(userInput: string): Promise<void> {
         this.activeTurn = true;
+        const autoConsultInstruction = await this.runAutoConsult(userInput);
         await summarizeHistoryBeforeTurn({
             historyItems: this.items,
             pendingUserInput: userInput,
@@ -257,6 +265,7 @@ export class Repl {
             extraTrustedRoots: this.resolvedConfig?.sandbox.extraTrustedRoots,
             resolvedConfig: this.resolvedConfig,
             sessionGrants: this.sessionGrants,
+            userInstructions: autoConsultInstruction,
         };
 
         try {
@@ -299,6 +308,26 @@ export class Repl {
             this.activeTurn = false;
             this.currentEngine = null;
         }
+    }
+
+    private async runAutoConsult(userInput: string): Promise<string | undefined> {
+        if (!this.autoConsultConfig) return undefined;
+        const outcome = await maybeRunAutoConsult({
+            task: userInput,
+            cwd: this.workspaceRoot,
+            surface: 'interactive',
+            config: this.autoConsultConfig,
+        });
+        if (outcome.status === 'ran') {
+            this.writeStderr(
+                `[auto-consult] witnesses complete${outcome.degraded ? ' (degraded)' : ''}: ${outcome.resultPath}\n`,
+            );
+            return outcome.instruction;
+        }
+        if (outcome.status === 'error') {
+            this.writeStderr(`[auto-consult] failed: ${outcome.error}\n`);
+        }
+        return undefined;
     }
 
     private promptUser(question: string, choices?: string[]): Promise<string> {

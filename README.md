@@ -76,6 +76,26 @@ You can override the default lineup with named witnesses, presets, or raw NanoGP
 `--witnesses zai-org/glm-5.1,moonshotai/kimi-k2.6`.
 Use `aca models --json --tools` when you want to verify a raw model ID is currently visible to the configured NanoGPT subscription before adding it to a consult lineup.
 
+### Auto-consult allowlist
+
+ACA can run the default consult witnesses automatically before normal agent work when the current workspace is under a configured root. This is controlled by the user-local file `~/.aca/auto-consult.json`, so machine-specific roots do not need to be committed to a project repo:
+
+```json
+{
+  "enabled": true,
+  "enabledRoots": [
+    "C:\\Projects\\anothercodingagent",
+    "G:\\JOB"
+  ],
+  "witnesses": "default",
+  "triage": "never",
+  "packRepo": false,
+  "maxContextRounds": 2
+}
+```
+
+When enabled, one-shot prompts, interactive turns, and structured `aca invoke` calls under those roots receive an auto-consult advisory system note. Child invokes launched by `aca consult` set a recursion guard so consult does not consult itself. Set `ACA_AUTO_CONSULT_DISABLED=1` or `ACA_AUTO_CONSULT=off` to bypass it for a run.
+
 Features that took real work to get right:
 
 - **Context-request loop.** Witnesses can ask for specific files or snippets before answering, instead of being force-fed the whole repo.
