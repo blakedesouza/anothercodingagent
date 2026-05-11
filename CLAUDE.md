@@ -73,7 +73,7 @@ Live tests run the built `aca` binary against real NanoGPT models and prove actu
 - **API key:** resolved by `loadSecrets()` — env var → `~/.aca/secrets.json` → `~/.api_keys`
 - **Flat-rate models endpoint:** use `/subscription/v1/models`, not `/v1/models`
 - **Pricing:** $8/mo flat rate; Claude/GPT/Gemini are PAID (not included); always use the best subscription models
-- **Default RP project root:** `/home/blake/projects/rpproject` (set in `~/.aca/config.json` as `rpProjectRoot`)
+- **Default RP project root:** configure `rpProjectRoot` in `~/.aca/config.json` for the local RP project checkout.
 - **Default RP model:** `zai-org/glm-5` (set in `~/.aca/config.json` as `rpModel`)
 
 ## ACA Debugging Reference

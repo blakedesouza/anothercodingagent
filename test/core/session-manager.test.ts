@@ -264,8 +264,8 @@ describe('M1.3 — Session Manager', () => {
         });
 
         it('should normalize Windows path casing and separators', () => {
-            const id1 = deriveWorkspaceId('C:/Users/Blake/Project');
-            const id2 = deriveWorkspaceId('c:\\users\\blake\\project\\');
+            const id1 = deriveWorkspaceId('C:/Users/Example/Project');
+            const id2 = deriveWorkspaceId('c:\\users\\example\\project\\');
             expect(id1).toBe(id2);
         });
     });

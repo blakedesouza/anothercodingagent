@@ -84,8 +84,8 @@ ACA can run the default consult witnesses automatically before normal agent work
 {
   "enabled": true,
   "enabledRoots": [
-    "C:\\Projects\\anothercodingagent",
-    "G:\\JOB"
+    "C:\\Workspaces\\aca",
+    "D:\\Work"
   ],
   "witnesses": "default",
   "triage": "never",

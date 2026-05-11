@@ -18,7 +18,7 @@ Audit points:
 Evidence directory:
 
 ```text
-C:\Users\Blake\AppData\Local\Temp\aca-foundation-consult-audit-20260510-195939
+<temp>\aca-foundation-consult-audit-20260510-195939
 ```
 
 ## Consult Results

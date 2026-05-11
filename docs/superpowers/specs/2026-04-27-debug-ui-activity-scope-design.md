@@ -66,7 +66,7 @@ The default group is chosen from the newest useful session. Users can switch gro
 - Other workspaces
 - All workspaces
 
-If the newest useful session has a broad root such as `/home/blake`, the UI should still make the scope visible instead of pretending it knows a narrower project.
+If the newest useful session has a broad root such as a user home directory, the UI should still make the scope visible instead of pretending it knows a narrower project.
 
 ### Archive
 
@@ -108,7 +108,7 @@ llm.malformed - historical
 Raw IDs remain visible as secondary mono text:
 
 ```text
-ses_01KQ8... - /home/blake - 7:24 PM
+ses_01KQ8... - <home> - 7:24 PM
 ```
 
 Each row should show:

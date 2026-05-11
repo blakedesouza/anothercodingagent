@@ -1546,7 +1546,7 @@ const ACTIVE_STALE_MS = 30 * MINUTE_MS;
 const ERROR_WINDOW_MS = DAY_MS;
 const CURRENT_WORKSPACE_WINDOW_MS = 7 * DAY_MS;
 const CONSULT_RECENT_WINDOW_MS = 7 * DAY_MS;
-const BROAD_WORKSPACE_ROOTS = new Set(['/home', '/home/blake', '/Users', '/tmp', '/', '']);
+const BROAD_WORKSPACE_ROOTS = new Set(['/home', '/Users', '/tmp', '/', '']);
 
 function ageMs(value, nowMs = Date.now()) {
   const timestamp = Date.parse(value || '');
@@ -1576,7 +1576,10 @@ function workspaceScopeLabel(workspaceKey) {
 }
 
 function isBroadWorkspaceKey(workspaceKey) {
-  return BROAD_WORKSPACE_ROOTS.has(String(workspaceKey || '').replace(/\/+$/, ''));
+  const normalized = String(workspaceKey || '').replace(/\/+$/, '');
+  return BROAD_WORKSPACE_ROOTS.has(normalized)
+    || /^\/home\/[^/]+$/.test(normalized)
+    || /^\/Users\/[^/]+$/.test(normalized);
 }
 
 function isZeroTurnSession(session) {

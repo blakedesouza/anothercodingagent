@@ -10,8 +10,8 @@ import {
 
 describe('path-comparison', () => {
     it('normalizes Windows paths case-insensitively for comparisons', () => {
-        expect(normalizePathForComparison('C:/Users/Blake/Project')).toBe(
-            normalizePathForComparison('c:\\users\\blake\\project\\'),
+        expect(normalizePathForComparison('C:/Users/Example/Project')).toBe(
+            normalizePathForComparison('c:\\users\\example\\project\\'),
         );
     });
 
@@ -36,7 +36,7 @@ describe('path-comparison', () => {
 
     it('detects POSIX and Windows absolute paths', () => {
         expect(isAbsolutePath('/tmp/project')).toBe(true);
-        expect(isAbsolutePath('C:\\Users\\Blake\\Project')).toBe(true);
+        expect(isAbsolutePath('C:\\Users\\Example\\Project')).toBe(true);
         expect(isAbsolutePath('node_modules')).toBe(false);
     });
 
