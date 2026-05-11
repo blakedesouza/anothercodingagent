@@ -99,7 +99,7 @@ describe('debug-ui manager', () => {
 
         const spawnImpl = vi.fn<typeof import('node:child_process').spawn>();
         const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(
-            JSON.stringify({ ok: true }),
+            JSON.stringify({ ok: true, features: ['nanogpt_usage'] }),
             { status: 200, headers: { 'content-type': 'application/json' } },
         ));
 
@@ -113,10 +113,56 @@ describe('debug-ui manager', () => {
         rmSync(acaHome, { recursive: true, force: true });
     });
 
+    it('replaces an existing debug UI instance when it is missing required features', async () => {
+        const acaHome = mkdtempSync(join(tmpdir(), 'aca-debug-ui-home-'));
+        const env = { ACA_HOME: acaHome, NANOGPT_API_KEY: 'test-key', PATH: '' };
+        const metadataPath = resolveDebugUiMetadataPath(env);
+
+        writeFileSync(metadataPath, JSON.stringify({
+            version: 1,
+            host: '127.0.0.1',
+            port: 4777,
+            token: 'abc',
+            pid: 321,
+            url: 'http://127.0.0.1:4777/?token=abc',
+            acaHome,
+            metadataPath,
+            startedAt: '2026-04-16T00:00:00.000Z',
+        }));
+
+        const child = { unref: vi.fn() };
+        const spawnImpl = vi.fn<typeof import('node:child_process').spawn>().mockReturnValue(child as never);
+        let healthChecks = 0;
+        const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+            const url = String(input);
+            if (url.includes('/api/control/shutdown')) {
+                expect(init?.method).toBe('POST');
+                return new Response(JSON.stringify({ ok: true }), { status: 200 });
+            }
+            healthChecks += 1;
+            return new Response(
+                JSON.stringify(healthChecks === 1
+                    ? { ok: true }
+                    : { ok: true, features: ['nanogpt_usage'] }),
+                { status: 200, headers: { 'content-type': 'application/json' } },
+            );
+        });
+
+        const result = await ensureDebugUiStarted({ env, fetchImpl, spawnImpl, waitMs: 50, pollMs: 1 });
+
+        expect(result.started).toBe(true);
+        expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/api/control/shutdown?token=abc'))).toBe(true);
+        expect(spawnImpl).toHaveBeenCalledOnce();
+        expect(result.metadata?.token).toBe('abc');
+
+        rmSync(acaHome, { recursive: true, force: true });
+    });
+
     it('forces auto-started debug UI children onto loopback even when a wildcard host is requested', async () => {
         const acaHome = mkdtempSync(join(tmpdir(), 'aca-debug-ui-home-'));
         const env = {
             ACA_HOME: acaHome,
+            NANOGPT_API_KEY: 'test-key',
             ACA_DEBUG_UI_HOST: '0.0.0.0',
             ACA_DEBUG_UI_PORT: '4778',
             PATH: '',
@@ -137,6 +183,7 @@ describe('debug-ui manager', () => {
         const options = spawnImpl.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv } | undefined;
         expect(options?.env?.ACA_DEBUG_UI_HOST).toBe('127.0.0.1');
         expect(options?.env?.ACA_DEBUG_UI_TOKEN).toBeTruthy();
+        expect(options?.env?.NANOGPT_API_KEY).toBe('test-key');
         expect(result.metadata).toBeNull();
 
         rmSync(acaHome, { recursive: true, force: true });

@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadSecrets } from '../config/secrets.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -12,6 +13,7 @@ const __dirname = dirname(__filename);
 export const DEFAULT_DEBUG_UI_HOST = '127.0.0.1';
 export const DEFAULT_DEBUG_UI_PORT = 4777;
 export const DEBUG_UI_METADATA_FILE = 'debug-ui.json';
+export const DEBUG_UI_REQUIRED_FEATURES = ['nanogpt_usage'] as const;
 
 function resolveDebugUiServerScriptPath(): string {
     const candidates = [
@@ -167,11 +169,16 @@ export async function isDebugUiHealthy(
             signal: AbortSignal.timeout(1000),
         });
         if (!response.ok) return false;
-        const payload = await response.json() as { ok?: unknown };
-        return payload.ok === true;
+        const payload = await response.json() as { ok?: unknown; features?: unknown };
+        return payload.ok === true && hasRequiredDebugUiFeatures(payload.features);
     } catch {
         return false;
     }
+}
+
+function hasRequiredDebugUiFeatures(features: unknown): boolean {
+    if (!Array.isArray(features)) return false;
+    return DEBUG_UI_REQUIRED_FEATURES.every((feature) => features.includes(feature));
 }
 
 function buildPassthroughExecArgv(execArgv: string[] = process.execArgv): string[] {
@@ -249,8 +256,17 @@ function buildFallbackMetadata(env: NodeJS.ProcessEnv, token: string): DebugUiMe
     };
 }
 
-function buildChildSpawnEnv(env: NodeJS.ProcessEnv, token: string): NodeJS.ProcessEnv {
+async function buildChildSpawnEnv(env: NodeJS.ProcessEnv, token: string): Promise<NodeJS.ProcessEnv> {
     const metadata = buildFallbackMetadata(env, token);
+    let nanoGptApiKey = env.NANOGPT_API_KEY;
+    if (!nanoGptApiKey) {
+        try {
+            const secretsResult = await loadSecrets(env);
+            nanoGptApiKey = secretsResult.secrets.nanogpt;
+        } catch {
+            // Optional debug UI usage card degrades cleanly when secrets are unavailable.
+        }
+    }
     return {
         ...env,
         ACA_HOME: metadata.acaHome,
@@ -258,6 +274,7 @@ function buildChildSpawnEnv(env: NodeJS.ProcessEnv, token: string): NodeJS.Proce
         ACA_DEBUG_UI_PORT: String(metadata.port),
         ACA_DEBUG_UI_TOKEN: metadata.token,
         ACA_DEBUG_UI_METADATA_PATH: metadata.metadataPath,
+        ...(nanoGptApiKey ? { NANOGPT_API_KEY: nanoGptApiKey } : {}),
     };
 }
 
@@ -280,6 +297,21 @@ async function waitForDebugUiMetadata(
         await delay(pollMs);
     }
     return null;
+}
+
+async function stopExistingDebugUi(
+    metadata: DebugUiMetadata,
+    fetchImpl: typeof fetch,
+): Promise<void> {
+    try {
+        await fetchImpl(`http://${metadata.host}:${metadata.port}/api/control/shutdown?token=${encodeURIComponent(metadata.token)}`, {
+            method: 'POST',
+            signal: AbortSignal.timeout(1000),
+        });
+        await delay(250);
+    } catch {
+        // Best effort. If the stale server does not stop, spawning will fail and health checks will report it.
+    }
 }
 
 function findExecutableOnPath(
@@ -357,9 +389,12 @@ export async function ensureDebugUiStarted(
     if (existing && await isDebugUiHealthy(existing, fetchImpl)) {
         return { metadata: existing, started: false, browserOpened: false };
     }
+    if (existing) {
+        await stopExistingDebugUi(existing, fetchImpl);
+    }
 
     const token = env.ACA_DEBUG_UI_TOKEN?.trim() || randomBytes(18).toString('base64url');
-    const childEnv = buildChildSpawnEnv(env, token);
+    const childEnv = await buildChildSpawnEnv(env, token);
     await mkdir(dirname(metadataPath), { recursive: true });
 
     const child = spawnImpl(

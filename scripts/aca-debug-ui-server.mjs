@@ -32,6 +32,7 @@ const STALE_CONSULT_MS = Number.parseInt(process.env.ACA_DEBUG_UI_STALE_CONSULT_
 const SEEDED_WITNESSES = parseWitnessSeed(process.env.ACA_DEBUG_UI_WITNESS_SEED || '');
 const MODEL_CATALOG = readModelCatalogSnapshot(process.env.ACA_DEBUG_UI_MODEL_CATALOG_PATH || '');
 const NANOGPT_USAGE_ENDPOINT = process.env.ACA_DEBUG_UI_NANOGPT_USAGE_ENDPOINT || 'https://nano-gpt.com/api/subscription/v1/usage';
+const HEALTH_FEATURES = ['nanogpt_usage'];
 const APP_HTML_URL = new URL('./aca-debug-ui-app.html', import.meta.url);
 
 let db = null;
@@ -142,7 +143,7 @@ async function handleRequest(req, res) {
   }
 
   if (url.pathname === '/healthz') {
-    sendJson(res, 200, { ok: true, db: Boolean(db), sessionsDir: existsSync(SESSIONS_DIR) });
+    sendJson(res, 200, { ok: true, db: Boolean(db), sessionsDir: existsSync(SESSIONS_DIR), features: HEALTH_FEATURES });
     return;
   }
 
