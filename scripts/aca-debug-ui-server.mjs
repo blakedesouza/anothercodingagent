@@ -6,10 +6,21 @@ import { dirname, join, resolve } from 'node:path';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import Database from 'better-sqlite3';
+import {
+  buildDebugUiUrl,
+  DEFAULT_DEBUG_UI_HOST,
+  hasValidDebugToken,
+  isAuthorized,
+  isLocalHostHeader,
+  normalizeDebugUiHost,
+  truthyEnvFlag,
+} from './aca-debug-ui-security.mjs';
 
-const HOST = process.env.ACA_DEBUG_UI_HOST || '127.0.0.1';
+const REQUESTED_HOST = process.env.ACA_DEBUG_UI_HOST || DEFAULT_DEBUG_UI_HOST;
+const HOST = normalizeDebugUiHost(REQUESTED_HOST);
 const PORT = Number.parseInt(process.env.ACA_DEBUG_UI_PORT || '4777', 10);
 const TOKEN = process.env.ACA_DEBUG_UI_TOKEN || randomBytes(18).toString('base64url');
+const REQUIRE_TOKEN = truthyEnvFlag(process.env.ACA_DEBUG_UI_REQUIRE_TOKEN);
 const ACA_HOME = process.env.ACA_HOME || join(homedir(), '.aca');
 const DB_PATH = process.env.ACA_OBSERVABILITY_DB || join(ACA_HOME, 'observability.db');
 const SESSIONS_DIR = process.env.ACA_SESSIONS_DIR || join(ACA_HOME, 'sessions');
@@ -23,6 +34,7 @@ const MODEL_CATALOG = readModelCatalogSnapshot(process.env.ACA_DEBUG_UI_MODEL_CA
 const APP_HTML_URL = new URL('./aca-debug-ui-app.html', import.meta.url);
 
 let db = null;
+let activePort = PORT;
 if (existsSync(DB_PATH)) {
   db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
 }
@@ -37,27 +49,35 @@ const server = createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  const url = `http://${HOST}:${PORT}/?token=${encodeURIComponent(TOKEN)}`;
-  writeMetadata(url);
+  const address = server.address();
+  activePort = typeof address === 'object' && address ? address.port : PORT;
+  const url = buildDebugUiUrl(HOST, activePort, TOKEN, REQUIRE_TOKEN);
+  writeMetadata(url, activePort);
   process.stderr.write('\nACA local debug UI\n');
   process.stderr.write(`URL: ${url}\n`);
   process.stderr.write(`Host: ${HOST} (${hostname()})\n`);
+  if (HOST !== REQUESTED_HOST) {
+    process.stderr.write(`Requested host ${REQUESTED_HOST} is not loopback; using ${HOST}.\n`);
+  }
   process.stderr.write(`DB:   ${DB_PATH}${db ? '' : ' (not found yet)'}\n`);
   process.stderr.write(`Logs: ${SESSIONS_DIR}\n`);
-  process.stderr.write('Security: bound to loopback and protected by a per-process token.\n\n');
+  process.stderr.write(REQUIRE_TOKEN
+    ? 'Security: bound to loopback and protected by a per-process token.\n\n'
+    : 'Security: bound to loopback; local read access is tokenless, protected controls still require the per-process token.\n\n');
 });
 
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
 
-function writeMetadata(url) {
+function writeMetadata(url, port) {
   try {
     mkdirSync(dirname(METADATA_PATH), { recursive: true });
     writeFileSync(METADATA_PATH, JSON.stringify({
       version: 1,
       host: HOST,
-      port: PORT,
+      port,
       token: TOKEN,
+      requireToken: REQUIRE_TOKEN,
       pid: process.pid,
       url,
       acaHome: ACA_HOME,
@@ -129,7 +149,7 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (!isAuthorized(req, url)) {
+  if (!isAuthorized(req, url, { token: TOKEN, requireToken: REQUIRE_TOKEN })) {
     sendHtml(res, 401, loginHtml());
     return;
   }
@@ -142,6 +162,10 @@ async function handleRequest(req, res) {
   if (url.pathname === '/api/control/shutdown') {
     if (req.method !== 'POST') {
       sendJson(res, 405, { error: 'method_not_allowed' });
+      return;
+    }
+    if (!hasValidDebugToken(req, url, TOKEN)) {
+      sendJson(res, 401, { error: 'token_required', message: 'Shutdown requires the current debug token.' });
       return;
     }
     sendJson(res, 200, { ok: true, shuttingDown: true });
@@ -268,7 +292,7 @@ function overview() {
 
   return {
     host: HOST,
-    port: PORT,
+    port: activePort,
     acaHome: ACA_HOME,
     dbPath: DB_PATH,
     dbAvailable: Boolean(db),
@@ -936,17 +960,6 @@ function isSessionId(value) {
 
 function isConsultSuffix(value) {
   return /^[0-9]{10,}-[0-9]+$/.test(value);
-}
-
-function isAuthorized(req, url) {
-  const headerToken = req.headers['x-aca-debug-token'];
-  return url.searchParams.get('token') === TOKEN || headerToken === TOKEN;
-}
-
-function isLocalHostHeader(hostHeader) {
-  if (!hostHeader) return true;
-  const host = hostHeader.split(':')[0].toLowerCase();
-  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
 }
 
 function sendJson(res, status, data) {

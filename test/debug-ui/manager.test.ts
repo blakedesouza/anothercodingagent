@@ -112,4 +112,33 @@ describe('debug-ui manager', () => {
 
         rmSync(acaHome, { recursive: true, force: true });
     });
+
+    it('forces auto-started debug UI children onto loopback even when a wildcard host is requested', async () => {
+        const acaHome = mkdtempSync(join(tmpdir(), 'aca-debug-ui-home-'));
+        const env = {
+            ACA_HOME: acaHome,
+            ACA_DEBUG_UI_HOST: '0.0.0.0',
+            ACA_DEBUG_UI_PORT: '4778',
+            PATH: '',
+        };
+
+        const child = { unref: vi.fn() };
+        const spawnImpl = vi.fn<typeof import('node:child_process').spawn>().mockReturnValue(child as never);
+        const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 503 }));
+
+        const result = await ensureDebugUiStarted({
+            env,
+            fetchImpl,
+            spawnImpl,
+            waitMs: 0,
+            pollMs: 1,
+        });
+
+        const options = spawnImpl.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv } | undefined;
+        expect(options?.env?.ACA_DEBUG_UI_HOST).toBe('127.0.0.1');
+        expect(options?.env?.ACA_DEBUG_UI_TOKEN).toBeTruthy();
+        expect(result.metadata).toBeNull();
+
+        rmSync(acaHome, { recursive: true, force: true });
+    });
 });

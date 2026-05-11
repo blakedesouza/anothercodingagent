@@ -1309,6 +1309,15 @@
 
 <script>
 const token = new URLSearchParams(location.search).get('token') || '';
+
+function authQuery(path) {
+  if (!token) return path;
+  return `${path}${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+}
+
+function authHeaders() {
+  return token ? { 'x-aca-debug-token': token } : {};
+}
 const PREF_KEYS = {
   theme: 'aca-debug-theme',
   density: 'aca-debug-density',
@@ -2592,10 +2601,13 @@ function summaryRow(label, value) {
 
 async function shutdownUi() {
   if (!confirm('Shut down the ACA debug UI server?')) return;
+  if (!token) {
+    throw new Error('Shutdown requires the current debug token. Open the tokenized URL from debug-ui.json or the server terminal first.');
+  }
   stopAutoRefresh();
-  const response = await fetch(`/api/control/shutdown?token=${encodeURIComponent(token)}`, {
+  const response = await fetch(authQuery('/api/control/shutdown'), {
     method: 'POST',
-    headers: { 'x-aca-debug-token': token },
+    headers: authHeaders(),
   });
   if (!response.ok) {
     throw new Error(`Shutdown failed: ${response.status} ${response.statusText}`);
@@ -2628,8 +2640,8 @@ function stopAutoRefresh() {
 }
 
 async function api(path) {
-  const response = await fetch(`${path}${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`, {
-    headers: { 'x-aca-debug-token': token },
+  const response = await fetch(authQuery(path), {
+    headers: authHeaders(),
   });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);

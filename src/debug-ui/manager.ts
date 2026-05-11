@@ -201,12 +201,41 @@ function parsePort(raw: string | undefined): number | null {
     return parsed;
 }
 
+function isLoopbackHost(host: string): boolean {
+    const normalized = host.trim().toLowerCase().replace(/^\[(.*)]$/, '$1');
+    if (normalized === 'localhost' || normalized === '::1' || normalized === '0:0:0:0:0:0:0:1') return true;
+    const match = normalized.match(/^(\d{1,3})(?:\.(\d{1,3})){3}$/);
+    if (!match) return false;
+    return normalized.split('.').every((part) => {
+        const value = Number.parseInt(part, 10);
+        return Number.isInteger(value) && value >= 0 && value <= 255;
+    }) && normalized.startsWith('127.');
+}
+
+function resolveDebugUiHost(env: NodeJS.ProcessEnv): string {
+    const configured = env.ACA_DEBUG_UI_HOST?.trim();
+    if (!configured) return DEFAULT_DEBUG_UI_HOST;
+    return isLoopbackHost(configured) ? configured.replace(/^\[(.*)]$/, '$1') : DEFAULT_DEBUG_UI_HOST;
+}
+
+function shouldRequireDebugUiToken(env: NodeJS.ProcessEnv): boolean {
+    const normalized = env.ACA_DEBUG_UI_REQUIRE_TOKEN?.trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function formatHostForUrl(host: string): string {
+    return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+}
+
 function buildFallbackMetadata(env: NodeJS.ProcessEnv, token: string): DebugUiMetadata {
-    const host = env.ACA_DEBUG_UI_HOST?.trim() || DEFAULT_DEBUG_UI_HOST;
+    const host = resolveDebugUiHost(env);
     const port = parsePort(env.ACA_DEBUG_UI_PORT) ?? DEFAULT_DEBUG_UI_PORT;
     const acaHome = resolveAcaHome(env);
     const metadataPath = resolveDebugUiMetadataPath(env);
-    const url = `http://${host}:${port}/?token=${encodeURIComponent(token)}`;
+    const baseUrl = `http://${formatHostForUrl(host)}:${port}/`;
+    const url = shouldRequireDebugUiToken(env)
+        ? `${baseUrl}?token=${encodeURIComponent(token)}`
+        : baseUrl;
     return {
         version: 1,
         host,

@@ -79,6 +79,15 @@ describe('ACA debug UI static contracts', () => {
         expect(serverSource).toContain('Open dashboard');
     });
 
+    it('keeps debug UI tokenless local access loopback-bound and leaves shutdown token-protected', () => {
+        expect(serverSource).toContain("from './aca-debug-ui-security.mjs'");
+        expect(serverSource).toContain('normalizeDebugUiHost(REQUESTED_HOST)');
+        expect(serverSource).toContain("message: 'Shutdown requires the current debug token.'");
+        expect(appHtml).toContain('function authQuery(path)');
+        expect(appHtml).toContain('function authHeaders()');
+        expect(appHtml).toContain('Shutdown requires the current debug token');
+    });
+
     it('normalizes session model display instead of exposing raw config objects', () => {
         expect(serverSource).toContain('function modelDisplayName(modelConfig)');
         expect(serverSource).toContain('modelDisplayName(manifest?.configSnapshot?.model)');
