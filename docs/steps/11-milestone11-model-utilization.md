@@ -21,7 +21,7 @@ From the NanoGPT subscription catalog (`GET /subscription/v1/models?detailed=tru
 | qwen/qwen3.5-397b-a17b | Witness | 258,048 | 65,536 | 32,000 |
 | google/gemma-4-31b-it | Witness | 262,144 | 131,072 | 32,000 |
 
-Current canonical ACA witness lineup is the `default`/`strong` preset: `kimi26/glm51/deepseek`, backed by `moonshotai/kimi-k2.6`, `zai-org/glm-5.1`, and `deepseek/deepseek-v4-pro`. Legacy seats remain available through the `legacy` preset (`minimax/gemma`) plus named `kimi`, `qwen`, and `gemma` entries. The audited product witness set lives in `src/config/witness-models.ts` and `aca witnesses --json`.
+Current canonical ACA witness lineup is the `default`/`strong` preset: `kimi26/glm51`, backed by `moonshotai/kimi-k2.6` and `zai-org/glm-5.1`. Add the `dissent` preset for `deepseek/deepseek-v4-pro`, or use `full` for all three. Legacy seats remain available through the `legacy` preset (`minimax/gemma`) plus named `kimi`, `qwen`, and `gemma` entries. The audited product witness set lives in `src/config/witness-models.ts` and `aca witnesses --json`.
 
 The coder agent was operating at **6%** of its output capacity. That's why delegation failed — the model started working, ran out of output tokens, and got cut off mid-thought.
 

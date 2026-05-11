@@ -59,8 +59,17 @@ function catalog(toolCalling: boolean): ModelCatalog {
         getModel(model: string) {
             return model === entry.id ? entry : null;
         },
+        listModels() {
+            return [entry];
+        },
         get isLoaded() {
             return true;
+        },
+        get source() {
+            return 'static' as const;
+        },
+        get lastError() {
+            return null;
         },
     };
 }

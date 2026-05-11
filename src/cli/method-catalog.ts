@@ -96,6 +96,31 @@ const METHOD_CATALOG_ENTRIES: readonly MethodCatalogEntry[] = Object.freeze([
         ],
     },
     {
+        id: 'models',
+        invocation: 'aca models [--json] [--tools] [--search <text>]',
+        surface: 'subcommand',
+        summary: 'Discover NanoGPT subscription models visible to the configured API key.',
+        selector: {
+            input_mode: 'cli_args',
+            task_kinds: ['machine_model_discovery', 'human_model_discovery', 'consult_witness_selection'],
+            preferred_for: ['Checking which NanoGPT model IDs are currently available before choosing invoke or consult models.'],
+        },
+        when_to_use: [
+            'You need current NanoGPT subscription model IDs instead of guessing aliases.',
+            'You want model context/output limits and advertised capabilities before selecting witnesses.',
+        ],
+        key_arguments: [
+            { name: '--json', kind: 'flag', required: false, description: 'Emit the machine-readable model catalog.', value_type: 'boolean', default: false },
+            { name: '--tools', kind: 'flag', required: false, description: 'Only include models advertising tool calling.', value_type: 'boolean', default: false },
+            { name: '--search', kind: 'flag', required: false, description: 'Filter model IDs by substring.', value_type: 'string' },
+            { name: '--offline', kind: 'flag', required: false, description: 'Use ACA static fallback data without pinging NanoGPT.', value_type: 'boolean', default: false },
+        ],
+        examples: [
+            'aca models --json --tools',
+            'aca models --search kimi',
+        ],
+    },
+    {
         id: 'invoke',
         invocation: 'aca invoke < stdin-json',
         surface: 'subcommand',
@@ -193,7 +218,7 @@ const METHOD_CATALOG_ENTRIES: readonly MethodCatalogEntry[] = Object.freeze([
             { name: '--pack-path', kind: 'flag', required: false, description: 'File or directory to include in the deterministic evidence pack.', value_type: 'string_array' },
         ],
         examples: [
-            'aca consult --witnesses kimi26,glm51,deepseek --question "Review src/cli/consult.ts for grounded correctness risks only." --pack-path src/cli/consult.ts',
+            'aca consult --witnesses default,dissent --question "Review src/cli/consult.ts for grounded correctness risks only." --pack-path src/cli/consult.ts',
         ],
     },
     {
@@ -277,6 +302,12 @@ const METHOD_LANGUAGE_GUIDANCE: readonly MethodCatalogLanguageGuidance[] = Objec
         preferred_method: 'invoke',
     },
     {
+        trigger_examples: ['ACA models', 'list ACA models', 'which NanoGPT models are available', 'what model IDs can ACA use'],
+        interpretation: 'Use the NanoGPT subscription model catalog instead of guessing model IDs.',
+        route_kind: 'method',
+        preferred_method: 'models',
+    },
+    {
         trigger_examples: ['ACA rp-research', 'run ACA RP research', 'use ACA for RP pack generation'],
         interpretation: 'Use the RP workflow subcommand instead of a generic coding task.',
         route_kind: 'method',
@@ -324,7 +355,12 @@ export function buildMethodCatalog(): MethodCatalog {
             },
             {
                 intent: 'witness_model_inventory',
-                preferred_methods: ['witnesses'],
+                preferred_methods: ['models', 'witnesses'],
+                notes: 'Use models for live NanoGPT subscription availability; use witnesses for ACA consult presets.',
+            },
+            {
+                intent: 'live_model_availability',
+                preferred_methods: ['models'],
             },
             {
                 intent: 'local_runtime_dashboard',

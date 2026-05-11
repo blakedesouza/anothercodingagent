@@ -790,7 +790,10 @@ function makeMockCatalog(entries: Map<string, ModelCatalogEntry>): ModelCatalog 
     return {
         async fetch() {},
         getModel(id: string) { return entries.get(id) ?? null; },
+        listModels() { return [...entries.values()].sort((a, b) => a.id.localeCompare(b.id)); },
         get isLoaded() { return true; },
+        get source() { return 'static' as const; },
+        get lastError() { return null; },
     };
 }
 

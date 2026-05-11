@@ -8,7 +8,7 @@
  */
 
 import { Command, InvalidArgumentError } from 'commander';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -158,6 +158,7 @@ import { runConsult } from './cli/consult.js';
 import { formatRpResearchSummary, runRpResearchWorkflow, type RpNetworkMode, type RpSourceScope } from './cli/rp-research.js';
 import { TOOL_NAMES } from './cli/tool-names.js';
 import { runMethodsJson, runMethodsText } from './cli/method-catalog.js';
+import { runModelsJson, runModelsText } from './cli/model-catalog.js';
 import { startServer } from './mcp/server.js';
 import {
     runDescribe,
@@ -1716,10 +1717,50 @@ program
     });
 
 program
+    .command('models')
+    .description('Output NanoGPT subscription model catalog')
+    .option('--json', 'Output JSON instead of readable text')
+    .option('--search <text>', 'Filter model IDs by substring')
+    .option('--tools', 'Only include models advertising tool calling', false)
+    .option('--reasoning', 'Only include models advertising reasoning support', false)
+    .option('--vision', 'Only include models advertising vision support', false)
+    .option('--structured-output', 'Only include models advertising structured output support', false)
+    .option('--limit <n>', 'Maximum models to print', value => parsePositiveIntegerOption(value, '--limit'))
+    .option('--offline', 'Use the static fallback catalog without pinging NanoGPT', false)
+    .option('--base-url <url>', 'Override NanoGPT API host root for catalog discovery')
+    .action(async (options: {
+        json?: boolean;
+        search?: string;
+        tools: boolean;
+        reasoning: boolean;
+        vision: boolean;
+        structuredOutput: boolean;
+        limit?: number;
+        offline: boolean;
+        baseUrl?: string;
+    }) => {
+        const output = options.json
+            ? await runModelsJson(options)
+            : await runModelsText(options);
+        process.stdout.write(output + '\n');
+    });
+
+program
     .command('debug-ui')
     .description('Start the local ACA debug UI')
     .action(async () => {
         process.env.ACA_DEBUG_UI_WITNESS_SEED ??= serializeWitnessSeed();
+        if (!process.env.ACA_DEBUG_UI_MODEL_CATALOG_PATH) {
+            try {
+                const acaHome = process.env.ACA_HOME || join(homedir(), '.aca');
+                mkdirSync(acaHome, { recursive: true });
+                const modelCatalogPath = join(acaHome, 'debug-model-catalog.json');
+                writeFileSync(modelCatalogPath, await runModelsJson({ json: true }), 'utf-8');
+                process.env.ACA_DEBUG_UI_MODEL_CATALOG_PATH = modelCatalogPath;
+            } catch {
+                // Debug UI can still start without the optional model catalog snapshot.
+            }
+        }
         await import(pathToFileURL(join(__dirname, '..', 'scripts', 'aca-debug-ui-server.mjs')).href);
     });
 
@@ -1738,7 +1779,7 @@ program
     .option('--question <question>', 'Question to ask witnesses')
     .option('--prompt-file <path>', 'Prompt file to use instead of --question')
     .option('--project-dir <path>', 'Project directory', process.cwd())
-    .option('--witnesses <list>', 'Comma-separated witness names, presets, or raw model IDs; defaults to strong')
+    .option('--witnesses <list>', 'Comma-separated witness names, presets, or raw model IDs; defaults to Kimi/GLM')
     .option('--pack-repo', 'Build an evidence pack from the repo', false)
     .option('--pack-path <path>', 'File or directory to include in the evidence pack', (value, previous: string[]) => [...previous, value], [])
     .option('--pack-max-files <n>', 'Maximum evidence-pack files', value => parsePositiveIntegerOption(value, '--pack-max-files'), 5)

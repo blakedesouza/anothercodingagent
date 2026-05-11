@@ -36,6 +36,14 @@ describe('M11.1 — StaticCatalog', () => {
         expect(catalog.getModel('nonexistent-model')).toBeNull();
     });
 
+    it('lists known models for catalog discovery surfaces', () => {
+        const catalog = new StaticCatalog();
+        const models = catalog.listModels();
+        expect(models.length).toBeGreaterThan(5);
+        expect(models.map(model => model.id)).toContain('claude-sonnet-4-20250514');
+        expect(models).toEqual([...models].sort((a, b) => a.id.localeCompare(b.id)));
+    });
+
     it('maps reasoning capability from specialFeatures', () => {
         const catalog = new StaticCatalog();
         // claude-opus has claude-extended-thinking
@@ -145,6 +153,10 @@ describe('M11.1 — NanoGptCatalog', () => {
         expect(qwen!.capabilities.toolCalling).toBe(true);
         expect(qwen!.capabilities.vision).toBe(false);
         expect(qwen!.pricing).toEqual({ input: 0.25, output: 1.0 });
+        expect(catalog.listModels().map(model => model.id)).toEqual([
+            'minimax/minimax-m2.7',
+            'qwen/qwen3-coder',
+        ]);
 
         const minimax = catalog.getModel('minimax/minimax-m2.7');
         expect(minimax).not.toBeNull();
@@ -421,6 +433,28 @@ describe('M11.1 — NanoGptCatalog', () => {
         expect(entry!.pricing!.input).toBe(0.25);
         expect(typeof entry!.pricing!.output).toBe('number');
         expect(entry!.pricing!.output).toBe(1.0);
+    });
+
+    it('handles NanoGPT prompt/completion pricing field names', async () => {
+        mockFetch.mockResolvedValueOnce(
+            makeNanoGptResponse([{
+                id: 'pricing-shape-model',
+                context_length: 100_000,
+                max_output_tokens: 16_000,
+                capabilities: {},
+                pricing: { prompt: '0.25', completion: '1.5' },
+            }]),
+        );
+
+        const catalog = new NanoGptCatalog({
+            apiKey: 'key',
+            baseUrl: 'https://api.example.com',
+            fetchFn: mockFetch,
+        });
+
+        await catalog.fetch();
+
+        expect(catalog.getModel('pricing-shape-model')!.pricing).toEqual({ input: 0.25, output: 1.5 });
     });
 
     it('handles response with "models" key instead of "data"', async () => {

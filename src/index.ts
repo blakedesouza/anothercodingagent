@@ -26,6 +26,7 @@ Commands:
   serve                   Start ACA as an MCP server on stdio transport
   describe                Output capability descriptor as JSON
   methods                 Output ACA workflow/method catalog
+  models                  Output NanoGPT subscription model catalog
   debug-ui                Start the local ACA debug UI
   witnesses               Output witness model configurations as JSON
   consult                 Run ACA-native bounded witness consultation

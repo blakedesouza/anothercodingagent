@@ -161,8 +161,9 @@ export class SqliteStore {
      * Each event is routed to the appropriate table(s) based on event_type.
      * Runs inside a single transaction for atomicity.
      */
-    insertBatch(events: AcaEvent[]): void {
-        if (!this.db || !this.stmtInsertEvent || events.length === 0) return;
+    insertBatch(events: AcaEvent[]): boolean {
+        if (events.length === 0) return true;
+        if (!this.db || !this.stmtInsertEvent) return false;
 
         try {
             const runBatch = this.db.transaction(() => {
@@ -179,8 +180,10 @@ export class SqliteStore {
             });
 
             runBatch();
+            return true;
         } catch (err) {
             this.warn(`SQLite batch insert failed: ${(err as Error).message}`);
+            return false;
         }
     }
 

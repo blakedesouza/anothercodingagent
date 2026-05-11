@@ -1947,6 +1947,10 @@ function renderKpis(overview) {
   const recentErrorSeries = (last.daily && last.daily.recentErrors) || [];
   const recentErrorCount = Array.isArray(overview.recentErrors) ? overview.recentErrors.length : 0;
   const latestSession = Array.isArray(overview.recentSessions) ? overview.recentSessions[0] : null;
+  const modelCatalog = overview.modelCatalog || {};
+  const modelSubtext = modelCatalog.source
+    ? `${modelCatalog.source} · ${modelCatalog.status || 'unknown'}`
+    : 'not loaded';
   const recentErrorSubtext = recentErrorCount
     ? latestSession && latestSession.hasErrors ? 'last 24h · latest has errors' : 'last 24h · historical'
     : 'last 24h · all clear';
@@ -1958,6 +1962,7 @@ function renderKpis(overview) {
     renderKpiCard('7d Tokens', `${formatCompact(last.tokensIn || 0)}<span class="unit">in</span>`, `${formatCompact(last.tokensOut || 0)} out · ${ratio}`, tokenSeries, '--text-2'),
     renderKpiCard('Tool Errors', `${formatPercent(last.toolErrorRate || 0)}<span class="unit">%</span>`, `${formatCompact(last.toolErrors || 0)} / ${formatCompact(last.toolCalls || 0)} calls`, toolErrorSeries, '--ok'),
     renderKpiCard('Recent Errors', formatCompact(recentErrorCount), recentErrorSubtext, recentErrorSeries, recentErrorCount ? '--err' : '--ok'),
+    renderKpiCard('Models', formatCompact(modelCatalog.total_model_count || modelCatalog.model_count || 0), modelSubtext, [], modelCatalog.status === 'ok' ? '--ok' : '--warn'),
   ].join('');
 }
 

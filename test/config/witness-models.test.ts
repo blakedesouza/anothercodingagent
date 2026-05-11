@@ -106,15 +106,17 @@ describe('M11.5 — Witness Model Configuration', () => {
     });
 
     describe('resolveWitnesses()', () => {
-        it('defaults to Kimi K2.6, GLM 5.1, and DeepSeek V4 Pro', () => {
+        it('defaults to Kimi K2.6 and GLM 5.1', () => {
             expect(resolveWitnesses(undefined).map(w => w.model)).toEqual([
                 'moonshotai/kimi-k2.6',
                 'zai-org/glm-5.1',
-                'deepseek/deepseek-v4-pro',
             ]);
         });
 
-        it('expands legacy preset and accepts raw model IDs', () => {
+        it('expands dissent and legacy presets and accepts raw model IDs', () => {
+            const withDissent = resolveWitnesses('default,dissent');
+            expect(withDissent.map(w => w.name)).toEqual(['kimi26', 'glm51', 'deepseek']);
+
             const witnesses = resolveWitnesses('legacy,provider/custom-model');
             expect(witnesses.map(w => w.name)).toEqual(['minimax', 'gemma', 'provider-custom-model']);
             expect(witnesses.map(w => w.model)).toContain('provider/custom-model');
@@ -144,7 +146,9 @@ describe('M11.5 — Witness Model Configuration', () => {
             const json = serializeWitnessConfigs();
             const parsed = JSON.parse(json);
 
-            expect(parsed.default).toEqual(['kimi26', 'glm51', 'deepseek']);
+            expect(parsed.default).toEqual(['kimi26', 'glm51']);
+            expect(parsed.presets.dissent).toEqual(['deepseek']);
+            expect(parsed.presets.full).toEqual(['kimi26', 'glm51', 'deepseek']);
             expect(parsed.presets.legacy).toEqual(['minimax', 'gemma']);
             expect(Object.keys(parsed.witnesses)).toEqual(['kimi26', 'glm51', 'deepseek', 'minimax', 'kimi', 'qwen', 'gemma']);
 
@@ -176,7 +180,7 @@ describe('M11.5 — Witness Model Configuration', () => {
     describe('serializeWitnessSeed()', () => {
         it('serializes default witnesses for debug UI pending cards', () => {
             expect(serializeWitnessSeed()).toBe(
-                'kimi26=moonshotai/kimi-k2.6,glm51=zai-org/glm-5.1,deepseek=deepseek/deepseek-v4-pro',
+                'kimi26=moonshotai/kimi-k2.6,glm51=zai-org/glm-5.1',
             );
         });
     });

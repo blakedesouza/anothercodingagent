@@ -238,7 +238,7 @@ describe('runConsult', () => {
         expect(result.success_count).toBe(1);
     });
 
-    it('defaults to the strong witness preset, and auto-skips triage when the witnesses align', async () => {
+    it('defaults to the Kimi/GLM witness pair, and auto-skips triage when the witnesses align', async () => {
         const invokedModels: string[] = [];
 
         runAcaInvokeMock.mockImplementation(async (_task: string, options?: { model?: string }) => {
@@ -249,9 +249,6 @@ describe('runConsult', () => {
             if (options?.model === 'zai-org/glm-5.1') {
                 return makeInvokeSuccess('## Findings\n\nGLM witness report.');
             }
-            if (options?.model === 'deepseek/deepseek-v4-pro') {
-                return makeInvokeSuccess('## Findings\n\nDeepSeek witness report.');
-            }
             throw new Error(`unexpected consult model: ${options?.model ?? 'unknown'}`);
         });
 
@@ -260,11 +257,11 @@ describe('runConsult', () => {
             projectDir: tmpProjectDir(),
         });
 
-        expect(result.total_witnesses).toBe(3);
-        expect(Object.keys(result.witnesses)).toEqual(['kimi26', 'glm51', 'deepseek']);
+        expect(result.total_witnesses).toBe(2);
+        expect(Object.keys(result.witnesses)).toEqual(['kimi26', 'glm51']);
         expect(result.triage.status).toBe('skipped');
         expect(result.triage.error).toBe('skipped by triage=auto');
-        expect(invokedModels).toEqual(['moonshotai/kimi-k2.6', 'zai-org/glm-5.1', 'deepseek/deepseek-v4-pro']);
+        expect(invokedModels).toEqual(['moonshotai/kimi-k2.6', 'zai-org/glm-5.1']);
     });
 
     it('accepts raw NanoGPT model IDs as custom witnesses', async () => {

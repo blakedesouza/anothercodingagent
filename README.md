@@ -16,7 +16,7 @@ Most coding agents are monolithic: one model, one context, one loop. ACA makes t
 
 - **Invoke** — call ACA from another agent or script through a structured JSON contract.
 - **Serve** — expose ACA as an MCP server for hosts that can delegate work (e.g. Claude Code).
-- **Consult** — ask the default bounded witness pair (`minimax`, `gemma`) for review without handing them an unbounded tool loop.
+- **Consult** — ask the default bounded witness pair (`kimi26`, `glm51`) for review without handing them an unbounded tool loop.
 - **Profile** — tune model behavior per job: coding, review, triage, RP lore research.
 
 The design bet: safety should come from a real sandbox and a wall-clock deadline, not from tool blocklists. Peer agents get the full toolkit; the environment enforces the limits.
@@ -57,23 +57,24 @@ All milestones M1–M11 are complete. The current default validation surface pas
 - Tool-call emulation for models without native tool support
 - Model registry with fallback chains
 
-**Dynamic model catalog (M11).** ACA queries real model ceilings at runtime for NanoGPT-backed models instead of hardcoding stale numbers. Direct Anthropic and OpenAI provider paths currently rely on static capability data. An idle-timeout policy resets on every SSE event across all three drivers so slow-but-progressing models don't get killed by a hard deadline. Delegated agents receive a real project system prompt (working dir, stack detection, available tools), not a generic "helpful assistant" string.
+**Dynamic model catalog (M11).** ACA queries real model ceilings at runtime for NanoGPT-backed models instead of hardcoding stale numbers. `aca models --json` pings the NanoGPT subscription catalog and exposes the currently visible model IDs, context/output limits, advertised capabilities, pricing when available, and static fallback status. Direct Anthropic and OpenAI provider paths currently rely on static capability data. An idle-timeout policy resets on every SSE event across all three drivers so slow-but-progressing models don't get killed by a hard deadline. Delegated agents receive a real project system prompt (working dir, stack detection, available tools), not a generic "helpful assistant" string.
 
 **Peer agent profiles.** A delegated `coder` gets the full tool suite minus delegation; `witness` / `reviewer` get all non-mutating tools plus research tools. Safety comes from the sandbox and deadline, not from clipping the toolkit. Inspect the active lineup with `aca witnesses --json`.
 
 ### Consult pipeline (multi-model review)
 
-`aca consult` runs bounded witness review against the default strong witness preset in parallel:
+`aca consult` runs bounded witness review against the default Kimi/GLM witness pair in parallel. Add `dissent` when you want DeepSeek V4 Pro as an independent dissent seat:
 
 | Witness     | Model                         | Context | Max output |
 |-------------|-------------------------------|---------|------------|
 | Kimi K2.6   | `moonshotai/kimi-k2.6`        | 256K    | 65K        |
 | GLM 5.1     | `zai-org/glm-5.1`             | 200K    | 128K       |
-| DeepSeek V4 | `deepseek/deepseek-v4-pro`    | 163K    | 65K        |
+| DeepSeek V4 dissent | `deepseek/deepseek-v4-pro` | 163K | 65K |
 
 You can override the default lineup with named witnesses, presets, or raw NanoGPT model IDs:
-`--witnesses legacy`, `--witnesses kimi26,glm51`, or
+`--witnesses default,dissent`, `--witnesses legacy`, `--witnesses kimi26,glm51`, or
 `--witnesses zai-org/glm-5.1,moonshotai/kimi-k2.6`.
+Use `aca models --json --tools` when you want to verify a raw model ID is currently visible to the configured NanoGPT subscription before adding it to a consult lineup.
 
 Features that took real work to get right:
 
@@ -177,6 +178,7 @@ aca [prompt]                  Direct CLI (interactive or one-shot)
 aca serve                     Start ACA as an MCP server on stdio
 aca describe                  Output capability descriptor as JSON
 aca methods                   Output ACA workflow/method catalog
+aca models                    Output NanoGPT subscription model catalog
 aca debug-ui                  Start the local ACA debug UI
 aca witnesses                 Output witness model configurations as JSON
 aca consult                   Run bounded witness consultation

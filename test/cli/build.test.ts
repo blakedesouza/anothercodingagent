@@ -98,6 +98,7 @@ describe('M8.1 — Build & Package', () => {
         };
         expect(catalog.intents.some(intent => intent.intent === 'multi_model_second_opinion')).toBe(true);
         expect(catalog.methods.some(method => method.id === 'invoke')).toBe(true);
+        expect(catalog.methods.some(method => method.id === 'models')).toBe(true);
         expect(catalog.methods.some(method => method.id === 'consult')).toBe(true);
         expect(catalog.methods.some(method => method.id === 'rp-research')).toBe(true);
         expect(catalog.language_guidance.some(item => item.preferred_method === 'consult' && item.trigger_examples.includes('ACA consult'))).toBe(true);
@@ -114,6 +115,7 @@ describe('M8.1 — Build & Package', () => {
         expect(stdout).toContain('Language Routing:');
         expect(stdout).toContain('ACA consult');
         expect(stdout).toContain('Bare ACA is ambiguous');
+        expect(stdout).toContain('aca models');
         expect(stdout).toContain('docs/dev/audit-workflow.md');
         expect(stdout).toContain('aca consult --question <text> [options]');
         expect(stdout).toContain('aca invoke < stdin-json');
@@ -124,9 +126,29 @@ describe('M8.1 — Build & Package', () => {
         expect(exitCode).toBe(0);
 
         const witnesses = JSON.parse(stdout.trim());
-        expect(witnesses.default).toEqual(['kimi26', 'glm51', 'deepseek']);
+        expect(witnesses.default).toEqual(['kimi26', 'glm51']);
+        expect(witnesses.presets.dissent).toEqual(['deepseek']);
+        expect(witnesses.presets.full).toEqual(['kimi26', 'glm51', 'deepseek']);
         expect(Object.keys(witnesses.witnesses)).toEqual(['kimi26', 'glm51', 'deepseek', 'minimax', 'kimi', 'qwen', 'gemma']);
         expect(witnesses.minimax.model).toBe('minimax/minimax-m2.7');
+    });
+
+    it('models --json --offline exposes a machine-readable fallback catalog', () => {
+        const { stdout, exitCode } = runDist('models', '--json', '--offline', '--search', 'glm');
+        expect(exitCode).toBe(0);
+
+        const catalog = JSON.parse(stdout.trim());
+        expect(catalog.provider).toBe('nanogpt');
+        expect(catalog.source).toBe('static');
+        expect(catalog.status).toBe('ok');
+        expect(catalog.models.some((model: { id: string }) => model.id === 'zai-org/glm-5.1')).toBe(true);
+    });
+
+    it('live consult canary defaults to the OS temp directory instead of a POSIX-only path', () => {
+        const source = readFileSync(join(ROOT, 'scripts', 'consult-live-canary.mjs'), 'utf-8');
+        expect(source).toContain("import { tmpdir } from 'node:os';");
+        expect(source).toContain('outDir: join(tmpdir(), `aca-consult-canary-${Date.now()}`)');
+        expect(source).not.toContain('outDir: `/tmp/aca-consult-canary-${Date.now()}`');
     });
 
     it('dev mode (tsx loader) also works with --version', () => {

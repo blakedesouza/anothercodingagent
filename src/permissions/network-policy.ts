@@ -10,7 +10,8 @@
  *   to prevent DNS rebinding attacks (evaluateNetworkAccess / evaluateBrowserNavigation
  *   are async for this reason)
  * - Best-effort shell command network detection (curl, wget, ssh, scp, rsync,
- *   git clone, npm install, docker pull, pip install, cargo install)
+ *   git clone/fetch/push, npm install, docker pull, pip install, cargo install,
+ *   apt-get, brew)
  * - Browser/Playwright pre-navigation check (evaluateBrowserNavigation)
  *
  * Depends on: ResolvedConfig (M2.5) for network.* settings

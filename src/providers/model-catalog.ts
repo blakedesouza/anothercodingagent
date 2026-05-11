@@ -31,8 +31,14 @@ export interface ModelCatalog {
     fetch(): Promise<void>;
     /** Get a model entry by ID. Returns null if not found or not yet loaded. */
     getModel(id: string): ModelCatalogEntry | null;
+    /** Return loaded model entries sorted by ID. */
+    listModels(): ModelCatalogEntry[];
     /** Whether fetch() has completed (successfully or via fallback). */
     readonly isLoaded: boolean;
+    /** Where the loaded catalog data came from. */
+    readonly source: 'live' | 'fallback' | 'static' | 'unloaded';
+    /** Last live catalog fetch error, when data came from fallback. */
+    readonly lastError: string | null;
 }
 
 export class NanoGptCatalogError extends Error {
@@ -91,8 +97,20 @@ export class StaticCatalog implements ModelCatalog {
         return this.entries.get(id) ?? null;
     }
 
+    listModels(): ModelCatalogEntry[] {
+        return sortedEntries(this.entries);
+    }
+
     get isLoaded(): boolean {
         return true;
+    }
+
+    get source(): 'static' {
+        return 'static';
+    }
+
+    get lastError(): null {
+        return null;
     }
 }
 
@@ -131,6 +149,8 @@ export class NanoGptCatalog implements ModelCatalog {
     private readonly timeout: number;
     private readonly fallback: ModelCatalog | undefined;
     private readonly fetchFn: typeof globalThis.fetch;
+    private loadedSource: 'live' | 'fallback' | 'unloaded' = 'unloaded';
+    private fetchError: string | null = null;
 
     constructor(options: NanoGptCatalogOptions = {}) {
         this.apiKey = options.apiKey ?? process.env.NANOGPT_API_KEY;
@@ -160,8 +180,20 @@ export class NanoGptCatalog implements ModelCatalog {
         return this.entries.get(id) ?? null;
     }
 
+    listModels(): ModelCatalogEntry[] {
+        return sortedEntries(this.entries);
+    }
+
     get isLoaded(): boolean {
         return this.loaded;
+    }
+
+    get source(): 'live' | 'fallback' | 'unloaded' {
+        return this.loadedSource;
+    }
+
+    get lastError(): string | null {
+        return this.fetchError;
     }
 
     private async doFetch(allowFallback: boolean): Promise<void> {
@@ -204,6 +236,8 @@ export class NanoGptCatalog implements ModelCatalog {
                     );
                 }
                 this.loaded = true;
+                this.loadedSource = 'live';
+                this.fetchError = null;
                 return;
             } finally {
                 clearTimeout(timer);
@@ -220,6 +254,7 @@ export class NanoGptCatalog implements ModelCatalog {
                 );
             }
             const msg = err instanceof Error ? err.message : String(err);
+            this.fetchError = msg;
             console.warn(`[NanoGptCatalog] Failed to fetch models: ${msg}. Falling back to static catalog.`);
         }
 
@@ -232,6 +267,7 @@ export class NanoGptCatalog implements ModelCatalog {
             }
         }
         this.loaded = true;
+        this.loadedSource = 'fallback';
     }
 
     private parseNanoGptResponse(body: NanoGptModelsResponse): void {
@@ -246,8 +282,8 @@ export class NanoGptCatalog implements ModelCatalog {
             const caps = m.capabilities ?? {};
             const pricing = m.pricing;
             // Explicit Number() — API may return strings like "0.25"
-            const pricingInput = pricing ? Number(pricing.input) : 0;
-            const pricingOutput = pricing ? Number(pricing.output) : 0;
+            const pricingInput = pricing ? Number(pricing.input ?? pricing.prompt) : 0;
+            const pricingOutput = pricing ? Number(pricing.output ?? pricing.completion) : 0;
 
             this.entries.set(m.id, {
                 id: m.id,
@@ -290,6 +326,8 @@ export class OpenRouterCatalog implements ModelCatalog {
     private readonly timeout: number;
     private readonly fallback: ModelCatalog | undefined;
     private readonly fetchFn: typeof globalThis.fetch;
+    private loadedSource: 'live' | 'fallback' | 'unloaded' = 'unloaded';
+    private fetchError: string | null = null;
 
     constructor(options: OpenRouterCatalogOptions = {}) {
         this.baseUrl = options.baseUrl ?? 'https://openrouter.ai/api/v1';
@@ -312,8 +350,20 @@ export class OpenRouterCatalog implements ModelCatalog {
         return this.entries.get(id) ?? null;
     }
 
+    listModels(): ModelCatalogEntry[] {
+        return sortedEntries(this.entries);
+    }
+
     get isLoaded(): boolean {
         return this.loaded;
+    }
+
+    get source(): 'live' | 'fallback' | 'unloaded' {
+        return this.loadedSource;
+    }
+
+    get lastError(): string | null {
+        return this.fetchError;
     }
 
     private async doFetch(): Promise<void> {
@@ -336,12 +386,15 @@ export class OpenRouterCatalog implements ModelCatalog {
                 const body = await response.json() as OpenRouterModelsResponse;
                 this.parseOpenRouterResponse(body);
                 this.loaded = true;
+                this.loadedSource = 'live';
+                this.fetchError = null;
                 return;
             } finally {
                 clearTimeout(timer);
             }
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
+            this.fetchError = msg;
             console.warn(`[OpenRouterCatalog] Failed to fetch models: ${msg}. Falling back to static catalog.`);
         }
 
@@ -353,6 +406,7 @@ export class OpenRouterCatalog implements ModelCatalog {
             }
         }
         this.loaded = true;
+        this.loadedSource = 'fallback';
     }
 
     private parseOpenRouterResponse(body: OpenRouterModelsResponse): void {
@@ -406,8 +460,10 @@ interface NanoGptModelEntry {
         structured_output?: boolean;
     };
     pricing?: {
-        input: number;
-        output: number;
+        input?: number | string;
+        output?: number | string;
+        prompt?: number | string;
+        completion?: number | string;
     };
 }
 
@@ -446,4 +502,8 @@ function toPositiveInt(value: unknown): number | null {
         return null;
     }
     return Math.floor(num);
+}
+
+function sortedEntries(entries: Map<string, ModelCatalogEntry>): ModelCatalogEntry[] {
+    return [...entries.values()].sort((a, b) => a.id.localeCompare(b.id));
 }

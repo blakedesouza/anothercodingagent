@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -12,7 +13,7 @@ function parseArgs(argv) {
   const options = {
     witnesses: 'default',
     triage: 'auto',
-    outDir: `/tmp/aca-consult-canary-${Date.now()}`,
+    outDir: join(tmpdir(), `aca-consult-canary-${Date.now()}`),
     projectDir: ROOT,
     repeats: 1,
     build: true,
@@ -34,7 +35,7 @@ function parseArgs(argv) {
 Options:
   --witnesses <list>    Witness names, presets, or raw model IDs (default: default)
   --triage <mode>       Triage mode: auto|always|never (default: auto)
-  --out-dir <path>      Output directory (default: /tmp/aca-consult-canary-<ts>)
+  --out-dir <path>      Output directory (default: OS temp dir / aca-consult-canary-<ts>)
   --project-dir <path>  Project directory for consult runs
   --repeats <n>         Repetitions per scenario (default: 1)
   --no-build            Skip npm run build before the matrix

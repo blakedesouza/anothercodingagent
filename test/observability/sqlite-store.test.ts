@@ -343,6 +343,19 @@ describe('BackgroundWriter', () => {
         expect(store.getEventsForSession(TEST_SESSION)).toHaveLength(1);
         expect(writer.pendingCount).toBe(0);
     });
+
+    it('keeps queued events when SQLite batch insert fails', () => {
+        const failingStore = {
+            insertBatch: vi.fn(() => false),
+        } as unknown as SqliteStore;
+        const writer = new BackgroundWriter(failingStore);
+
+        writer.emit(makeLlmResponse(TEST_SESSION, 1));
+        writer.flush();
+
+        expect(failingStore.insertBatch).toHaveBeenCalledTimes(1);
+        expect(writer.pendingCount).toBe(1);
+    });
 });
 
 // --- Backfill tests ---

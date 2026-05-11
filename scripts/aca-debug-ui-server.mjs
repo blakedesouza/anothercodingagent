@@ -19,6 +19,7 @@ const MAX_JSONL_BYTES = 8 * 1024 * 1024;
 const MAX_PREVIEW_BYTES = 96 * 1024;
 const STALE_CONSULT_MS = Number.parseInt(process.env.ACA_DEBUG_UI_STALE_CONSULT_MS || '', 10) || 10 * 60 * 1000;
 const SEEDED_WITNESSES = parseWitnessSeed(process.env.ACA_DEBUG_UI_WITNESS_SEED || '');
+const MODEL_CATALOG = readModelCatalogSnapshot(process.env.ACA_DEBUG_UI_MODEL_CATALOG_PATH || '');
 const APP_HTML_URL = new URL('./aca-debug-ui-app.html', import.meta.url);
 
 let db = null;
@@ -62,7 +63,7 @@ function writeMetadata(url) {
       acaHome: ACA_HOME,
       metadataPath: METADATA_PATH,
       startedAt: new Date().toISOString(),
-    }, null, 2));
+    }, null, 2), { encoding: 'utf8', mode: 0o600 });
   } catch {
     // best effort
   }
@@ -150,6 +151,11 @@ async function handleRequest(req, res) {
 
   if (url.pathname === '/api/overview') {
     sendJson(res, 200, overview());
+    return;
+  }
+
+  if (url.pathname === '/api/models') {
+    sendJson(res, 200, MODEL_CATALOG || emptyModelCatalog());
     return;
   }
 
@@ -268,6 +274,7 @@ function overview() {
     dbAvailable: Boolean(db),
     sessionsDir: SESSIONS_DIR,
     consultWitnessDefaults: SEEDED_WITNESSES,
+    modelCatalog: MODEL_CATALOG || emptyModelCatalog(),
     sessionCount: sessions.length,
     recentSessions: sessions.slice(0, 10),
     last7Days: {
@@ -324,6 +331,50 @@ function overview() {
       },
     },
     recentErrors,
+  };
+}
+
+function readModelCatalogSnapshot(filePath) {
+  if (!filePath) return null;
+  try {
+    if (!existsSync(filePath)) return null;
+    const parsed = JSON.parse(readFileSync(filePath, 'utf-8'));
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.models)) return null;
+    return {
+      provider: parsed.provider || 'nanogpt',
+      endpoint: parsed.endpoint || null,
+      status: parsed.status || 'unknown',
+      source: parsed.source || 'unknown',
+      model_count: Number(parsed.model_count || 0),
+      total_model_count: Number(parsed.total_model_count || parsed.models.length || 0),
+      filters: parsed.filters || {},
+      warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+      last_error: parsed.last_error || null,
+      models: parsed.models.map((model) => ({
+        id: String(model.id || ''),
+        context_length: Number(model.context_length || 0),
+        max_output_tokens: Number(model.max_output_tokens || 0),
+        capabilities: model.capabilities && typeof model.capabilities === 'object' ? model.capabilities : {},
+        pricing: model.pricing && typeof model.pricing === 'object' ? model.pricing : undefined,
+      })).filter((model) => model.id),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function emptyModelCatalog() {
+  return {
+    provider: 'nanogpt',
+    endpoint: null,
+    status: 'unavailable',
+    source: 'unloaded',
+    model_count: 0,
+    total_model_count: 0,
+    filters: {},
+    warnings: [],
+    last_error: null,
+    models: [],
   };
 }
 

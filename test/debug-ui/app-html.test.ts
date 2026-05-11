@@ -87,6 +87,18 @@ describe('ACA debug UI static contracts', () => {
         expect(appHtml).not.toContain("summaryRow('Model', sessionInfo.model || 'unknown')");
     });
 
+    it('exposes model catalog snapshots in the debug API and dashboard KPIs', () => {
+        expect(serverSource).toContain('ACA_DEBUG_UI_MODEL_CATALOG_PATH');
+        expect(serverSource).toContain("url.pathname === '/api/models'");
+        expect(serverSource).toContain('modelCatalog: MODEL_CATALOG || emptyModelCatalog()');
+        expect(appHtml).toContain("renderKpiCard('Models'");
+        expect(appHtml).toContain('modelCatalog.total_model_count');
+    });
+
+    it('writes debug UI metadata with owner-only permissions', () => {
+        expect(serverSource).toContain("mode: 0o600");
+    });
+
     it('auto-refresh follows the newest session until the user pins a session', () => {
         expect(appHtml).toContain('autoFollowLatestSession: true');
         expect(appHtml).toContain('userPinnedSessionId: null');

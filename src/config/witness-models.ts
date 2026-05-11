@@ -119,11 +119,14 @@ export const WITNESS_MODELS: readonly Readonly<WitnessModelConfig>[] = Object.fr
     }),
 ]);
 
-export const DEFAULT_CONSULT_WITNESS_NAMES = ['kimi26', 'glm51', 'deepseek'] as const;
+export const DEFAULT_CONSULT_WITNESS_NAMES = ['kimi26', 'glm51'] as const;
+export const DISSENT_CONSULT_WITNESS_NAMES = ['deepseek'] as const;
 
 export const CONSULT_WITNESS_PRESETS: Readonly<Record<string, readonly string[]>> = Object.freeze({
     default: DEFAULT_CONSULT_WITNESS_NAMES,
     strong: DEFAULT_CONSULT_WITNESS_NAMES,
+    dissent: DISSENT_CONSULT_WITNESS_NAMES,
+    full: [...DEFAULT_CONSULT_WITNESS_NAMES, ...DISSENT_CONSULT_WITNESS_NAMES],
     legacy: ['minimax', 'gemma'],
     current: DEFAULT_CONSULT_WITNESS_NAMES,
     all: WITNESS_MODELS.map(w => w.name),

@@ -52,7 +52,9 @@ export class BackgroundWriter implements EventSink {
 
         const batch = this.queue;
         this.queue = [];
-        this.store.insertBatch(batch);
+        if (!this.store.insertBatch(batch)) {
+            this.queue = [...batch, ...this.queue];
+        }
     }
 
     /**
